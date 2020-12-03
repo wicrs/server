@@ -1,4 +1,4 @@
-use crate::ID;
+use crate::{ID, get_system_millis};
 
 pub struct User {
     pub id: ID,
@@ -11,13 +11,17 @@ pub struct User {
 
 pub struct Account {
     pub id: u128,
+    pub email: String,
+    pub created: u128,
     pub users: Vec<User>,
 }
 
 impl Account {
-    pub fn new(id: u128) -> Self {
+    pub fn new(id: u128, email: String) -> Self {
         Self {
             id,
+            email,
+            created: get_system_millis(),
             users: Vec::new()
         }
     }

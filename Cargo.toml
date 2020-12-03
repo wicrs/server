@@ -13,3 +13,4 @@ reqwest = { version = "0.10", features = ["json"] }
 uuid = { version = "0.8", features = ["serde", "v4"]}
 rand = "0.7.3"
 oauth2 = "3.0.0"
+rusqlite = { version = "0.23.1", features = ["bundled", "uuid"] }
