@@ -1,5 +1,8 @@
+use crate::ID;
+
 pub struct Message {
-    pub id: usize,
-    pub sender: usize,
-    pub created: u128,
+    pub id: ID,
+    pub sender: ID,
+    pub created: ID,
+    pub content: String,
 }

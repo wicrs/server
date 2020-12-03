@@ -3,22 +3,17 @@ use std::{
     vec,
 };
 
-use crate::{
-    channel::Channel,
-    get_system_millis,
-    permission::{
+use crate::{ID, channel::Channel, get_system_millis, new_id, permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
-    },
-    user::User,
-};
+    }, user::User};
 
 pub struct GuildMember {
     pub user: User,
     pub joined: u128,
     pub nickname: String,
-    pub ranks: Vec<usize>,
+    pub ranks: Vec<ID>,
     pub guild_permissions: GuildPremissions,
-    pub channel_permissions: HashMap<usize, ChannelPermissions>,
+    pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
 impl GuildMember {
@@ -48,7 +43,7 @@ impl GuildMember {
 
     pub fn set_channel_permission(
         &mut self,
-        channel: usize,
+        channel: ID,
         permission: ChannelPermission,
         value: PermissionSetting,
     ) {
@@ -95,7 +90,7 @@ impl GuildMember {
 
     pub fn has_channel_permission(
         &mut self,
-        channel: &usize,
+        channel: &ID,
         permission: &ChannelPermission,
         guild: &Guild,
     ) -> bool {
@@ -128,16 +123,16 @@ impl GuildMember {
 }
 
 pub struct Rank {
-    pub id: usize,
+    pub id: ID,
     pub name: String,
-    pub members: Vec<usize>,
+    pub members: Vec<ID>,
     pub guild_permissions: GuildPremissions,
-    pub channel_permissions: HashMap<usize, ChannelPermissions>,
+    pub channel_permissions: HashMap<ID, ChannelPermissions>,
     pub created: u128,
 }
 
 impl Rank {
-    pub fn new(name: String, id: usize) -> Self {
+    pub fn new(name: String, id: ID) -> Self {
         Self {
             created: crate::get_system_millis(),
             id,
@@ -158,7 +153,7 @@ impl Rank {
 
     pub fn set_channel_permission(
         &mut self,
-        channel: usize,
+        channel: ID,
         permission: ChannelPermission,
         value: PermissionSetting,
     ) {
@@ -189,7 +184,7 @@ impl Rank {
         return false;
     }
 
-    pub fn has_channel_permission(&self, channel: &usize, permission: &ChannelPermission) -> bool {
+    pub fn has_channel_permission(&self, channel: &ID, permission: &ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
         }
@@ -206,20 +201,20 @@ impl Rank {
 
 pub struct Guild {
     pub channels: Vec<Channel>,
-    pub users: HashMap<usize, GuildMember>,
-    pub bans: HashSet<usize>,
-    pub owner: usize,
-    pub ranks: HashMap<usize, Rank>,
-    pub default_rank: usize,
+    pub users: HashMap<ID, GuildMember>,
+    pub bans: HashSet<ID>,
+    pub owner: ID,
+    pub ranks: HashMap<ID, Rank>,
+    pub default_rank: ID,
     pub name: String,
-    pub id: usize,
+    pub id: ID,
     pub created: u128,
 }
 
 impl Guild {
-    pub fn new(name: String, id: usize, creator: User) -> Self {
+    pub fn new(name: String, id: ID, creator: User) -> Self {
         let creator_id = creator.id.clone();
-        let mut everyone = Rank::new(String::from("everyone"), 0);
+        let mut everyone = Rank::new(String::from("everyone"), new_id());
         let mut owner = GuildMember::new(creator);
         let mut users = HashMap::new();
         let mut ranks = HashMap::new();
@@ -231,7 +226,7 @@ impl Guild {
             name,
             id,
             ranks,
-            default_rank: 0,
+            default_rank: new_id(),
             owner: creator_id,
             bans: HashSet::new(),
             channels: vec![],

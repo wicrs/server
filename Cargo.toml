@@ -9,3 +9,7 @@ edition = "2018"
 [dependencies]
 tokio = { version = "0.2", features = ["full"] }
 warp = "0.2.5"
+reqwest = { version = "0.10", features = ["json"] }
+uuid = { version = "0.8", features = ["serde", "v4"]}
+rand = "0.7.3"
+oauth2 = "3.0.0"
