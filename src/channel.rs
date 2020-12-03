@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{ID, message::Message};
 
 pub struct Channel {
