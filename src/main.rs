@@ -1,9 +1,9 @@
-use std::env;
 use std::sync::Arc;
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
+use serde_json::Value;
 
 use uuid::Uuid;
 
@@ -14,7 +14,7 @@ use warp::{
     Filter,
 };
 
-use oauth2::basic::BasicClient;
+use oauth2::{AuthorizationCode, basic::BasicTokenType, EmptyExtraTokenFields, StandardTokenResponse, basic::BasicClient, reqwest::http_client};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenUrl};
 
 pub mod channel;
@@ -23,12 +23,21 @@ pub mod message;
 pub mod permission;
 pub mod user;
 
-use rusqlite::{params, Connection, Result, NO_PARAMS};
+pub enum JsonLoadError {
+    ReadFile,
+    Deserialize,
+}
+
+pub enum JsonSaveError {
+    WriteFile,
+    Serialize,
+    Directory,
+}
 
 #[tokio::main]
 async fn main() {
-    data_prep();
-    let authenticator = Arc::new(Mutex::new(Authenticator::github_from_env()));
+    data_prep().await;
+    let authenticator = Arc::new(Mutex::new(Authenticator::github()));
     let login_auth = authenticator.clone();
     let response_auth = authenticator.clone();
     let authenticate = warp::get()
@@ -46,11 +55,11 @@ async fn main() {
                     }
                     None => Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body("Missing parameters."),
+                        .body("Missing state parameter."),
                 },
                 None => Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body("Missing parameters."),
+                    .body("Missing code parameter."),
             },
         );
     let login = warp::get().and(warp::path("login")).map(move || {
@@ -69,24 +78,26 @@ async fn main() {
         .await;
 }
 
+struct Session {
+    client: BasicClient,
+    token: StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>
+}
+
 struct Authenticator {
     client_id: ClientId,
     client_secret: ClientSecret,
     auth_url: AuthUrl,
     token_url: TokenUrl,
-    logins: Vec<CsrfToken>,
+    in_progress: HashMap<String, (u128, BasicClient)>,
+    logged_in: HashMap<String, Session>,
 }
 
 impl Authenticator {
-    pub fn github_from_env() -> Self {
-        let client_id = ClientId::new(
-            env::var("GITHUB_CLIENT_ID")
-                .expect("Missing the GITHUB_CLIENT_ID environment variable."),
-        );
-        let client_secret = ClientSecret::new(
-            env::var("GITHUB_CLIENT_SECRET")
-                .expect("Missing the GITHUB_CLIENT_SECRET environment variable."),
-        );
+    pub fn github() -> Self {
+        let config_json = std::fs::read_to_string("config.json").expect("Could not read config file.");
+        let config = serde_json::from_str::<Value>(&config_json).expect("Config file contains invalid JSON.");
+        let client_id = ClientId::new(config["github_client_id"].as_str().expect("Invalid GitHub client ID in config.").to_string());
+        let client_secret = ClientSecret::new(config["github_client_secret"].as_str().expect("Invalid GitHub client secret in config.").to_string());
         let auth_url = AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
             .expect("Invalid authorization endpoint URL");
         let token_url = TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
@@ -96,7 +107,8 @@ impl Authenticator {
             client_secret,
             auth_url,
             token_url,
-            logins: Vec::new(),
+            in_progress: HashMap::new(),
+            logged_in: HashMap::new(),
         }
     }
 
@@ -112,12 +124,20 @@ impl Authenticator {
             .add_scope(Scope::new("read:user".to_string()))
             .add_scope(Scope::new("user:email".to_string()))
             .url();
-        self.logins.push(csrf_state);
+        self.in_progress.insert(csrf_state.secret().clone(), (get_system_millis(), client));
         authorize_url.to_string()
     }
 
-    pub fn response(&self, state: String, code: String) {
-        println!("state: {}, code: {}", state, code);
+    pub fn response(&mut self, state: String, code: String) {
+        match self.in_progress.get_key_value(&state) {
+            Some(client) => {
+                let code = AuthorizationCode::new(code);
+                if let Ok(token) = client.1.1.exchange_code(code).request(http_client) {
+                    self.logged_in.insert("".to_string(), Session { token, client: self.in_progress.remove(&state).unwrap().1 });
+                }
+            }
+            None => {}
+        }
     }
 }
 
@@ -133,62 +153,7 @@ pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
 }
 
-pub fn data_prep() {
-    std::fs::create_dir_all("data").expect("Failed to create the ./data directory.");
-    let accounts =
-        Connection::open("data/accounts.db").expect("Failed to create/open data/accounts.db.");
-    accounts
-        .execute(
-            "create table if not exists accounts (
-                      id              UNSIGNED BIG INT not null unique,
-                      email           TEXT not null,
-                      created         UNSIGNED BIG INT not null
-                      )",
-            NO_PARAMS,
-        )
-        .expect("Failed to create the accounts table.");
-    accounts.close();
-    let servers =
-        Connection::open("data/guilds.db").expect("Failed to create/open data/guilds.db.");
-    servers
-        .execute(
-            "create table if not exists guilds (
-                      id              BLOB not null unique,
-                      name            TEXT not null,
-                      created         UNSIGNED BIG INT not null,
-                      default_rank    BLOB not null,
-                      owner           BLOB not null
-                      )",
-            NO_PARAMS,
-        )
-        .expect("Failed to create the guilds table.");
-    servers.close();
-    add_account(100, String::from("yay"));
-}
-
-fn add_account(id: u128, email: String) {
-    let new_account = user::Account::new(id, email);
-    let account_folder = "data/accounts/".to_owned() + &id.to_string();
-    std::fs::create_dir_all("data/accounts/".to_owned() + &id.to_string());
-    let accounts =
-        Connection::open("data/accounts.db").expect("Failed to create/open data/accounts.db.");
-    accounts.execute(
-        "insert into accounts (id, email, created) values (?1, ?2)",
-        params![
-            new_account.id.to_le_bytes().to_vec(),
-            new_account.email,
-            new_account.created.to_le_bytes().to_vec()
-        ],
-    );
-    accounts.close();
-    let account = Connection::open(account_folder.clone() + "/users.db").expect(&("Failed to create/open ".to_owned() + &account_folder + "/users.db"));
-    account.execute(
-        "create table if not exists users (
-            id           BLOB not null unique,
-            username     TEXT not null,
-            bot          BOOLEAN not null,
-            owner_id     BLOB not null
-        )",
-     NO_PARAMS
-    );
+pub async fn data_prep() {
+    std::fs::create_dir_all("data/accounts")
+        .expect("Failed to create the ./data/accounts directory.");
 }
