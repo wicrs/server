@@ -21,6 +21,8 @@ use oauth2::{
 };
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
+use reqwest::header::{AUTHORIZATION, USER_AGENT};
+
 pub mod channel;
 pub mod guild;
 pub mod message;
@@ -37,6 +39,8 @@ pub enum JsonSaveError {
     Serialize,
     Directory,
 }
+
+static USER_AGENT_STRING: &str = "wirc_server";
 
 #[tokio::main]
 async fn main() {
@@ -169,60 +173,55 @@ pub async fn handle_oauth(
 ) -> String {
     let code = AuthorizationCode::new(code.clone());
     if let Ok(token) = client.exchange_code(code).request(http_client) {
-        if let Ok(response) = reqwest::Client::new()
+        let token_header = "token ".to_owned() + token.access_token().secret();
+        let client = reqwest::blocking::Client::new();
+        let user_request = client
             .get("https://api.github.com/user")
-            .header(
-                "Authorization",
-                "token ".to_owned() + token.access_token().secret(),
-            )
-            .send()
-            .await
-        {
-            if let Ok(json) = response.json::<Value>().await {
-                if let Some(id) = json["id"].as_str() {
-                    if let Ok(account) = Account::load(id.to_string(), "github".to_string()) {
-                        let email = account.email.clone();
-                        {
-                            logged_in
-                                .clone()
-                                .lock()
-                                .await
-                                .insert(id.to_string(), account);
-                        }
-                        return "Logged in as ".to_string() + &id + " with email " + &email;
-                    } else {
-                        if let Ok(response) = reqwest::Client::new()
-                            .get("https://api.github.com/user/emails")
-                            .header(
-                                "Authorization",
-                                "token ".to_owned() + token.access_token().secret(),
-                            )
-                            .send()
+            .header(USER_AGENT, USER_AGENT_STRING)
+            .header(AUTHORIZATION, token_header.clone())
+            .send();
+        if let Ok(response) = user_request {
+            if let Ok(json) = response.json::<Value>() {
+                let id = json["id"].to_string();
+                if let Ok(account) = Account::load(id.to_string(), "github".to_string()) {
+                    let email = account.email.clone();
+                    {
+                        logged_in
+                            .clone()
+                            .lock()
                             .await
-                        {
-                            if let Ok(json) = response.json::<Value>().await {
-                                if let Some(array) = json.as_array() {
-                                    for e in array {
-                                        if e["primary"].as_bool().unwrap() {
-                                            let new_account = Account::new(
-                                                id.parse().unwrap(),
-                                                e["email"].as_str().unwrap().to_string(),
-                                                "github".to_string(),
-                                            );
-                                            if let Ok(_) = new_account.save() {
-                                                let email = new_account.email.clone();
-                                                {
-                                                    logged_in
-                                                        .clone()
-                                                        .lock()
-                                                        .await
-                                                        .insert(id.to_string(), new_account);
-                                                }
-                                                return "Signed up as ".to_string()
-                                                    + &id
-                                                    + " with email "
-                                                    + &email;
+                            .insert(id.to_string(), account);
+                    }
+                    return "Logged in as ".to_string() + &id + " with email " + &email;
+                } else {
+                    let email_request = client
+                        .get("https://api.github.com/user/emails")
+                        .header(USER_AGENT, USER_AGENT_STRING)
+                        .header(AUTHORIZATION, token_header)
+                        .send();
+                    if let Ok(response) = email_request {
+                        if let Ok(json) = response.json::<Value>() {
+                            if let Some(array) = json.as_array() {
+                                for e in array {
+                                    if e["primary"].as_bool().unwrap() {
+                                        let new_account = Account::new(
+                                            id.parse().unwrap(),
+                                            e["email"].to_string(),
+                                            "github".to_string(),
+                                        );
+                                        if let Ok(_) = new_account.save() {
+                                            let email = new_account.email.clone();
+                                            {
+                                                logged_in
+                                                    .clone()
+                                                    .lock()
+                                                    .await
+                                                    .insert(id.to_string(), new_account);
                                             }
+                                            return "Signed up as ".to_string()
+                                                + &id
+                                                + " with email "
+                                                + &email;
                                         }
                                     }
                                 }
