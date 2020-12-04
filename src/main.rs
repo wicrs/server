@@ -1,9 +1,9 @@
+use serde_json::Value;
 use std::sync::Arc;
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
-use serde_json::Value;
 
 use user::Account;
 use uuid::Uuid;
@@ -15,8 +15,8 @@ use warp::{
     Filter,
 };
 
-use oauth2::{AuthorizationCode, basic::{BasicTokenType, BasicClient}, EmptyExtraTokenFields, StandardTokenResponse, reqwest::http_client};
-use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenUrl, TokenResponse};
+use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
+use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
 pub mod channel;
 pub mod guild;
@@ -47,41 +47,46 @@ async fn main() {
             move |query: HashMap<String, String>| match query.get("code") {
                 Some(code) => match query.get("state") {
                     Some(state) => {
-                        futures::executor::block_on(response_auth
-                            .clone()
-                            .try_lock()
-                            .unwrap()
-                            .response(state.to_owned(), code.to_owned()));
-                        Response::builder().status(StatusCode::OK).body("")
+                        let response = futures::executor::block_on(async {
+                            let result;
+                            {
+                                let arc = response_auth.clone();
+                                let mut lock = arc.lock().await;
+                                result = lock.response(state.to_owned(), code.to_owned()).await;
+                            }
+                            result.clone()
+                        });
+                        Response::builder().status(StatusCode::OK).body(response)
                     }
                     None => Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body("Missing state parameter."),
+                        .body("Missing state parameter.".to_string()),
                 },
                 None => Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body("Missing code parameter."),
+                    .body("Missing code parameter.".to_string()),
             },
         );
     let login = warp::get().and(warp::path("login")).map(move || {
-        warp::redirect::temporary(
-            login_auth
-                .clone()
-                .try_lock()
-                .unwrap()
-                .new_redirect()
-                .parse::<Uri>()
-                .unwrap(),
-        )
+        let url;
+        {
+            let result = futures::executor::block_on(async {
+                let redirect;
+                {
+                    let arc = login_auth.clone();
+                    let mut lock = arc.lock().await;
+                    redirect = lock.new_redirect()
+                }
+                redirect.clone().parse::<Uri>().unwrap()
+            });
+            url = result.clone();
+            std::mem::drop(result);
+        }
+        warp::redirect::temporary(url)
     });
     warp::serve(login.or(authenticate))
         .run(([127, 0, 0, 1], 24816))
         .await;
-}
-
-struct Session {
-    client: BasicClient,
-    token: StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>
 }
 
 struct Authenticator {
@@ -89,17 +94,28 @@ struct Authenticator {
     client_secret: ClientSecret,
     auth_url: AuthUrl,
     token_url: TokenUrl,
-    user_info_url: String,
     in_progress: HashMap<String, (u128, BasicClient)>,
     logged_in: HashMap<String, Account>,
 }
 
 impl Authenticator {
     pub fn github() -> Self {
-        let config_json = std::fs::read_to_string("config.json").expect("Could not read config file.");
-        let config = serde_json::from_str::<Value>(&config_json).expect("Config file contains invalid JSON.");
-        let client_id = ClientId::new(config["github_client_id"].as_str().expect("Invalid GitHub client ID in config.").to_string());
-        let client_secret = ClientSecret::new(config["github_client_secret"].as_str().expect("Invalid GitHub client secret in config.").to_string());
+        let config_json =
+            std::fs::read_to_string("config.json").expect("Could not read config file.");
+        let config = serde_json::from_str::<Value>(&config_json)
+            .expect("Config file contains invalid JSON.");
+        let client_id = ClientId::new(
+            config["github_client_id"]
+                .as_str()
+                .expect("Invalid GitHub client ID in config.")
+                .to_string(),
+        );
+        let client_secret = ClientSecret::new(
+            config["github_client_secret"]
+                .as_str()
+                .expect("Invalid GitHub client secret in config.")
+                .to_string(),
+        );
         let auth_url = AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
             .expect("Invalid authorization endpoint URL");
         let token_url = TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
@@ -109,7 +125,6 @@ impl Authenticator {
             client_secret,
             auth_url,
             token_url,
-            user_info_url: "https://api.github.com/user".to_string(),
             in_progress: HashMap::new(),
             logged_in: HashMap::new(),
         }
@@ -127,23 +142,86 @@ impl Authenticator {
             .add_scope(Scope::new("read:user".to_string()))
             .add_scope(Scope::new("user:email".to_string()))
             .url();
-        self.in_progress.insert(csrf_state.secret().clone(), (get_system_millis(), client));
+        self.in_progress
+            .insert(csrf_state.secret().clone(), (get_system_millis(), client));
         authorize_url.to_string()
     }
 
-    pub async fn response(&mut self, state: String, code: String) {
+    pub async fn response(&mut self, state: String, code: String) -> String {
+        println!(
+            "currenct state: {}\n sessions: {:?}",
+            state, self.in_progress
+        );
         match self.in_progress.remove(&state) {
             Some(client) => {
                 let code = AuthorizationCode::new(code);
                 if let Ok(token) = client.1.exchange_code(code).request(http_client) {
-                    if let Ok(response) = reqwest::Client::new().get(&self.user_info_url).header("Authorization", "token ".to_owned() + token.access_token().secret()).send().await {
+                    if let Ok(response) = reqwest::Client::new()
+                        .get("https://api.github.com/user")
+                        .header(
+                            "Authorization",
+                            "token ".to_owned() + token.access_token().secret(),
+                        )
+                        .send()
+                        .await
+                    {
                         if let Ok(json) = response.json::<Value>().await {
-                            //
+                            if let Some(id) = json["id"].as_str() {
+                                if let Ok(account) =
+                                    Account::load(id.to_string(), "github".to_string())
+                                {
+                                    let email = account.email.clone();
+                                    self.logged_in.insert(id.to_string(), account);
+                                    return "Logged in as ".to_string()
+                                        + &id
+                                        + " with email "
+                                        + &email;
+                                } else {
+                                    if let Ok(response) = reqwest::Client::new()
+                                        .get("https://api.github.com/user/emails")
+                                        .header(
+                                            "Authorization",
+                                            "token ".to_owned() + token.access_token().secret(),
+                                        )
+                                        .send()
+                                        .await
+                                    {
+                                        if let Ok(json) = response.json::<Value>().await {
+                                            if let Some(array) = json.as_array() {
+                                                for e in array {
+                                                    if e["primary"].as_bool().unwrap() {
+                                                        let new_account = Account::new(
+                                                            id.parse().unwrap(),
+                                                            e["email"]
+                                                                .as_str()
+                                                                .unwrap()
+                                                                .to_string(),
+                                                            "github".to_string(),
+                                                        );
+                                                        if let Ok(_) = new_account.save() {
+                                                            let email = new_account.email.clone();
+                                                            self.logged_in.insert(
+                                                                id.to_string(),
+                                                                new_account,
+                                                            );
+                                                            return "Signed up as ".to_string()
+                                                                + &id
+                                                                + " with email "
+                                                                + &email;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                "Failed to authenticate with GitHub.".to_string()
             }
-            None => {}
+            None => "Invalid login session.".to_string(),
         }
     }
 }
