@@ -1,17 +1,30 @@
-use crate::{get_system_millis, JsonLoadError, JsonSaveError, ID};
+use crate::{get_system_millis, JsonLoadError, JsonSaveError, ID, new_id};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct User {
     pub id: ID,
     pub username: String,
     pub bot: bool,
     pub created: u128,
-    pub owner_id: ID,
+    pub owner_id: u128,
     pub in_guilds: Vec<ID>,
 }
 
-#[derive(Serialize, Deserialize)]
+impl User {
+    pub fn new(username: String, bot: bool, owner_id: u128) -> Self {
+        Self {
+            id: new_id(),
+            username,
+            bot,
+            owner_id,
+            created: get_system_millis(),
+            in_guilds: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Account {
     pub id: u128,
     pub email: String,
