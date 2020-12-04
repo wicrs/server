@@ -5,6 +5,7 @@ use std::{
 };
 use serde_json::Value;
 
+use user::Account;
 use uuid::Uuid;
 
 use tokio::sync::Mutex;
@@ -14,8 +15,8 @@ use warp::{
     Filter,
 };
 
-use oauth2::{AuthorizationCode, basic::BasicTokenType, EmptyExtraTokenFields, StandardTokenResponse, basic::BasicClient, reqwest::http_client};
-use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenUrl};
+use oauth2::{AuthorizationCode, basic::{BasicTokenType, BasicClient}, EmptyExtraTokenFields, StandardTokenResponse, reqwest::http_client};
+use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenUrl, TokenResponse};
 
 pub mod channel;
 pub mod guild;
@@ -46,11 +47,11 @@ async fn main() {
             move |query: HashMap<String, String>| match query.get("code") {
                 Some(code) => match query.get("state") {
                     Some(state) => {
-                        response_auth
+                        futures::executor::block_on(response_auth
                             .clone()
                             .try_lock()
                             .unwrap()
-                            .response(state.to_owned(), code.to_owned());
+                            .response(state.to_owned(), code.to_owned()));
                         Response::builder().status(StatusCode::OK).body("")
                     }
                     None => Response::builder()
@@ -88,8 +89,9 @@ struct Authenticator {
     client_secret: ClientSecret,
     auth_url: AuthUrl,
     token_url: TokenUrl,
+    user_info_url: String,
     in_progress: HashMap<String, (u128, BasicClient)>,
-    logged_in: HashMap<String, Session>,
+    logged_in: HashMap<String, Account>,
 }
 
 impl Authenticator {
@@ -107,6 +109,7 @@ impl Authenticator {
             client_secret,
             auth_url,
             token_url,
+            user_info_url: "https://api.github.com/user".to_string(),
             in_progress: HashMap::new(),
             logged_in: HashMap::new(),
         }
@@ -128,12 +131,16 @@ impl Authenticator {
         authorize_url.to_string()
     }
 
-    pub fn response(&mut self, state: String, code: String) {
-        match self.in_progress.get_key_value(&state) {
+    pub async fn response(&mut self, state: String, code: String) {
+        match self.in_progress.remove(&state) {
             Some(client) => {
                 let code = AuthorizationCode::new(code);
-                if let Ok(token) = client.1.1.exchange_code(code).request(http_client) {
-                    self.logged_in.insert("".to_string(), Session { token, client: self.in_progress.remove(&state).unwrap().1 });
+                if let Ok(token) = client.1.exchange_code(code).request(http_client) {
+                    if let Ok(response) = reqwest::Client::new().get(&self.user_info_url).header("Authorization", "token ".to_owned() + token.access_token().secret()).send().await {
+                        if let Ok(json) = response.json::<Value>().await {
+                            //
+                        }
+                    }
                 }
             }
             None => {}
