@@ -15,7 +15,10 @@ use warp::{
     Filter,
 };
 
-use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
+use oauth2::{
+    basic::BasicClient, basic::BasicErrorResponseType, basic::BasicTokenType, reqwest::http_client,
+    AuthorizationCode, Client, EmptyExtraTokenFields, StandardErrorResponse, StandardTokenResponse,
+};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
 pub mod channel;
@@ -38,6 +41,7 @@ pub enum JsonSaveError {
 #[tokio::main]
 async fn main() {
     data_prep().await;
+    let logged_in = Arc::new(Mutex::new(HashMap::<String, Account>::new()));
     let authenticator = Arc::new(Mutex::new(Authenticator::github()));
     let login_auth = authenticator.clone();
     let response_auth = authenticator.clone();
@@ -47,15 +51,23 @@ async fn main() {
             move |query: HashMap<String, String>| match query.get("code") {
                 Some(code) => match query.get("state") {
                     Some(state) => {
-                        let response = futures::executor::block_on(async {
+                        let entry = futures::executor::block_on(async {
                             let result;
                             {
                                 let arc = response_auth.clone();
                                 let mut lock = arc.lock().await;
-                                result = lock.response(state.to_owned(), code.to_owned()).await;
+                                result = lock.in_progress.remove(state);
                             }
                             result.clone()
                         });
+                        let response = match entry {
+                            Some(client) => futures::executor::block_on(handle_oauth(
+                                logged_in.clone(),
+                                client.1,
+                                code.clone(),
+                            )),
+                            None => "Invalid session state ID.".to_string(),
+                        };
                         Response::builder().status(StatusCode::OK).body(response)
                     }
                     None => Response::builder()
@@ -94,8 +106,7 @@ struct Authenticator {
     client_secret: ClientSecret,
     auth_url: AuthUrl,
     token_url: TokenUrl,
-    in_progress: HashMap<String, (u128, BasicClient)>,
-    logged_in: HashMap<String, Account>,
+    in_progress: HashMap<String, (u128, BasicClient)>, // state (time created, client)
 }
 
 impl Authenticator {
@@ -126,7 +137,6 @@ impl Authenticator {
             auth_url,
             token_url,
             in_progress: HashMap::new(),
-            logged_in: HashMap::new(),
         }
     }
 
@@ -146,71 +156,72 @@ impl Authenticator {
             .insert(csrf_state.secret().clone(), (get_system_millis(), client));
         authorize_url.to_string()
     }
+}
 
-    pub async fn response(&mut self, state: String, code: String) -> String {
-        println!(
-            "currenct state: {}\n sessions: {:?}",
-            state, self.in_progress
-        );
-        match self.in_progress.remove(&state) {
-            Some(client) => {
-                let code = AuthorizationCode::new(code);
-                if let Ok(token) = client.1.exchange_code(code).request(http_client) {
-                    if let Ok(response) = reqwest::Client::new()
-                        .get("https://api.github.com/user")
-                        .header(
-                            "Authorization",
-                            "token ".to_owned() + token.access_token().secret(),
-                        )
-                        .send()
-                        .await
-                    {
-                        if let Ok(json) = response.json::<Value>().await {
-                            if let Some(id) = json["id"].as_str() {
-                                if let Ok(account) =
-                                    Account::load(id.to_string(), "github".to_string())
-                                {
-                                    let email = account.email.clone();
-                                    self.logged_in.insert(id.to_string(), account);
-                                    return "Logged in as ".to_string()
-                                        + &id
-                                        + " with email "
-                                        + &email;
-                                } else {
-                                    if let Ok(response) = reqwest::Client::new()
-                                        .get("https://api.github.com/user/emails")
-                                        .header(
-                                            "Authorization",
-                                            "token ".to_owned() + token.access_token().secret(),
-                                        )
-                                        .send()
-                                        .await
-                                    {
-                                        if let Ok(json) = response.json::<Value>().await {
-                                            if let Some(array) = json.as_array() {
-                                                for e in array {
-                                                    if e["primary"].as_bool().unwrap() {
-                                                        let new_account = Account::new(
-                                                            id.parse().unwrap(),
-                                                            e["email"]
-                                                                .as_str()
-                                                                .unwrap()
-                                                                .to_string(),
-                                                            "github".to_string(),
-                                                        );
-                                                        if let Ok(_) = new_account.save() {
-                                                            let email = new_account.email.clone();
-                                                            self.logged_in.insert(
-                                                                id.to_string(),
-                                                                new_account,
-                                                            );
-                                                            return "Signed up as ".to_string()
-                                                                + &id
-                                                                + " with email "
-                                                                + &email;
-                                                        }
-                                                    }
+pub async fn handle_oauth(
+    logged_in: Arc<Mutex<HashMap<String, Account>>>,
+    client: Client<
+        StandardErrorResponse<BasicErrorResponseType>,
+        StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>,
+        BasicTokenType,
+    >,
+    code: String,
+) -> String {
+    let code = AuthorizationCode::new(code.clone());
+    if let Ok(token) = client.exchange_code(code).request(http_client) {
+        if let Ok(response) = reqwest::Client::new()
+            .get("https://api.github.com/user")
+            .header(
+                "Authorization",
+                "token ".to_owned() + token.access_token().secret(),
+            )
+            .send()
+            .await
+        {
+            if let Ok(json) = response.json::<Value>().await {
+                if let Some(id) = json["id"].as_str() {
+                    if let Ok(account) = Account::load(id.to_string(), "github".to_string()) {
+                        let email = account.email.clone();
+                        {
+                            logged_in
+                                .clone()
+                                .lock()
+                                .await
+                                .insert(id.to_string(), account);
+                        }
+                        return "Logged in as ".to_string() + &id + " with email " + &email;
+                    } else {
+                        if let Ok(response) = reqwest::Client::new()
+                            .get("https://api.github.com/user/emails")
+                            .header(
+                                "Authorization",
+                                "token ".to_owned() + token.access_token().secret(),
+                            )
+                            .send()
+                            .await
+                        {
+                            if let Ok(json) = response.json::<Value>().await {
+                                if let Some(array) = json.as_array() {
+                                    for e in array {
+                                        if e["primary"].as_bool().unwrap() {
+                                            let new_account = Account::new(
+                                                id.parse().unwrap(),
+                                                e["email"].as_str().unwrap().to_string(),
+                                                "github".to_string(),
+                                            );
+                                            if let Ok(_) = new_account.save() {
+                                                let email = new_account.email.clone();
+                                                {
+                                                    logged_in
+                                                        .clone()
+                                                        .lock()
+                                                        .await
+                                                        .insert(id.to_string(), new_account);
                                                 }
+                                                return "Signed up as ".to_string()
+                                                    + &id
+                                                    + " with email "
+                                                    + &email;
                                             }
                                         }
                                     }
@@ -219,11 +230,10 @@ impl Authenticator {
                         }
                     }
                 }
-                "Failed to authenticate with GitHub.".to_string()
             }
-            None => "Invalid login session.".to_string(),
         }
     }
+    "Failed to authenticate with GitHub.".to_string()
 }
 
 pub fn get_system_millis() -> u128 {
