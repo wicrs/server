@@ -60,7 +60,11 @@ struct TokenQuery {
 #[tokio::main]
 async fn main() {
     data_prep().await;
-    let logged_in = Arc::new(Mutex::new(HashMap::<u128, (String, Account)>::new()));
+    let logged_in = Arc::new(Mutex::new(HashMap::<
+        String,
+        HashMap<u128, (String, Account)>,
+    >::new()));
+    logged_in.try_lock().unwrap().insert("github".to_string(), HashMap::new());
     let authenticator = Arc::new(Mutex::new(Authenticator::github()));
     let login_auth = authenticator.clone();
     let response_auth = authenticator.clone();
@@ -81,6 +85,7 @@ async fn main() {
                 Some(client) => futures::executor::block_on(handle_oauth(
                     auth_users.clone(),
                     client.1,
+                    "github".to_string(),
                     auth.code,
                 )),
                 None => "Invalid login session.".to_string(),
@@ -106,15 +111,19 @@ async fn main() {
     });
     let query_users = logged_in.clone();
     let user = warp::get()
-        .and(warp::path!("user" / u128))
+        .and(warp::path!("user" / String / u128))
         .and(warp::query::<TokenQuery>())
-        .map(move |id: u128, token: TokenQuery| {
+        .map(move |service: String, id: u128, token: TokenQuery| {
             let query_users_arc = query_users.clone();
             let user = futures::executor::block_on(async move {
                 let arc = query_users_arc.clone();
                 let lock = arc.lock().await;
-                if let Some(account) = lock.get(&id).clone() {
-                    Some((account.0.clone(), account.1.clone()))
+                if let Some(service) = lock.get(&service) {
+                    if let Some(account) = service.get(&id).clone() {
+                        Some((account.0.clone(), account.1.clone()))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -133,7 +142,7 @@ async fn main() {
             } else {
                 Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body("Could not find that user.".to_string())
+                    .body("Bad user or service.".to_string())
             }
         });
     warp::serve(login.or(user).or(authenticate))
@@ -199,12 +208,13 @@ impl Authenticator {
 }
 
 pub async fn handle_oauth(
-    logged_in: Arc<Mutex<HashMap<u128, (String, Account)>>>,
+    logged_in: Arc<Mutex<HashMap<String, HashMap<u128, (String, Account)>>>>,
     client: Client<
         StandardErrorResponse<BasicErrorResponseType>,
         StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>,
         BasicTokenType,
     >,
+    service: String,
     code: String,
 ) -> String {
     let code = AuthorizationCode::new(code.clone());
@@ -222,11 +232,11 @@ pub async fn handle_oauth(
                 let id = user_json["id"].to_string();
                 let id_num: u128 = id.parse().unwrap();
                 let name = user_json["login"].to_string();
-                if let Ok(account) = Account::load(id.clone(), "github".to_string()) {
+                if let Ok(account) = Account::load(id.clone(), service.clone()) {
                     return format!(
                         "Signed in using GitHub account {}.\nYour access token is: {}.",
                         name,
-                        login(logged_in, account, token.clone()).await
+                        login(logged_in, service, account, token.clone()).await
                     );
                 } else {
                     let email_request = client
@@ -242,7 +252,7 @@ pub async fn handle_oauth(
                                         let mut new_account = Account::new(
                                             id_num,
                                             email_entry["email"].to_string(),
-                                            "github".to_string(),
+                                            service.clone(),
                                         );
                                         new_account.users.push(User::new(
                                             name.clone(),
@@ -251,7 +261,7 @@ pub async fn handle_oauth(
                                         ));
                                         if let Ok(_) = new_account.save() {
                                             let email = new_account.email.clone();
-                                            return format!("Signed up using GitHub account {} with ID {}, email is set to {}.\nYour access token is: {}.", name, id, email, login(logged_in, new_account, token.clone()).await);
+                                            return format!("Signed up using GitHub account {} with ID {}, email is set to {}.\nYour access token is: {}.", name, id, email, login(logged_in, service, new_account, token.clone()).await);
                                         }
                                     }
                                 }
@@ -283,7 +293,8 @@ pub async fn data_prep() {
 }
 
 pub async fn login(
-    logged_in: Arc<Mutex<HashMap<u128, (String, Account)>>>,
+    logged_in: Arc<Mutex<HashMap<String, HashMap<u128, (String, Account)>>>>,
+    service: String,
     account: Account,
     oauth_token: String,
 ) -> String {
@@ -297,6 +308,8 @@ pub async fn login(
             .clone()
             .lock()
             .await
+            .get_mut(&service)
+            .unwrap()
             .insert(account.id.clone(), (hash.clone(), account));
     }
     return hash;
