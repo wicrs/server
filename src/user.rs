@@ -1,5 +1,8 @@
 use crate::{get_system_millis, JsonLoadError, JsonSaveError, ID, new_id};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+static ACCOUNT_FOLDER: &str = "data/accounts/";
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct User {
@@ -7,12 +10,12 @@ pub struct User {
     pub username: String,
     pub bot: bool,
     pub created: u128,
-    pub owner_id: u128,
+    pub owner_id: String,
     pub in_guilds: Vec<ID>,
 }
 
 impl User {
-    pub fn new(username: String, bot: bool, owner_id: u128) -> Self {
+    pub fn new(username: String, bot: bool, owner_id: String) -> Self {
         Self {
             id: new_id(),
             username,
@@ -26,7 +29,7 @@ impl User {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Account {
-    pub id: u128,
+    pub id: String,
     pub email: String,
     pub created: u128,
     pub service: String,
@@ -34,9 +37,9 @@ pub struct Account {
 }
 
 impl Account {
-    pub fn new(id: u128, email: String, service: String) -> Self {
+    pub fn new(id: String, email: String, service: String) -> Self {
         Self {
-            id,
+            id: get_id(&id, &service),
             email,
             service,
             users: Vec::new(),
@@ -45,12 +48,11 @@ impl Account {
     }
 
     pub fn save(&self) -> Result<(), JsonSaveError> {
-        let service_path = "data/accounts/".to_owned() + &self.service + "/";
-        if let Err(_) = std::fs::create_dir_all(&service_path) {
+        if let Err(_) = std::fs::create_dir_all(ACCOUNT_FOLDER) {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = std::fs::write(service_path + &self.id.to_string(), json) {
+            if let Ok(result) = std::fs::write(ACCOUNT_FOLDER.to_owned() + &self.id.to_string(), json) {
                 Ok(result)
             } else {
                 Err(JsonSaveError::WriteFile)
@@ -60,9 +62,8 @@ impl Account {
         }
     }
 
-    pub fn load(id: String, service: String) -> Result<Self, JsonLoadError> {
-        let service_path = "data/accounts/".to_owned() + &service + "/";
-        if let Ok(json) = std::fs::read_to_string(service_path + "/" + &id) {
+    pub fn load(id: &str) -> Result<Self, JsonLoadError> {
+        if let Ok(json) = std::fs::read_to_string(ACCOUNT_FOLDER.to_owned() + id) {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
@@ -72,4 +73,15 @@ impl Account {
             Err(JsonLoadError::ReadFile)
         }
     }
+
+    pub fn load_get_id(id: &str, service: &str) -> Result<Self, JsonLoadError> {
+        Self::load(&get_id(id, service))
+    }
+}
+
+pub fn get_id(id: &str, service: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(id);
+    hasher.update(service);
+    format!("{:x}", hasher.finalize())
 }

@@ -2479,6 +2479,7 @@ dependencies = [
 name = "wirc_server"
 version = "0.1.0"
 dependencies = [
+ "base64 0.13.0",
  "futures 0.3.8",
  "oauth2",
  "rand 0.7.3",
