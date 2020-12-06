@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use crate::JsonLoadError;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub auth_services: AuthConfigs,
+    pub token_expiry_time: u128,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -18,14 +18,9 @@ pub struct AuthConfigs {
     pub github: Option<AuthConfig>,
 }
 
-pub fn load_config() -> Result<Config, JsonLoadError> {
-    if let Ok(string) = std::fs::read_to_string("config.json") {
-        if let Ok(json) = serde_json::from_str::<Config>(&string) {
-            Ok(json)
-        } else {
-            Err(JsonLoadError::Deserialize)
-        }
-    } else {
-        Err(JsonLoadError::ReadFile)
-    }
+pub fn load_config() -> Config {
+    serde_json::from_str::<Config>(
+        &std::fs::read_to_string("config.json").expect("Failed to read config file."),
+    )
+    .expect("Failed to parse JSON in config file.")
 }

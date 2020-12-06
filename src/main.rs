@@ -1,10 +1,11 @@
 #![feature(async_closure)]
 
-use futures::lock::Mutex;
+use reqwest::header::HeaderValue;
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::Mutex;
 
 use auth::{AccessToken, Auth, AuthQuery, Service};
 use user::Account;
@@ -39,6 +40,7 @@ static USER_AGENT_STRING: &str = "wirc_server";
 #[tokio::main]
 async fn main() {
     let auth = Arc::new(Mutex::new(Auth::from_config()));
+    let max_token_age = config::load_config().token_expiry_time;
     let auth_auth = auth.clone();
     let login_auth = auth.clone();
     let user_auth = auth.clone();
@@ -47,7 +49,18 @@ async fn main() {
         .and(warp::query::<AuthQuery>())
         .and_then(move |service: Service, query: AuthQuery| {
             let tmp_auth = auth_auth.clone();
-            async move { Ok::<_, Rejection>(Auth::handle_oauth(tmp_auth, service, query).await) }
+            async move {
+                let result = Auth::handle_oauth(tmp_auth, service, query).await;
+                let mut response = warp::reply::Response::new(result.0.into());
+                if let Some(id_token) = result.1 {
+                    let id = format!("id={}; SameSite=Strict; Path=/; HttpOnly", id_token.0);
+                    let token = format!("token={}; SameSite=Strict; Path=/; Max-Age={}; HttpOnly", id_token.1, max_token_age);
+                    let headers = response.headers_mut();
+                    headers.append("Set-Cookie", HeaderValue::from_str(&id).unwrap());
+                    headers.append("Set-Cookie", HeaderValue::from_str(&token).unwrap());
+                }
+                Ok::<_, Rejection>(response)
+            }
         });
     let login =
         warp::get()
@@ -60,6 +73,9 @@ async fn main() {
                     Ok::<_, Rejection>(warp::redirect::temporary(uri))
                 }
             });
+    let login_prompt = warp::get()
+        .and(warp::path("login"))
+        .map(|| warp::reply::html(get_asset("login_select.html")));
     let user = warp::get()
         .and(warp::path!("user" / String))
         .and(warp::query::<AccessToken>())
@@ -77,7 +93,8 @@ async fn main() {
                 }
             }
         });
-    warp::serve(login.or(user).or(authenticate))
+    let assets = warp::path("assets").and(warp::fs::dir("assets"));
+    warp::serve(assets.or(login).or(login_prompt).or(user).or(authenticate))
         .run(([127, 0, 0, 1], 24816))
         .await;
 }
@@ -92,4 +109,8 @@ pub fn get_system_millis() -> u128 {
 pub type ID = Uuid;
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
+}
+
+fn get_asset(file_name: &str) -> Vec<u8> {
+    std::fs::read(&("assets/".to_owned() + file_name)).unwrap_or(Vec::new())
 }

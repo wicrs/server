@@ -1,10 +1,10 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use base64::URL_SAFE_NO_PAD;
-use futures::lock::Mutex;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 use crate::{get_system_millis, user::Account, USER_AGENT_STRING};
 
@@ -50,9 +50,7 @@ impl Auth {
     pub fn from_config() -> Self {
         std::fs::create_dir_all("data/accounts")
             .expect("Failed to create the ./data/accounts directory.");
-        let auth_config = crate::config::load_config()
-            .expect("Failed to load auth config. This requires auth to function.")
-            .auth_services;
+        let auth_config = crate::config::load_config().auth_services;
         let github_conf = auth_config.github.expect(
             "GitHub is currently the only support authentication provider, it cannot be empty.",
         );
@@ -103,7 +101,8 @@ impl Auth {
         manager: Arc<Mutex<Self>>,
         service: Service,
         query: AuthQuery,
-    ) -> String {
+    ) -> (String, Option<(String, String)>) {
+        // (message, (id, token))
         match service {
             Service::GitHub => {
                 let service_arc;
@@ -261,7 +260,13 @@ impl GitHub {
         authorize_url.to_string()
     }
 
-    async fn handle_oauth(&self, manager: Arc<Mutex<Auth>>, state: String, code: String) -> String {
+    async fn handle_oauth(
+        &self,
+        manager: Arc<Mutex<Auth>>,
+        state: String,
+        code: String,
+    ) -> (String, Option<(String, String)>) {
+        // (message, (id, token))
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());
             if let Ok(token) = client.1.exchange_code(code).request(http_client) {
@@ -271,26 +276,38 @@ impl GitHub {
                         let auth = Auth::finalize_login(manager, "github", &id, email).await;
                         if let Some(info) = auth.1 {
                             if auth.0 {
-                                return String::from(format!(
+                                return (
+                                    String::from(format!(
                                     "Signed in using GitHub to ID {}.\nYour access token is: {}",
                                     info.0, info.1
-                                ));
+                                )),
+                                    Some((info.0, info.1)),
+                                );
                             } else {
-                                return String::from(format!("Signed up using GitHub, your ID is {}.\nYour access token is: {}", info.0, info.1));
+                                return (String::from(format!("Signed up using GitHub, your ID is {}.\nYour access token is: {}", info.0, info.1)), Some((info.0, info.1)));
                             }
                         }
                         if auth.0 {
-                            return String::from("Sign in failed.");
+                            return (String::from("Sign in failed."), None);
                         } else {
-                            return String::from("Sign up failed.");
+                            return (String::from("Sign up failed."), None);
                         }
                     }
-                    return String::from("Failed to get the primary email of your GitHub account.");
+                    return (
+                        String::from("Failed to get the primary email of your GitHub account."),
+                        None,
+                    );
                 }
-                return String::from("Failed to get the ID of your GitHub account.");
+                return (
+                    String::from("Failed to get the ID of your GitHub account."),
+                    None,
+                );
             }
-            return String::from("Failed to get an access token from the code.");
+            return (
+                String::from("Failed to get an access token from the code."),
+                None,
+            );
         }
-        return String::from("Invalid session.");
+        return (String::from("Invalid session."), None);
     }
 }
