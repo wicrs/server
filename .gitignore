@@ -1,6 +1,5 @@
 /target
-data
+/data
 .DS_Store
-config.json
-.vscode
-message_test
+/config.json
+/.vscode

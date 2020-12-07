@@ -1,17 +1,19 @@
 use std::str::FromStr;
 
-use std::io::prelude::*;
+use tokio::{fs, prelude::*};
 
-use std::fs::OpenOptions;
+use rayon::{prelude::*, str::Lines};
 
-use crate::{ID, get_system_millis};
+use fs::OpenOptions;
+
+use crate::{get_system_millis, ID};
 
 pub struct Channel {
-    pub messages: String,
+    pub messages: Vec<Message>,
     pub id: ID,
     pub server_id: ID,
     pub name: String,
-    pub created: u128
+    pub created: u128,
 }
 
 impl Channel {
@@ -20,8 +22,8 @@ impl Channel {
             name,
             id,
             server_id,
-            messages: String::new(),
-            created: crate::get_system_millis()
+            messages: Vec::new(),
+            created: crate::get_system_millis(),
         };
         if let Ok(_) = new.create_dir().await {
             Ok(new)
@@ -30,15 +32,28 @@ impl Channel {
         }
     }
 
-    pub async fn create_dir(&self) -> tokio::io::Result<()> {
-        tokio::fs::create_dir_all(format!("data/servers/{}/{}", self.server_id, self.id)).await
+    pub fn get_folder(&self) -> String {
+        format!("data/servers/{}/{}", self.server_id, self.id)
     }
 
-    pub async fn add_message(&mut self, message: Message) -> Result<(),()> {
+    pub async fn create_dir(&self) -> tokio::io::Result<()> {
+        tokio::fs::create_dir_all(self.get_folder()).await
+    }
+
+    pub async fn add_message(&mut self, message: Message) -> Result<(), ()> {
         let message_string = &message.to_string();
-        if let Ok(mut file) = OpenOptions::new().write(true).create(true).append(true).open(format!("data/servers/{}/{}/{}", self.server_id, self.id, get_system_millis() / 1000 / 60 / 60 / 24)) {
-            if let Ok(_) = file.write((message_string.to_owned() + "\n").as_bytes()) {
-                self.messages.push_str(message_string);
+        if let Ok(mut file) = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(self.get_current_file().await)
+            .await
+        {
+            if let Ok(_) = file
+                .write((message_string.to_owned() + "\n").as_bytes())
+                .await
+            {
+                self.messages.push(message);
                 Ok(())
             } else {
                 Err(())
@@ -47,9 +62,89 @@ impl Channel {
             Err(())
         }
     }
+
+    pub async fn on_all_raw_lines<F: FnMut(Lines) -> ()>(&self, mut action: F) {
+        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+            let mut whole_file = String::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    if let Ok(mut file) = fs::File::open(entry.path()).await {
+                        whole_file.clear();
+                        if let Ok(_) = file.read_to_string(&mut whole_file).await {
+                            let lines = whole_file.par_lines();
+                            action(lines)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn find_messages_containing(&self, string: String) -> Vec<ID> {
+        let mut results: Vec<ID> = Vec::new();
+        self.on_all_raw_lines(|lines| {
+            let mut result: Vec<ID> = lines
+                .filter(|l| l.contains(&string))
+                .filter_map(|m| {
+                    if let Ok(message) = m.parse::<Message>() {
+                        if message.content.contains(&string) {
+                            Some(message.id)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            result.par_sort_unstable();
+            results.append(&mut result);
+        })
+        .await;
+        results
+    }
+
+    pub async fn get_message(&self, id: String) -> Option<Message> {
+        for message in self.messages.iter() {
+            if message.id.to_string() == id {
+                return Some(message.clone());
+            }
+        }
+        let id = id.as_str();
+        let mut result: Option<Message> = None;
+        self.on_all_raw_lines(|lines| {
+            let mut results: Vec<Message> = lines
+                .filter_map(|l| {
+                    if l.starts_with(id) {
+                        if let Ok(message) = l.parse::<Message>() {
+                            Some(message)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            results.par_sort_unstable_by_key(|m| m.created);
+            if let Some(message) = results.first() {
+                result = Some(message.clone());
+            }
+        })
+        .await;
+        return result;
+    }
+
+    pub async fn get_current_file(&mut self) -> String {
+        let now = get_system_millis() / 1000 / 60 / 60 / 24;
+        self.messages.reverse();
+        self.messages.truncate(100);
+        self.messages.reverse();
+        format!("{}/{}", self.get_folder(), now)
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub id: ID,
     pub sender: ID,
@@ -57,9 +152,15 @@ pub struct Message {
     pub content: String,
 }
 
-impl ToString for Message  {
+impl ToString for Message {
     fn to_string(&self) -> String {
-        format!("{},{},{},{}", self.id.to_string(), self.sender.to_string(), self.created, self.content.replace('\n', r#"\n"#))
+        format!(
+            "{},{},{:0>39},{}",
+            self.id.to_string(),
+            self.sender.to_string(),
+            self.created,
+            self.content.replace('\n', r#"\n"#)
+        )
     }
 }
 
@@ -79,7 +180,7 @@ impl FromStr for Message {
                                         id,
                                         sender,
                                         created,
-                                        content: content.replace(r#"\,"#, ",").replace(r#"\n"#, "\n")
+                                        content: content.replace(r#"\n"#, "\n"),
                                     });
                                 }
                             }

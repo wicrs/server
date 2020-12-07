@@ -17,6 +17,4 @@ sha2 = "0.9"
 tokio = { version = "0.2", features = ["macros"] }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 warp = "0.2"
-redis = { version = "0.17", features = ["tokio-comp"] }
-mobc = "0.5"
-mobc-redis = "0.5"
+rayon = "1.5"
