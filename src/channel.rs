@@ -80,27 +80,23 @@ impl Channel {
         }
     }
 
-    pub async fn find_messages_containing(&self, string: String) -> Vec<ID> {
-        let mut results: Vec<ID> = Vec::new();
+    pub async fn find_messages_containing(&self, string: String) -> Vec<Message> {
+        let mut results: Vec<Message> = Vec::new();
         self.on_all_raw_lines(|lines| {
-            let mut result: Vec<ID> = lines
-                .filter(|l| l.contains(&string))
+            let mut result: Vec<Message> = lines
+                .filter(|l| l.splitn(4, ',').last().unwrap_or("").contains(&string))
                 .filter_map(|m| {
                     if let Ok(message) = m.parse::<Message>() {
-                        if message.content.contains(&string) {
-                            Some(message.id)
-                        } else {
-                            None
-                        }
+                        Some(message)
                     } else {
                         None
                     }
                 })
                 .collect();
-            result.par_sort_unstable();
+            result.par_sort_unstable_by_key(|m| m.created);
             results.append(&mut result);
         })
-        .await;
+            .await;
         results
     }
 
@@ -131,7 +127,7 @@ impl Channel {
                 result = Some(message.clone());
             }
         })
-        .await;
+            .await;
         return result;
     }
 

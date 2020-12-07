@@ -44,13 +44,9 @@ async fn channel_test() {
         find.len(),
         now.elapsed().as_micros()
     );
-    let mut found = Vec::new();
-    for message in channel.find_messages_containing("128".to_string()).await {
-        found.push(message.to_string());
-    }
-    if let Some(id) = found.get(found.len() / 2) {
+    if let Some(message) = find.get(find.len() / 2) {
         let now = Instant::now();
-        if let Some(message) = channel.get_message(id.clone()).await {
+        if let Some(message) = channel.get_message(message.id.to_string()).await {
             println!("First message found was \"{}\", it took {} micros to retrieve it.", message.content, now.elapsed().as_micros());
         }
     }
