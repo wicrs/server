@@ -1,26 +1,51 @@
 use std::str::FromStr;
 
-use crate::ID;
+use std::io::prelude::*;
+
+use std::fs::OpenOptions;
+
+use crate::{ID, get_system_millis};
 
 pub struct Channel {
     pub messages: String,
     pub id: ID,
+    pub server_id: ID,
     pub name: String,
     pub created: u128
 }
 
 impl Channel {
-    pub fn new(name: String, id: ID) -> Self {
-        Self {
+    pub async fn new(name: String, id: ID, server_id: ID) -> Result<Self, ()> {
+        let new = Self {
             name,
             id,
+            server_id,
             messages: String::new(),
             created: crate::get_system_millis()
+        };
+        if let Ok(_) = new.create_dir().await {
+            Ok(new)
+        } else {
+            Err(())
         }
     }
 
-    pub fn add_raw_message(&mut self, message: Message) {
-        self.messages.push_str(&message.to_string())
+    pub async fn create_dir(&self) -> tokio::io::Result<()> {
+        tokio::fs::create_dir_all(format!("data/servers/{}/{}", self.server_id, self.id)).await
+    }
+
+    pub async fn add_message(&mut self, message: Message) -> Result<(),()> {
+        let message_string = &message.to_string();
+        if let Ok(mut file) = OpenOptions::new().write(true).create(true).append(true).open(format!("data/servers/{}/{}/{}", self.server_id, self.id, get_system_millis() / 1000 / 60 / 60 / 24)) {
+            if let Ok(_) = file.write((message_string.to_owned() + "\n").as_bytes()) {
+                self.messages.push_str(message_string);
+                Ok(())
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
     }
 }
 

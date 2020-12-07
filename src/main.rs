@@ -1,7 +1,7 @@
 #![feature(async_closure)]
 
 use reqwest::header::HeaderValue;
-use std::{sync::Arc, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use tokio::sync::Mutex;
 
 use auth::{AccessToken, Auth, AuthQuery, Service};
@@ -11,13 +11,12 @@ use uuid::Uuid;
 
 use warp::{http::Uri, Filter, Rejection};
 
-use channel::Message;
-
 pub mod auth;
 pub mod channel;
 pub mod config;
 pub mod guild;
 pub mod permission;
+pub mod testing;
 pub mod user;
 
 #[derive(Eq, PartialEq, Debug)]
@@ -37,7 +36,7 @@ static USER_AGENT_STRING: &str = "wirc_server";
 
 #[tokio::main]
 async fn main() {
-    message_test();
+    testing::run().await;
     let auth = Arc::new(Mutex::new(Auth::from_config()));
     let max_token_age = config::load_config().token_expiry_time;
     let auth_auth = auth.clone();
@@ -112,42 +111,4 @@ pub fn new_id() -> ID {
 
 fn get_asset(file_name: &str) -> Vec<u8> {
     std::fs::read(&("assets/".to_owned() + file_name)).unwrap_or(Vec::new())
-}
-
-fn message_test() {
-    let mut messages = Vec::new();
-    for i in 0..10000 {
-        messages.push(Message {
-            id: new_id(),
-            sender: new_id(),
-            created: get_system_millis(),
-            content: "testing, here is a number:\n".to_string() + &i.to_string()
-        })
-    }
-    let mut message_strings = Vec::new();
-    let now = Instant::now();
-    for message in messages.iter() {
-        message_strings.push(message.to_string());
-    }
-    println!("10000 messages to strings took {} micros.", now.elapsed().as_micros());
-    let mut messages_parsed = Vec::new();
-    let now = Instant::now();
-    for message_string in message_strings.iter() {
-        if let Ok(message) = message_string.parse::<Message>() {
-            messages_parsed.push(message);
-        }
-    }
-    println!("10000 strings to messages took {} micros.", now.elapsed().as_micros());
-    let mut parsed_message_strings = Vec::new();
-    let now = Instant::now();
-    if let Ok(_) = std::fs::write("message_test", message_strings.join("\n")) {
-        println!("Writing 10000 messages to file took {} micros.", now.elapsed().as_micros());
-        let now = Instant::now();
-        if let Ok(string) = std::fs::read_to_string("message_test") {
-            for message_string in string.split('\n').into_iter() {
-                parsed_message_strings.push(format!("{:?}", message_string));
-            }
-        }
-        println!("Reading 10000 messages from file took {} micros.", now.elapsed().as_micros());
-    }
 }
