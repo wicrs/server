@@ -93,7 +93,6 @@ impl Channel {
                     }
                 })
                 .collect();
-            result.par_sort_unstable_by_key(|m| m.created);
             results.append(&mut result);
         })
             .await;
@@ -109,7 +108,7 @@ impl Channel {
         let id = id.as_str();
         let mut result: Option<Message> = None;
         self.on_all_raw_lines(|lines| {
-            let mut results: Vec<Message> = lines
+            let results: Vec<Message> = lines
                 .filter_map(|l| {
                     if l.starts_with(id) {
                         if let Ok(message) = l.parse::<Message>() {
@@ -122,7 +121,6 @@ impl Channel {
                     }
                 })
                 .collect();
-            results.par_sort_unstable_by_key(|m| m.created);
             if let Some(message) = results.first() {
                 result = Some(message.clone());
             }
