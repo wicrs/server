@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub auth_services: AuthConfigs,
     pub token_expiry_time: u128,
+    pub redis_address: String,
 }
 
 #[derive(Serialize, Deserialize)]
