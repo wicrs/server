@@ -80,14 +80,17 @@ impl Channel {
         }
     }
 
-    pub async fn find_messages_containing(&self, string: String) -> Vec<Message> {
+    pub async fn find_messages_containing(&self, string: &str) -> Vec<Message> {
         let mut results: Vec<Message> = Vec::new();
         self.on_all_raw_lines(|lines| {
             let mut result: Vec<Message> = lines
-                .filter(|l| l.splitn(4, ',').last().unwrap_or("").contains(&string))
-                .filter_map(|m| {
-                    if let Ok(message) = m.parse::<Message>() {
-                        Some(message)
+                .filter_map(|l| {
+                    if l.splitn(4, ',').last().unwrap_or("").contains(string) {
+                        if let Ok(message) = l.parse::<Message>() {
+                            Some(message)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -95,7 +98,7 @@ impl Channel {
                 .collect();
             results.append(&mut result);
         })
-            .await;
+        .await;
         results
     }
 
@@ -125,7 +128,7 @@ impl Channel {
                 result = Some(message.clone());
             }
         })
-            .await;
+        .await;
         return result;
     }
 
