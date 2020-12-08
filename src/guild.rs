@@ -1,12 +1,13 @@
-use std::{
-    collections::{HashMap, HashSet},
-    vec,
-};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
-use crate::{ID, channel::Channel, get_system_millis, new_id, permission::{
+use crate::{ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, channel::{Channel, Message}, get_system_millis, new_id, permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
     }, user::User};
 
+static GUILD_INFO_FOLDER: &str = "data/guilds/info";
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GuildMember {
     pub user: User,
     pub joined: u128,
@@ -25,6 +26,15 @@ impl GuildMember {
             joined: get_system_millis(),
             guild_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
+        }
+    }
+
+    pub fn set_nickname(&mut self, nickname: String) -> Result<(), ()> {
+        if nickname.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+            self.nickname = nickname;
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
@@ -59,7 +69,8 @@ impl GuildMember {
             if value == &PermissionSetting::TRUE {
                 return true;
             }
-        } false
+        }
+        false
     }
 
     pub fn has_permission(&mut self, permission: GuildPermission, guild: &Guild) -> bool {
@@ -122,6 +133,7 @@ impl GuildMember {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Rank {
     pub id: ID,
     pub name: String,
@@ -169,7 +181,8 @@ impl Rank {
             if value == &PermissionSetting::TRUE {
                 return true;
             }
-        } false
+        }
+        false
     }
 
     pub fn has_permission(&self, permission: &GuildPermission) -> bool {
@@ -199,8 +212,9 @@ impl Rank {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Guild {
-    pub channels: Vec<Channel>,
+    pub channels: HashMap<ID, Channel>,
     pub users: HashMap<ID, GuildMember>,
     pub bans: HashSet<ID>,
     pub owner: ID,
@@ -229,9 +243,55 @@ impl Guild {
             default_rank: new_id(),
             owner: creator_id,
             bans: HashSet::new(),
-            channels: vec![],
+            channels: HashMap::new(),
             users,
             created: get_system_millis(),
+        }
+    }
+
+    pub async fn send_message(&mut self, user: ID, channel: ID, message: String) -> Result<(), ()> {
+        if let Some(user) = self.users.get(&user) {
+            if user.clone().has_channel_permission(&channel, &ChannelPermission::SendMessage, self) {
+                if let Some(channel) = self.channels.get_mut(&channel) {
+                    let message = Message {
+                        id: new_id(),
+                        sender: user.user.id.clone(),
+                        created: get_system_millis(),
+                        content: message,
+                    };
+                    return channel.add_message(message).await;
+                }
+            }
+        }
+        return Err(());
+    }
+
+    pub fn save(&self) -> Result<(), JsonSaveError> {
+        if let Err(_) = std::fs::create_dir_all(GUILD_INFO_FOLDER) {
+            return Err(JsonSaveError::Directory);
+        }
+        if let Ok(json) = serde_json::to_string(self) {
+            if let Ok(result) =
+                std::fs::write(GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string(), json)
+            {
+                Ok(result)
+            } else {
+                Err(JsonSaveError::WriteFile)
+            }
+        } else {
+            Err(JsonSaveError::Serialize)
+        }
+    }
+
+    pub async fn load(id: &str) -> Result<Self, JsonLoadError> {
+        if let Ok(json) = tokio::fs::read_to_string(GUILD_INFO_FOLDER.to_owned() + "/" + id).await {
+            if let Ok(result) = serde_json::from_str(&json) {
+                Ok(result)
+            } else {
+                Err(JsonLoadError::Deserialize)
+            }
+        } else {
+            Err(JsonLoadError::ReadFile)
         }
     }
 

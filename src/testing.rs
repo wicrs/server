@@ -1,5 +1,4 @@
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
+use rand::{Rng, distributions::Alphanumeric, thread_rng};
 use std::{iter, path::Path, time::Instant};
 
 use uuid::Uuid;
@@ -32,7 +31,7 @@ async fn channel_test() {
                     created: get_system_millis(),
                     content: iter::repeat(())
                         .map(|()| rng.sample(Alphanumeric))
-                        .take(7)
+                        .take(128)
                         .collect(),
                 })
                 .await
@@ -47,7 +46,9 @@ async fn channel_test() {
         );
     }
     let now = Instant::now();
-    let mut find = channel.find_messages_containing(search_string.as_str()).await;
+    let mut find = channel
+        .find_messages_containing(search_string.as_str(), false)
+        .await;
     println!(
         "Found {} messages containing \"{}\" in {} micros.",
         find.len(),

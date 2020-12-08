@@ -1,7 +1,10 @@
 #![feature(async_closure)]
 
 use reqwest::header::HeaderValue;
-use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::sync::Mutex;
 
 use auth::{AccessToken, Auth, AuthQuery, Service};
@@ -33,6 +36,8 @@ pub enum JsonSaveError {
 }
 
 static USER_AGENT_STRING: &str = "wirc_server";
+static NAME_ALLOWED_CHARS: &str =
+    " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 #[tokio::main]
 async fn main() {
@@ -43,7 +48,7 @@ async fn main() {
     let login_auth = auth.clone();
     let user_auth = auth.clone();
     let authenticate = warp::get()
-        .and(warp::path!("authenticate" / Service))
+        .and(warp::path!("auth" / Service))
         .and(warp::query::<AuthQuery>())
         .and_then(move |service: Service, query: AuthQuery| {
             let tmp_auth = auth_auth.clone();
@@ -52,7 +57,10 @@ async fn main() {
                 let mut response = warp::reply::Response::new(result.0.into());
                 if let Some(id_token) = result.1 {
                     let id = format!("id={}; SameSite=Strict; Path=/; HttpOnly", id_token.0);
-                    let token = format!("token={}; SameSite=Strict; Path=/; Max-Age={}; HttpOnly", id_token.1, max_token_age);
+                    let token = format!(
+                        "token={}; SameSite=Strict; Path=/; Max-Age={}; HttpOnly",
+                        id_token.1, max_token_age
+                    );
                     let headers = response.headers_mut();
                     headers.append("Set-Cookie", HeaderValue::from_str(&id).unwrap());
                     headers.append("Set-Cookie", HeaderValue::from_str(&token).unwrap());
@@ -81,7 +89,7 @@ async fn main() {
             let tmp_auth = user_auth.clone();
             async move {
                 if Auth::is_authenticated(tmp_auth, id.clone(), token).await {
-                    if let Ok(user) = Account::load(&id) {
+                    if let Ok(user) = Account::load(&id).await {
                         Ok::<_, warp::Rejection>(warp::reply::json(&user))
                     } else {
                         Err(warp::reject::not_found())
@@ -92,8 +100,8 @@ async fn main() {
             }
         });
     let assets = warp::path("assets").and(warp::fs::dir("assets"));
-    warp::serve(assets.or(login).or(login_prompt).or(user).or(authenticate))
-        .run(([127, 0, 0, 1], 24816))
+    warp::serve(warp::path("v1").and(assets.or(login).or(login_prompt).or(user).or(authenticate)))
+        .run(([127, 0, 0, 1], config::load_config().port))
         .await;
 }
 

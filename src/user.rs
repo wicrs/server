@@ -1,4 +1,6 @@
-use crate::{get_system_millis, JsonLoadError, JsonSaveError, ID, new_id};
+use std::collections::HashMap;
+
+use crate::{ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, get_system_millis, guild::Guild, new_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -8,21 +10,23 @@ static ACCOUNT_FOLDER: &str = "data/accounts/";
 pub struct User {
     pub id: ID,
     pub username: String,
-    pub bot: bool,
     pub created: u128,
-    pub owner_id: String,
+    pub parent_id: String,
     pub in_guilds: Vec<ID>,
 }
 
 impl User {
-    pub fn new(username: String, bot: bool, owner_id: String) -> Self {
-        Self {
-            id: new_id(),
-            username,
-            bot,
-            owner_id,
-            created: get_system_millis(),
-            in_guilds: Vec::new(),
+    pub fn new(username: String, parent_id: String) -> Result<Self, ()> {
+        if username.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+            Ok(Self {
+                id: new_id(),
+                username,
+                parent_id,
+                created: get_system_millis(),
+                in_guilds: Vec::new(),
+            })
+        } else {
+            Err(())
         }
     }
 }
@@ -33,7 +37,7 @@ pub struct Account {
     pub email: String,
     pub created: u128,
     pub service: String,
-    pub users: Vec<User>,
+    pub users: HashMap<ID, User>,
 }
 
 impl Account {
@@ -42,17 +46,30 @@ impl Account {
             id: get_id(&id, &service),
             email,
             service,
-            users: Vec::new(),
+            users: HashMap::new(),
             created: get_system_millis(),
         }
     }
 
-    pub fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = std::fs::create_dir_all(ACCOUNT_FOLDER) {
+    pub async fn send_message(&self, user: ID, guild: ID, channel: ID, message: String) -> Result<(), ()> {
+        if let Some(user) = self.users.get(&user) {
+            if user.in_guilds.contains(&guild) {
+                if let Ok(mut guild) = Guild::load(&guild.to_string()).await {
+                    return guild.send_message(user.id, channel, message).await;
+                }
+            }
+        }
+        return Err(());
+    }
+
+    pub async fn save(&self) -> Result<(), JsonSaveError> {
+        if let Err(_) = tokio::fs::create_dir_all(ACCOUNT_FOLDER).await {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = std::fs::write(ACCOUNT_FOLDER.to_owned() + &self.id.to_string(), json) {
+            if let Ok(result) =
+                std::fs::write(ACCOUNT_FOLDER.to_owned() + &self.id.to_string(), json)
+            {
                 Ok(result)
             } else {
                 Err(JsonSaveError::WriteFile)
@@ -62,8 +79,8 @@ impl Account {
         }
     }
 
-    pub fn load(id: &str) -> Result<Self, JsonLoadError> {
-        if let Ok(json) = std::fs::read_to_string(ACCOUNT_FOLDER.to_owned() + id) {
+    pub async fn load(id: &str) -> Result<Self, JsonLoadError> {
+        if let Ok(json) = tokio::fs::read_to_string(ACCOUNT_FOLDER.to_owned() + id).await {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
@@ -74,8 +91,8 @@ impl Account {
         }
     }
 
-    pub fn load_get_id(id: &str, service: &str) -> Result<Self, JsonLoadError> {
-        Self::load(&get_id(id, service))
+    pub async fn load_get_id(id: &str, service: &str) -> Result<Self, JsonLoadError> {
+        Self::load(&get_id(id, service)).await
     }
 }
 

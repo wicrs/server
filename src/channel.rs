@@ -4,11 +4,18 @@ use tokio::{fs, prelude::*};
 
 use rayon::{prelude::*, str::Lines};
 
+use serde::{Deserialize, Serialize};
+
 use fs::OpenOptions;
+use uuid::Uuid;
 
 use crate::{get_system_millis, ID};
 
+static GUILD_DATA_FOLDER: &str = "data/guilds/data";
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Channel {
+    #[serde(skip)]
     pub messages: Vec<Message>,
     pub id: ID,
     pub server_id: ID,
@@ -33,7 +40,7 @@ impl Channel {
     }
 
     pub fn get_folder(&self) -> String {
-        format!("data/servers/{}/{}", self.server_id, self.id)
+        format!("{}/{}/{}", GUILD_DATA_FOLDER, self.server_id, self.id)
     }
 
     pub async fn create_dir(&self) -> tokio::io::Result<()> {
@@ -80,11 +87,16 @@ impl Channel {
         }
     }
 
-    pub async fn find_messages_containing(&self, string: &str) -> Vec<Message> {
+    pub async fn find_messages_containing(&self, string: &str, case_sensitive: bool) -> Vec<Message> {
         let mut results: Vec<Message> = Vec::new();
+        let string = string;
+        if !case_sensitive {
+            string.to_ascii_lowercase();
+        }
         self.on_all_raw_lines(|lines| {
             let mut result: Vec<Message> = lines
                 .filter_map(|l| {
+                    if case_sensitive {
                     if l.splitn(4, ',').last().unwrap_or("").contains(string) {
                         if let Ok(message) = l.parse::<Message>() {
                             Some(message)
@@ -93,7 +105,18 @@ impl Channel {
                         }
                     } else {
                         None
-                    }
+                    } 
+                 } else {
+                    if l.splitn(4, ',').last().unwrap_or("").to_ascii_lowercase().contains(string) {
+                        if let Ok(message) = l.parse::<Message>() {
+                            Some(message)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    } 
+                 }
                 })
                 .collect();
             results.append(&mut result);
@@ -152,9 +175,9 @@ pub struct Message {
 impl ToString for Message {
     fn to_string(&self) -> String {
         format!(
-            "{},{},{:0>39},{}",
-            self.id.to_string(),
-            self.sender.to_string(),
+            "{},{},{},{}",
+            self.id.as_u128(),
+            self.sender.as_u128(),
             self.created,
             self.content.replace('\n', r#"\n"#)
         )
@@ -167,9 +190,9 @@ impl FromStr for Message {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(4, ',');
         if let Some(id_str) = parts.next() {
-            if let Ok(id) = id_str.parse::<ID>() {
+            if let Ok(id) = uuid_from_num_string(id_str) {
                 if let Some(sender_str) = parts.next() {
-                    if let Ok(sender) = sender_str.parse::<ID>() {
+                    if let Ok(sender) = uuid_from_num_string(sender_str) {
                         if let Some(created_str) = parts.next() {
                             if let Ok(created) = created_str.parse::<u128>() {
                                 if let Some(content) = parts.next() {
@@ -187,5 +210,13 @@ impl FromStr for Message {
             }
         }
         return Err(());
+    }
+}
+
+fn uuid_from_num_string(string: &str) -> Result<Uuid, ()> {
+    if let Ok(num) = string.parse::<u128>() {
+        Ok(Uuid::from_u128(num))
+    } else {
+        Err(())
     }
 }

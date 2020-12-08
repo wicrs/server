@@ -127,13 +127,13 @@ impl Auth {
     ) -> (bool, Option<(String, String)>) {
         let account_existed;
         let account;
-        if let Ok(loaded_account) = Account::load_get_id(id, service) {
+        if let Ok(loaded_account) = Account::load_get_id(id, service).await {
             account = loaded_account;
             account_existed = true;
         } else {
             account_existed = false;
             let new_account = Account::new(id.to_string(), email, service.to_string());
-            if let Ok(_) = new_account.save() {
+            if let Ok(_) = new_account.save().await {
                 account = new_account;
             } else {
                 return (account_existed, None);
