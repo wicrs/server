@@ -1,0 +1,10 @@
+{
+    "auth_services": {
+        "github": {
+            "enabled": true,
+            "client_id": "github oauth app client id",
+            "client_secret": "github oauth app client secret"
+        }
+    },
+    "port": 80
+}

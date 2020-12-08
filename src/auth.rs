@@ -102,7 +102,6 @@ impl Auth {
         service: Service,
         query: AuthQuery,
     ) -> (String, Option<(String, String)>) {
-        // (message, (id, token))
         match service {
             Service::GitHub => {
                 let service_arc;
@@ -266,7 +265,6 @@ impl GitHub {
         state: String,
         code: String,
     ) -> (String, Option<(String, String)>) {
-        // (message, (id, token))
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());
             if let Ok(token) = client.1.exchange_code(code).request(http_client) {

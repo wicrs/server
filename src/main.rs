@@ -1,6 +1,4 @@
-#![feature(async_closure)]
-
-use reqwest::header::HeaderValue;
+use serde::{Deserialize, Serialize};
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -39,11 +37,16 @@ static USER_AGENT_STRING: &str = "wirc_server";
 static NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+#[derive(Serialize, Deserialize)]
+struct IdToken {
+    id: String,
+    token: String,
+}
+
 #[tokio::main]
 async fn main() {
     testing::run().await;
     let auth = Arc::new(Mutex::new(Auth::from_config()));
-    let max_token_age = config::load_config().token_expiry_time;
     let auth_auth = auth.clone();
     let login_auth = auth.clone();
     let user_auth = auth.clone();
@@ -54,18 +57,14 @@ async fn main() {
             let tmp_auth = auth_auth.clone();
             async move {
                 let result = Auth::handle_oauth(tmp_auth, service, query).await;
-                let mut response = warp::reply::Response::new(result.0.into());
                 if let Some(id_token) = result.1 {
-                    let id = format!("id={}; SameSite=Strict; Path=/; HttpOnly", id_token.0);
-                    let token = format!(
-                        "token={}; SameSite=Strict; Path=/; Max-Age={}; HttpOnly",
-                        id_token.1, max_token_age
-                    );
-                    let headers = response.headers_mut();
-                    headers.append("Set-Cookie", HeaderValue::from_str(&id).unwrap());
-                    headers.append("Set-Cookie", HeaderValue::from_str(&token).unwrap());
+                    Ok::<_, Rejection>(warp::reply::json(&IdToken {
+                        id: id_token.0,
+                        token: id_token.1,
+                    }))
+                } else {
+                    Ok::<_, Rejection>(warp::reply::json(&result.0))
                 }
-                Ok::<_, Rejection>(response)
             }
         });
     let login =
