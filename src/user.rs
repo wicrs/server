@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, get_system_millis, guild::Guild, new_id};
+use crate::{
+    get_system_millis,
+    guild::{Guild, SendMessageError},
+    new_id, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -51,15 +55,26 @@ impl Account {
         }
     }
 
-    pub async fn send_message(&self, user: ID, guild: ID, channel: ID, message: String) -> Result<(), ()> {
+    pub async fn send_guild_message(
+        &self,
+        user: ID,
+        guild: ID,
+        channel: ID,
+        message: String,
+    ) -> Result<(), SendMessageError> {
         if let Some(user) = self.users.get(&user) {
             if user.in_guilds.contains(&guild) {
                 if let Ok(mut guild) = Guild::load(&guild.to_string()).await {
-                    return guild.send_message(user.id, channel, message).await;
+                    guild.send_message(user.id, channel, message).await
+                } else {
+                    Err(SendMessageError::GuildNotFound)
                 }
+            } else {
+                Err(SendMessageError::NotInGuild)
             }
+        } else {
+            Err(SendMessageError::UserNotFound)
         }
-        return Err(());
     }
 
     pub async fn save(&self) -> Result<(), JsonSaveError> {

@@ -11,12 +11,17 @@ pub enum PermissionSetting {
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
 pub enum GuildPermission {
     All,
+    ViewChannels,
+    ConfigureChannels,
     Administrate,
     CreateChannel,
     DeleteChannel,
     CreateCategory,
     DeleteCategory,
     ArrangeChannels,
+    SendMessage,
+    ReadMessage,
+    MuteUser,
     Invite,
     Kick,
     Ban,
@@ -29,12 +34,22 @@ pub type GuildPremissions = HashMap<GuildPermission, PermissionSetting>;
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
 pub enum ChannelPermission {
     SendMessage,
-    ReadMessages,
-    ManageChannel,
-    EditChannel,
-    DeleteMessages,
+    ReadMessage,
+    ViewChannel,
+    Configure,
     MuteUser,
-    BypassSlowmode,
+}
+
+impl ChannelPermission {
+    pub fn guild_equivalent(&self) -> GuildPermission {
+        match self {
+            ChannelPermission::SendMessage => GuildPermission::SendMessage,
+            ChannelPermission::ReadMessage => GuildPermission::ReadMessage,
+            ChannelPermission::ViewChannel => GuildPermission::ViewChannels,
+            ChannelPermission::Configure => GuildPermission::ConfigureChannels,
+            ChannelPermission::MuteUser => GuildPermission::MuteUser
+        }
+    }
 }
 
 pub type ChannelPermissions = HashMap<ChannelPermission, PermissionSetting>;

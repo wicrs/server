@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use crate::{get_system_millis, user::Account, USER_AGENT_STRING};
+use crate::{ID, USER_AGENT_STRING, get_system_millis, user::Account};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -22,8 +22,15 @@ pub struct AuthQuery {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct AccessToken {
-    access_token: String,
+pub struct TokenQuery {
+    pub token: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UserQuery {
+    pub account: String,
+    pub user: ID,
+    pub token: String
 }
 
 pub enum Service {
@@ -66,7 +73,7 @@ impl Auth {
     pub async fn is_authenticated(
         manager: Arc<Mutex<Self>>,
         id: String,
-        token: AccessToken,
+        token: String,
     ) -> bool {
         let sessions_arc;
         let sessions_lock;
@@ -76,7 +83,7 @@ impl Auth {
             sessions_lock = sessions_arc.lock().await;
         }
         if let Some(auth_token) = sessions_lock.get(&id) {
-            token.access_token == auth_token.clone()
+            token == auth_token.clone()
         } else {
             false
         }

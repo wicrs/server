@@ -1,16 +1,33 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::{ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, channel::{Channel, Message}, get_system_millis, new_id, permission::{
+use crate::{
+    channel::{Channel, Message},
+    get_system_millis, new_id,
+    permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
-    }, user::User};
+    },
+    user::User,
+    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+};
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
+
+pub enum SendMessageError {
+    GuildNotFound,
+    ChannelNotFound,
+    NoPermission,
+    NotInGuild,
+    WriteFileError,
+    OpenFileError,
+    UserNotFound,
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GuildMember {
     pub user: User,
     pub joined: u128,
+    pub guild: ID,
     pub nickname: String,
     pub ranks: Vec<ID>,
     pub guild_permissions: GuildPremissions,
@@ -18,10 +35,11 @@ pub struct GuildMember {
 }
 
 impl GuildMember {
-    pub fn new(user: User) -> Self {
+    pub fn new(user: User, guild: ID) -> Self {
         Self {
             nickname: user.username.clone(),
             user,
+            guild,
             ranks: Vec::new(),
             joined: get_system_millis(),
             guild_permissions: HashMap::new(),
@@ -117,7 +135,11 @@ impl GuildMember {
                     &PermissionSetting::FALSE => {
                         return false;
                     }
-                    PermissionSetting::NONE => {}
+                    PermissionSetting::NONE => {
+                        if self.has_permission(permission.guild_equivalent(), guild) {
+                            return true;
+                        }
+                    }
                 };
             }
         } else {
@@ -205,6 +227,10 @@ impl Rank {
             if let Some(value) = channel.get(&permission) {
                 if value == &PermissionSetting::TRUE {
                     return true;
+                } else if value == &PermissionSetting::NONE {
+                    if self.has_permission(&permission.guild_equivalent()) {
+                        return true;
+                    }
                 }
             }
         }
@@ -229,7 +255,7 @@ impl Guild {
     pub fn new(name: String, id: ID, creator: User) -> Self {
         let creator_id = creator.id.clone();
         let mut everyone = Rank::new(String::from("everyone"), new_id());
-        let mut owner = GuildMember::new(creator);
+        let mut owner = GuildMember::new(creator, id.clone());
         let mut users = HashMap::new();
         let mut ranks = HashMap::new();
         owner.give_rank(&mut everyone);
@@ -249,9 +275,17 @@ impl Guild {
         }
     }
 
-    pub async fn send_message(&mut self, user: ID, channel: ID, message: String) -> Result<(), ()> {
+    pub async fn send_message(
+        &mut self,
+        user: ID,
+        channel: ID,
+        message: String,
+    ) -> Result<(), SendMessageError> {
         if let Some(user) = self.users.get(&user) {
-            if user.clone().has_channel_permission(&channel, &ChannelPermission::SendMessage, self) {
+            if user
+                .clone()
+                .has_channel_permission(&channel, &ChannelPermission::SendMessage, self)
+            {
                 if let Some(channel) = self.channels.get_mut(&channel) {
                     let message = Message {
                         id: new_id(),
@@ -259,11 +293,16 @@ impl Guild {
                         created: get_system_millis(),
                         content: message,
                     };
-                    return channel.add_message(message).await;
+                    channel.add_message(message).await
+                } else {
+                    Err(SendMessageError::ChannelNotFound)
                 }
+            } else {
+                Err(SendMessageError::NoPermission)
             }
+        } else {
+            Err(SendMessageError::NotInGuild)
         }
-        return Err(());
     }
 
     pub fn save(&self) -> Result<(), JsonSaveError> {
@@ -271,9 +310,10 @@ impl Guild {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) =
-                std::fs::write(GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string(), json)
-            {
+            if let Ok(result) = std::fs::write(
+                GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string(),
+                json,
+            ) {
                 Ok(result)
             } else {
                 Err(JsonSaveError::WriteFile)
@@ -296,7 +336,7 @@ impl Guild {
     }
 
     pub fn user_join(&mut self, user: User) -> Result<(), ()> {
-        let mut member = GuildMember::new(user);
+        let mut member = GuildMember::new(user, self.id.clone());
         for (id, rank) in self.ranks.iter_mut() {
             if id == &self.default_rank {
                 rank.add_member(&mut member);
