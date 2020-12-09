@@ -1,12 +1,16 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
+    auth::{Auth, TokenQuery},
     get_system_millis,
-    guild::{Guild, SendMessageError},
-    new_id, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    guild::Guild,
+    new_id, ApiActionError, JsonLoadError, JsonSaveError, Name, ID, NAME_ALLOWED_CHARS,
 };
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
+use warp::{filters::BoxedFilter, Filter, Rejection, Reply};
 
 static ACCOUNT_FOLDER: &str = "data/accounts/";
 
@@ -55,25 +59,55 @@ impl Account {
         }
     }
 
+    pub async fn create_new_user(&mut self, username: String) -> Result<User, ApiActionError> {
+        if let Ok(user) = User::new(username, self.id.clone()) {
+            self.users.insert(new_id(), user.clone());
+            if let Ok(_) = self.save().await {
+                Ok(user)
+            } else {
+                Err(ApiActionError::WriteFileError)
+            }
+        } else {
+            Err(ApiActionError::BadNameCharacters)
+        }
+    }
+
     pub async fn send_guild_message(
         &self,
         user: ID,
         guild: ID,
         channel: ID,
         message: String,
-    ) -> Result<(), SendMessageError> {
+    ) -> Result<(), ApiActionError> {
         if let Some(user) = self.users.get(&user) {
             if user.in_guilds.contains(&guild) {
                 if let Ok(mut guild) = Guild::load(&guild.to_string()).await {
                     guild.send_message(user.id, channel, message).await
                 } else {
-                    Err(SendMessageError::GuildNotFound)
+                    Err(ApiActionError::GuildNotFound)
                 }
             } else {
-                Err(SendMessageError::NotInGuild)
+                Err(ApiActionError::NotInGuild)
             }
         } else {
-            Err(SendMessageError::UserNotFound)
+            Err(ApiActionError::UserNotFound)
+        }
+    }
+
+    pub async fn create_guild(&mut self, name: String, user: ID) -> Result<ID, ApiActionError> {
+        if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+            return Err(ApiActionError::BadNameCharacters);
+        }
+        if let Some(user) = self.users.get_mut(&user) {
+            let new_guild = Guild::new(name, new_id(), user);
+            if let Ok(_) = new_guild.save().await {
+                user.in_guilds.push(new_guild.id.clone());
+                Ok(new_guild.id)
+            } else {
+                Err(ApiActionError::WriteFileError)
+            }
+        } else {
+            Err(ApiActionError::UserNotFound)
         }
     }
 
@@ -116,4 +150,73 @@ pub fn get_id(id: &str, service: &str) -> String {
     hasher.update(id);
     hasher.update(service);
     format!("{:x}", hasher.finalize())
+}
+
+fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path!("accounts" / String))
+        .and(warp::query::<TokenQuery>())
+        .and_then(move |id: String, token: TokenQuery| {
+            let tmp_auth = auth_manager.clone();
+            async move {
+                Ok::<_, warp::Rejection>(
+                    if Auth::is_authenticated(tmp_auth, id.clone(), token.token).await {
+                        if let Ok(account) = Account::load(&id).await {
+                            warp::reply::json(&account).into_response()
+                        } else {
+                            warp::reply::with_status(
+                                "That account does not exist.",
+                                StatusCode::NOT_FOUND,
+                            )
+                            .into_response()
+                        }
+                    } else {
+                        warp::reply::with_status(
+                            "Invalid authentication details.",
+                            StatusCode::FORBIDDEN,
+                        )
+                        .into_response()
+                    },
+                )
+            }
+        })
+        .boxed()
+}
+
+fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path!("account" / "adduser" / String))
+        .and(warp::query::<TokenQuery>())
+        .and(warp::body::json::<Name>())
+        .and_then(move |id: String, token: TokenQuery, name: Name| {
+            let tmp_auth = auth_manager.clone();
+            async move { Ok::<_, Rejection>(
+                if Auth::is_authenticated(tmp_auth, id.clone(), token.token).await {
+                    if let Ok(mut account) = Account::load(&id).await {
+                        let create = account.create_new_user(name.name).await;
+                        if let Ok(user) = create {
+                            warp::reply::json(&user).into_response()
+                        } else if let Err(err) = create {
+                            match err {
+                                ApiActionError::WriteFileError => warp::reply::with_status("Server could not write user data to disk.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+                                ApiActionError::BadNameCharacters => warp::reply::with_status(format!("Username string can only contain the following characters: \"{}\"", NAME_ALLOWED_CHARS), StatusCode::BAD_REQUEST).into_response(),
+                                _ => warp::reply::with_status("The server is doing things that it shouldn't.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+                            }
+                        } else {
+                            warp::reply::with_status("The server is doing things that it shouldn't.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+                        }
+                    } else {
+                        warp::reply::with_status("That account does not exist.", StatusCode::NOT_FOUND).into_response()
+                    }
+                } else {
+                    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
+                }
+            )}
+        }).boxed()
+}
+
+pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    api_v1_accountinfo(auth_manager.clone())
+        .or(api_v1_adduser(auth_manager.clone()))
+        .boxed()
 }

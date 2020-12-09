@@ -1,31 +1,28 @@
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::sync::Mutex;
+use warp::{filters::BoxedFilter, Filter, Reply};
 
 use crate::{
+    auth::{Auth, UserQuery},
     channel::{Channel, Message},
     get_system_millis, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
     },
-    user::User,
-    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    user::{Account, User},
+    ApiActionError, JsonLoadError, JsonSaveError, MessageBody, Name, ID, NAME_ALLOWED_CHARS,
 };
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
 
-pub enum SendMessageError {
-    GuildNotFound,
-    ChannelNotFound,
-    NoPermission,
-    NotInGuild,
-    WriteFileError,
-    OpenFileError,
-    UserNotFound,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GuildMember {
-    pub user: User,
+    pub user: ID,
     pub joined: u128,
     pub guild: ID,
     pub nickname: String,
@@ -35,10 +32,10 @@ pub struct GuildMember {
 }
 
 impl GuildMember {
-    pub fn new(user: User, guild: ID) -> Self {
+    pub fn new(user: &User, guild: ID) -> Self {
         Self {
             nickname: user.username.clone(),
-            user,
+            user: user.id.clone(),
             guild,
             ranks: Vec::new(),
             joined: get_system_millis(),
@@ -60,8 +57,8 @@ impl GuildMember {
         if !self.ranks.contains(&rank.id) {
             self.ranks.push(rank.id.clone());
         }
-        if !rank.members.contains(&self.user.id) {
-            rank.members.push(self.user.id.clone());
+        if !rank.members.contains(&self.user) {
+            rank.members.push(self.user.clone());
         }
     }
 
@@ -252,7 +249,7 @@ pub struct Guild {
 }
 
 impl Guild {
-    pub fn new(name: String, id: ID, creator: User) -> Self {
+    pub fn new(name: String, id: ID, creator: &User) -> Self {
         let creator_id = creator.id.clone();
         let mut everyone = Rank::new(String::from("everyone"), new_id());
         let mut owner = GuildMember::new(creator, id.clone());
@@ -280,7 +277,7 @@ impl Guild {
         user: ID,
         channel: ID,
         message: String,
-    ) -> Result<(), SendMessageError> {
+    ) -> Result<(), ApiActionError> {
         if let Some(user) = self.users.get(&user) {
             if user
                 .clone()
@@ -289,31 +286,33 @@ impl Guild {
                 if let Some(channel) = self.channels.get_mut(&channel) {
                     let message = Message {
                         id: new_id(),
-                        sender: user.user.id.clone(),
+                        sender: user.user.clone(),
                         created: get_system_millis(),
                         content: message,
                     };
                     channel.add_message(message).await
                 } else {
-                    Err(SendMessageError::ChannelNotFound)
+                    Err(ApiActionError::ChannelNotFound)
                 }
             } else {
-                Err(SendMessageError::NoPermission)
+                Err(ApiActionError::NoPermission)
             }
         } else {
-            Err(SendMessageError::NotInGuild)
+            Err(ApiActionError::NotInGuild)
         }
     }
 
-    pub fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = std::fs::create_dir_all(GUILD_INFO_FOLDER) {
+    pub async fn save(&self) -> Result<(), JsonSaveError> {
+        if let Err(_) = tokio::fs::create_dir_all(GUILD_INFO_FOLDER).await {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = std::fs::write(
+            if let Ok(result) = tokio::fs::write(
                 GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string(),
                 json,
-            ) {
+            )
+            .await
+            {
                 Ok(result)
             } else {
                 Err(JsonSaveError::WriteFile)
@@ -335,7 +334,7 @@ impl Guild {
         }
     }
 
-    pub fn user_join(&mut self, user: User) -> Result<(), ()> {
+    pub fn user_join(&mut self, user: &User) -> Result<(), ()> {
         let mut member = GuildMember::new(user, self.id.clone());
         for (id, rank) in self.ranks.iter_mut() {
             if id == &self.default_rank {
@@ -345,4 +344,112 @@ impl Guild {
         }
         Ok(())
     }
+}
+
+fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path("create"))
+        .and(warp::query::<UserQuery>())
+        .and(warp::query::<Name>())
+        .and_then(move |user_query: UserQuery, name: Name| {
+            let tmp_auth = auth_manager.clone();
+            async move {
+                Ok::<_, warp::Rejection>(
+                    if Auth::is_authenticated(
+                        tmp_auth,
+                        user_query.account.clone(),
+                        user_query.token,
+                    )
+                    .await
+                    {
+                        if let Ok(mut account) = Account::load(&user_query.account).await {
+                            let create = account.create_guild(name.name, user_query.user).await;
+                            if let Err(err) = create {
+                                match err {
+                                    ApiActionError::OpenFileError
+                                    | ApiActionError::WriteFileError => warp::reply::with_status(
+                                        "Server could not save the guild data.",
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                    )
+                                    .into_response(),
+
+                                    ApiActionError::UserNotFound => warp::reply::with_status(
+                                        "That user does not exist on your account.",
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                    )
+                                    .into_response(),
+                                    _ => warp::reply::with_status(
+                                        "The server is doing things that it shouldn't.",
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                    )
+                                    .into_response(),
+                                }
+                            } else if let Ok(ok) = create {
+                                warp::reply::with_status(ok.to_string(), StatusCode::OK)
+                                    .into_response()
+                            } else {
+                                warp::reply::with_status(
+                                    "The server is doing things that it shouldn't.",
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                )
+                                .into_response()
+                            }
+                        } else {
+                            warp::reply::with_status(
+                                "That account does not exist.",
+                                StatusCode::NOT_FOUND,
+                            )
+                            .into_response()
+                        }
+                    } else {
+                        warp::reply::with_status(
+                            "Invalid authentication details.",
+                            StatusCode::FORBIDDEN,
+                        )
+                        .into_response()
+                    },
+                )
+            }
+        })
+        .boxed()
+}
+
+fn api_v1_sendmessage(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path!("send_message" / ID / ID))
+        .and(warp::query::<UserQuery>())
+        .and(warp::body::json::<MessageBody>())
+        .and_then(move |guild: ID, channel: ID, query: UserQuery, message: MessageBody| {
+            let tmp_auth = auth_manager.clone();
+            async move {
+                Ok::<_, warp::Rejection>(if Auth::is_authenticated(tmp_auth, query.account.clone(), query.token).await {
+                    if let Ok(account) = Account::load(&query.account).await {
+                        if let Err(err) = account.send_guild_message(query.user, guild, channel, message.content).await {
+                            match err {
+                                ApiActionError::GuildNotFound | ApiActionError::NotInGuild => warp::reply::with_status("You are not in that guild if it exists.", StatusCode::NOT_FOUND).into_response(),
+                                ApiActionError::ChannelNotFound | ApiActionError::NoPermission => warp::reply::with_status("You do not have permission to access that channel if it exists.", StatusCode::NOT_FOUND).into_response(),
+                                ApiActionError::OpenFileError | ApiActionError::WriteFileError => warp::reply::with_status("Server could not save your message.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+                                ApiActionError::UserNotFound => warp::reply::with_status("That user does not exist on your account.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+                                _ => warp::reply::with_status(
+                                    "The server is doing things that it shouldn't.",
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                ).into_response()
+                            }
+                        } else {
+                            warp::reply::with_status("Message sent successfully.", StatusCode::OK).into_response()
+                        }
+                    } else {
+                        warp::reply::with_status("That account does not exist.", StatusCode::NOT_FOUND).into_response()
+                    }
+                } else {
+                    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
+                })
+            }
+        }).boxed()
+}
+
+pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    api_v1_create(auth_manager.clone())
+        .or(api_v1_sendmessage(auth_manager))
+        .boxed()
 }

@@ -5,8 +5,9 @@ use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
+use warp::{filters::BoxedFilter, hyper::Uri, Filter, Rejection, Reply};
 
-use crate::{ID, USER_AGENT_STRING, get_system_millis, user::Account};
+use crate::{get_system_millis, user::Account, AccountTokenResponse, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -30,7 +31,7 @@ pub struct TokenQuery {
 pub struct UserQuery {
     pub account: String,
     pub user: ID,
-    pub token: String
+    pub token: String,
 }
 
 pub enum Service {
@@ -70,11 +71,7 @@ impl Auth {
         }
     }
 
-    pub async fn is_authenticated(
-        manager: Arc<Mutex<Self>>,
-        id: String,
-        token: String,
-    ) -> bool {
+    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: String, token: String) -> bool {
         let sessions_arc;
         let sessions_lock;
         {
@@ -315,4 +312,46 @@ impl GitHub {
         }
         return (String::from("Invalid session."), None);
     }
+}
+
+fn api_v1_login(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path!("login" / Service))
+        .and_then(move |service: Service| {
+            let tmp_auth = auth_manager.clone();
+            async move {
+                let uri_string = Auth::start_login(tmp_auth, service).await;
+                let uri = uri_string.parse::<Uri>().unwrap();
+                Ok::<_, Rejection>(warp::redirect::temporary(uri).into_response())
+            }
+        })
+        .boxed()
+}
+
+fn api_v1_oauth(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+        .and(warp::path!("auth" / Service))
+        .and(warp::query::<AuthQuery>())
+        .and_then(move |service: Service, query: AuthQuery| {
+            let tmp_auth = auth_manager.clone();
+            async move {
+                let result = Auth::handle_oauth(tmp_auth, service, query).await;
+                Ok::<_, warp::Rejection>(if let Some(id_token) = result.1 {
+                    warp::reply::json(&AccountTokenResponse {
+                        id: id_token.0,
+                        token: id_token.1,
+                    })
+                    .into_response()
+                } else {
+                    warp::reply::json(&result.0).into_response()
+                })
+            }
+        })
+        .boxed()
+}
+
+pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
+    api_v1_login(auth_manager.clone())
+        .or(api_v1_oauth(auth_manager.clone()))
+        .boxed()
 }

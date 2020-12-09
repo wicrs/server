@@ -47,7 +47,7 @@ impl ChannelPermission {
             ChannelPermission::ReadMessage => GuildPermission::ReadMessage,
             ChannelPermission::ViewChannel => GuildPermission::ViewChannels,
             ChannelPermission::Configure => GuildPermission::ConfigureChannels,
-            ChannelPermission::MuteUser => GuildPermission::MuteUser
+            ChannelPermission::MuteUser => GuildPermission::MuteUser,
         }
     }
 }
