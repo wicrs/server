@@ -8,14 +8,14 @@ use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 
 use crate::{
-    auth::{Auth, UserQuery},
+    auth::Auth,
     channel::{Channel, Message},
     get_system_millis, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
     },
     user::{Account, User},
-    ApiActionError, JsonLoadError, JsonSaveError, MessageBody, Name, ID, NAME_ALLOWED_CHARS,
+    ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
@@ -346,24 +346,25 @@ impl Guild {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct GuildCreateQuery {
+    id: String,
+    user: ID,
+    token: String,
+    name: String,
+}
+
 fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
         .and(warp::path("create"))
-        .and(warp::query::<UserQuery>())
-        .and(warp::query::<Name>())
-        .and_then(move |user_query: UserQuery, name: Name| {
+        .and(warp::body::json::<GuildCreateQuery>())
+        .and_then(move |query: GuildCreateQuery| {
             let tmp_auth = auth_manager.clone();
             async move {
                 Ok::<_, warp::Rejection>(
-                    if Auth::is_authenticated(
-                        tmp_auth,
-                        user_query.account.clone(),
-                        user_query.token,
-                    )
-                    .await
-                    {
-                        if let Ok(mut account) = Account::load(&user_query.account).await {
-                            let create = account.create_guild(name.name, user_query.user).await;
+                    if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                        if let Ok(mut account) = Account::load(&query.id).await {
+                            let create = account.create_guild(query.name, query.user).await;
                             if let Err(err) = create {
                                 match err {
                                     ApiActionError::OpenFileError
@@ -414,17 +415,28 @@ fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
         .boxed()
 }
 
+
+
+#[derive(Deserialize, Serialize)]
+struct MessageSendQuery {
+    id: String,
+    token: String,
+    user: ID,
+    guild: ID,
+    channel: ID,
+    message: String
+}
+
 fn api_v1_sendmessage(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
-        .and(warp::path!("send_message" / ID / ID))
-        .and(warp::query::<UserQuery>())
-        .and(warp::body::json::<MessageBody>())
-        .and_then(move |guild: ID, channel: ID, query: UserQuery, message: MessageBody| {
+        .and(warp::path!("send_message"))
+        .and(warp::body::json::<MessageSendQuery>())
+        .and_then(move |query: MessageSendQuery| {
             let tmp_auth = auth_manager.clone();
             async move {
-                Ok::<_, warp::Rejection>(if Auth::is_authenticated(tmp_auth, query.account.clone(), query.token).await {
-                    if let Ok(account) = Account::load(&query.account).await {
-                        if let Err(err) = account.send_guild_message(query.user, guild, channel, message.content).await {
+                Ok::<_, warp::Rejection>(if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                    if let Ok(account) = Account::load(&query.id).await {
+                        if let Err(err) = account.send_guild_message(query.user, query.guild, query.channel, query.message).await {
                             match err {
                                 ApiActionError::GuildNotFound | ApiActionError::NotInGuild => warp::reply::with_status("You are not in that guild if it exists.", StatusCode::NOT_FOUND).into_response(),
                                 ApiActionError::ChannelNotFound | ApiActionError::NoPermission => warp::reply::with_status("You do not have permission to access that channel if it exists.", StatusCode::NOT_FOUND).into_response(),

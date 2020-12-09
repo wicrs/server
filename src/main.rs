@@ -6,7 +6,6 @@ use std::{
 use tokio::sync::Mutex;
 
 use auth::Auth;
-use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
 
@@ -52,9 +51,12 @@ async fn main() {
     let auth = Arc::new(Mutex::new(Auth::from_config()));
     let api_v1 = v1_api(auth.clone());
     let api = warp::any().and(warp::path("api")).and(api_v1);
-    warp::serve(
-        api.or(warp::any().map(|| warp::reply::with_status("Not found. Make sure to check you provided all of the required parameters.", StatusCode::NOT_FOUND))),
-    )
+    warp::serve(api.or(warp::any().map(|| {
+        warp::reply::with_status(
+            "Not found. Make sure to check you provided all of the required parameters.",
+            StatusCode::NOT_FOUND,
+        )
+    })))
     .run(([0, 0, 0, 0], config::load_config().port))
     .await;
 }
@@ -69,22 +71,6 @@ pub fn get_system_millis() -> u128 {
 pub type ID = Uuid;
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
-}
-
-#[derive(Deserialize, Serialize)]
-struct AccountTokenResponse {
-    id: String,
-    token: String,
-}
-
-#[derive(Deserialize, Serialize)]
-struct MessageBody {
-    content: String,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Name {
-    name: String,
 }
 
 fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {

@@ -4,7 +4,7 @@ use crate::{
     auth::{Auth, TokenQuery},
     get_system_millis,
     guild::Guild,
-    new_id, ApiActionError, JsonLoadError, JsonSaveError, Name, ID, NAME_ALLOWED_CHARS,
+    new_id, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -183,17 +183,23 @@ fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
         .boxed()
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct AddUserQuery {
+    id: String,
+    token: String,
+    username: String,
+}
+
 fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
-        .and(warp::path!("account" / "adduser" / String))
-        .and(warp::query::<TokenQuery>())
-        .and(warp::body::json::<Name>())
-        .and_then(move |id: String, token: TokenQuery, name: Name| {
+        .and(warp::path("account/adduser"))
+        .and(warp::body::json::<AddUserQuery>())
+        .and_then(move |query: AddUserQuery| {
             let tmp_auth = auth_manager.clone();
             async move { Ok::<_, Rejection>(
-                if Auth::is_authenticated(tmp_auth, id.clone(), token.token).await {
-                    if let Ok(mut account) = Account::load(&id).await {
-                        let create = account.create_new_user(name.name).await;
+                if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                    if let Ok(mut account) = Account::load(&query.id).await {
+                        let create = account.create_new_user(query.username).await;
                         if let Ok(user) = create {
                             warp::reply::json(&user).into_response()
                         } else if let Err(err) = create {

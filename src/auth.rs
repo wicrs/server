@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, hyper::Uri, Filter, Rejection, Reply};
 
-use crate::{get_system_millis, user::Account, AccountTokenResponse, ID, USER_AGENT_STRING};
+use crate::{get_system_millis, user::Account, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -27,6 +27,11 @@ pub struct TokenQuery {
     pub token: String,
 }
 
+#[derive(Deserialize, Serialize)]
+struct AccountTokenResponse {
+    id: String,
+    token: String,
+}
 #[derive(Serialize, Deserialize)]
 pub struct UserQuery {
     pub account: String,
