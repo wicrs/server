@@ -15,6 +15,14 @@ use warp::{filters::BoxedFilter, Filter, Rejection, Reply};
 static ACCOUNT_FOLDER: &str = "data/accounts/";
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct GenericUser {
+    pub id: ID,
+    pub username: String,
+    pub created: u128,
+    pub parent_id: String
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct User {
     pub id: ID,
     pub username: String,
@@ -37,6 +45,22 @@ impl User {
             Err(())
         }
     }
+
+    pub fn to_generic(&self) -> GenericUser {
+        GenericUser {
+            id: self.id.clone(),
+            created: self.created.clone(),
+            username: self.username.clone(),
+            parent_id: self.parent_id.clone()
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct GenericAccount {
+    id: String,
+    created: u128,
+    users: HashMap<ID, GenericUser>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -56,6 +80,18 @@ impl Account {
             service,
             users: HashMap::new(),
             created: get_system_millis(),
+        }
+    }
+
+    pub fn users_generic(users: &HashMap<ID, User>) -> HashMap<ID, GenericUser> {
+        users.iter().map(|e| (e.0.clone(), e.1.to_generic())).collect()
+    }
+
+    pub fn to_generic(&self) -> GenericAccount {
+        GenericAccount {
+            id: self.id.clone(),
+            created: self.created.clone(),
+            users: Self::users_generic(&self.users)
         }
     }
 
@@ -165,7 +201,7 @@ fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
                             warp::reply::json(&account).into_response()
                         } else {
                             warp::reply::with_status(
-                                "That account does not exist.",
+                                "Could not find that account.",
                                 StatusCode::NOT_FOUND,
                             )
                             .into_response()
@@ -183,6 +219,22 @@ fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
         .boxed()
 }
 
+
+
+fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
+    warp::get()
+    .and(warp::path!("accounts" / String))
+    .and_then(|id: String| async move {
+        Ok::<_, warp::Rejection>(
+            if let Ok(account) = Account::load(&id).await {
+                warp::reply::json(&account.to_generic()).into_response()
+            } else {
+                warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
+            }
+        )
+    }).boxed()
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct AddUserQuery {
     id: String,
@@ -192,7 +244,7 @@ struct AddUserQuery {
 
 fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
-        .and(warp::path("account/adduser"))
+        .and(warp::path!("account" / "adduser"))
         .and(warp::body::json::<AddUserQuery>())
         .and_then(move |query: AddUserQuery| {
             let tmp_auth = auth_manager.clone();
@@ -212,7 +264,7 @@ fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> 
                             warp::reply::with_status("The server is doing things that it shouldn't.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
                         }
                     } else {
-                        warp::reply::with_status("That account does not exist.", StatusCode::NOT_FOUND).into_response()
+                        warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
                     }
                 } else {
                     warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
@@ -224,5 +276,6 @@ fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_accountinfo(auth_manager.clone())
         .or(api_v1_adduser(auth_manager.clone()))
+        .or(api_v1_accountinfo_noauth())
         .boxed()
 }

@@ -397,7 +397,7 @@ fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
                             }
                         } else {
                             warp::reply::with_status(
-                                "That account does not exist.",
+                                "Could not find that account.",
                                 StatusCode::NOT_FOUND,
                             )
                             .into_response()
@@ -451,7 +451,7 @@ fn api_v1_sendmessage(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
                             warp::reply::with_status("Message sent successfully.", StatusCode::OK).into_response()
                         }
                     } else {
-                        warp::reply::with_status("That account does not exist.", StatusCode::NOT_FOUND).into_response()
+                        warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
                     }
                 } else {
                     warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
