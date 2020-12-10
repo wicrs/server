@@ -188,13 +188,13 @@ pub fn get_id(id: &str, service: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-api_get! { (api_v1_accountinfo,,warp::path("accounts")) [account, query]
+api_get! { (api_v1_accountinfo,,) [account, query]
         warp::reply::json(&account).into_response()
 }
 
 fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
     warp::get()
-        .and(warp::path!("accounts" / String))
+        .and(warp::path!(String))
         .and_then(|id: String| async move {
             Ok::<_, warp::Rejection>(if let Ok(account) = Account::load(&id).await {
                 warp::reply::json(&account.to_generic()).into_response()
@@ -206,14 +206,14 @@ fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
 }
 
 #[derive(Deserialize)]
-struct Username {
-    username: String,
+struct Name {
+    name: String,
 }
 
-api_get! { (api_v1_adduser, Username, warp::path!("account" / "adduser")) [account, query]
+api_get! { (api_v1_adduser, Name,) [account, query]
         use crate::ApiActionError;
         let mut account = account;
-        let create: Result<User, ApiActionError> = account.create_new_user(query.username).await;
+        let create: Result<User, ApiActionError> = account.create_new_user(query.name).await;
         if let Ok(user) = create {
             warp::reply::json(&user).into_response()
         } else {
@@ -237,8 +237,11 @@ api_get! { (api_v1_adduser, Username, warp::path!("account" / "adduser")) [accou
 }
 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    api_v1_accountinfo(auth_manager.clone())
-        .or(api_v1_adduser(auth_manager.clone()))
-        .or(api_v1_accountinfo_noauth())
+    warp::path("account")
+        .and(
+            (warp::path("adduser").and(api_v1_adduser(auth_manager.clone())))
+                .or(api_v1_accountinfo(auth_manager.clone()))
+                .or(api_v1_accountinfo_noauth()),
+        )
         .boxed()
 }

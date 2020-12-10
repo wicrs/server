@@ -99,6 +99,6 @@ fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     let auth_api = auth::api_v1(auth_manager.clone());
     let user_api = user::api_v1(auth_manager.clone());
     warp::path("v1")
-        .and(guild_api.or(auth_api).or(user_api))
+        .and(auth_api.or(user_api).or(guild_api))
         .boxed()
 }
