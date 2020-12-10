@@ -70,6 +70,66 @@ impl Channel {
         }
     }
 
+    pub async fn get_messages(
+        &self,
+        start_time: u128,
+        end_time: u128,
+        end_to_start: bool,
+        max: usize,
+    ) -> Result<Vec<Message>, ApiActionError> {
+        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            files.par_sort_by_key(|f| f.file_name());
+            if end_to_start {
+                files.reverse()
+            }
+            let mut whole_file = String::new();
+            let mut result: Vec<Message> = Vec::new();
+            for file in files.iter() {
+                if let Ok(mut file) = fs::File::open(file.path()).await {
+                    whole_file.clear();
+                    if let Ok(_) = file.read_to_string(&mut whole_file).await {
+                        let lines = whole_file.par_lines();
+                        let mut filtered: Vec<Message> = lines
+                            .filter_map(|l| {
+                                let created = l
+                                    .splitn(4, ',')
+                                    .skip(2)
+                                    .next()
+                                    .unwrap_or("0")
+                                    .parse::<u128>()
+                                    .unwrap_or(0);
+                                if created >= start_time && created <= end_time {
+                                    if let Ok(message) = l.parse::<Message>() {
+                                        Some(message)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        filtered.truncate(max - result.len());
+                        result.append(&mut filtered);
+                        if result.len() >= max {
+                            result.truncate(max);
+                            return Ok(result);
+                        }
+                    }
+                }
+            }
+            Ok(result)
+        } else {
+            Err(ApiActionError::OpenFileError)
+        }
+    }
+
     pub async fn on_all_raw_lines<F: FnMut(Lines) -> ()>(&self, mut action: F) {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut whole_file = String::new();
