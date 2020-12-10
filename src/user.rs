@@ -1,18 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    account_not_found_response,
-    auth::{Auth, TokenQuery},
-    bad_auth_response, get_system_millis,
-    guild::Guild,
-    new_id, unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID,
-    NAME_ALLOWED_CHARS,
+    account_not_found_response, auth::Auth, get_system_millis, guild::Guild, new_id,
+    unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use warp::{filters::BoxedFilter, Filter, Rejection, Reply};
+use warp::{filters::BoxedFilter, Filter, Reply};
 
 static ACCOUNT_FOLDER: &str = "data/accounts/";
 
@@ -193,27 +188,8 @@ pub fn get_id(id: &str, service: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::get()
-        .and(warp::path!("accounts" / String))
-        .and(warp::query::<TokenQuery>())
-        .and_then(move |id: String, token: TokenQuery| {
-            let tmp_auth = auth_manager.clone();
-            async move {
-                Ok::<_, warp::Rejection>(
-                    if Auth::is_authenticated(tmp_auth, &id, token.token).await {
-                        if let Ok(account) = Account::load(&id).await {
-                            warp::reply::json(&account).into_response()
-                        } else {
-                            account_not_found_response()
-                        }
-                    } else {
-                        bad_auth_response()
-                    },
-                )
-            }
-        })
-        .boxed()
+api_get! { (api_v1_accountinfo,,warp::path("accounts")) [account, query]
+        warp::reply::json(&account).into_response()
 }
 
 fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
@@ -229,42 +205,35 @@ fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
         .boxed()
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct AddUserQuery {
-    id: String,
-    token: String,
+#[derive(Deserialize)]
+struct Username {
     username: String,
 }
 
-fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::get()
-        .and(warp::path!("account" / "adduser"))
-        .and(warp::body::json::<AddUserQuery>())
-        .and_then(move |query: AddUserQuery| {
-            let tmp_auth = auth_manager.clone();
-            async move { Ok::<_, Rejection>(
-                if Auth::is_authenticated(tmp_auth, &query.id, query.token).await {
-                    if let Ok(mut account) = Account::load(&query.id).await {
-                        let create = account.create_new_user(query.username).await;
-                        if let Ok(user) = create {
-                            warp::reply::json(&user).into_response()
-                        } else if let Err(err) = create {
-                            match err {
-                                ApiActionError::WriteFileError => warp::reply::with_status("Server could not write user data to disk.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
-                                ApiActionError::BadNameCharacters => warp::reply::with_status(format!("Username string can only contain the following characters: \"{}\"", NAME_ALLOWED_CHARS), StatusCode::BAD_REQUEST).into_response(),
-                                _ => unexpected_response()
-                            }
-                        } else {
-                            unexpected_response()
-                        }
-                    } else {
-                        account_not_found_response()
-                    }
-                } else {
-                    bad_auth_response()
-                }
-            )}
-        }).boxed()
+api_get! { (api_v1_adduser, Username, warp::path!("account" / "adduser")) [account, query]
+        use crate::ApiActionError;
+        let mut account = account;
+        let create: Result<User, ApiActionError> = account.create_new_user(query.username).await;
+        if let Ok(user) = create {
+            warp::reply::json(&user).into_response()
+        } else {
+            match create.err() {
+                Some(ApiActionError::WriteFileError) => warp::reply::with_status(
+                    "Server could not write user data to disk.",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                )
+                .into_response(),
+                Some(ApiActionError::BadNameCharacters) => warp::reply::with_status(
+                    format!(
+                        "Username string can only contain the following characters: \"{}\"",
+                        NAME_ALLOWED_CHARS
+                    ),
+                    StatusCode::BAD_REQUEST,
+                )
+                .into_response(),
+                _ => unexpected_response(),
+            }
+        }
 }
 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {

@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use warp::{filters::BoxedFilter, Filter, Reply};
 
-pub mod api_v1;
+#[macro_use]
+pub mod macros;
 pub mod auth;
 pub mod channel;
 pub mod config;
@@ -59,8 +60,6 @@ pub enum ApiActionError {
 static USER_AGENT_STRING: &str = "wirc_server";
 static NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-
 
 #[tokio::main]
 async fn main() {
