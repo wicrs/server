@@ -72,7 +72,13 @@ async fn main() {
             StatusCode::NOT_FOUND,
         )
     })))
-    .run(([0, 0, 0, 0], config::load_config().port))
+    .run((
+        [0, 0, 0, 0],
+        std::env::var("PORT")
+            .unwrap_or(config::load_config().port.to_string())
+            .parse()
+            .unwrap_or(config::load_config().port),
+    ))
     .await;
 }
 
