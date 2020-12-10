@@ -63,7 +63,7 @@ static NAME_ALLOWED_CHARS: &str =
 
 #[tokio::main]
 async fn main() {
-    let auth = Arc::new(Mutex::new(Auth::from_config()));
+    let auth = Arc::new(Mutex::new(Auth::from_config().await));
     let api_v1 = v1_api(auth.clone());
     let api = warp::any().and(warp::path("api")).and(api_v1);
     warp::serve(api.or(warp::any().map(|| {

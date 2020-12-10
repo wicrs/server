@@ -4,6 +4,7 @@ use base64::URL_SAFE_NO_PAD;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, hyper::Uri, Filter, Rejection, Reply};
 
@@ -12,7 +13,7 @@ use crate::{get_system_millis, user::Account, ID, USER_AGENT_STRING};
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
-type SessionMap = Arc<Mutex<HashMap<String, String>>>;
+type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>;
 type LoginSession = (u128, BasicClient);
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 
@@ -20,6 +21,7 @@ type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 pub struct AuthQuery {
     state: String,
     code: String,
+    expires: Option<u128>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -60,7 +62,7 @@ pub struct Auth {
 }
 
 impl Auth {
-    pub fn from_config() -> Self {
+    pub async fn from_config() -> Self {
         std::fs::create_dir_all("data/accounts")
             .expect("Failed to create the ./data/accounts directory.");
         let auth_config = crate::config::load_config().auth_services;
@@ -72,23 +74,61 @@ impl Auth {
             std::env::var("GITHUB_CLIENT_SECRET").unwrap_or(github_conf.client_secret);
         Self {
             github: Arc::new(Mutex::new(GitHub::new(client_id, client_secret))),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(Mutex::new(Auth::load_tokens().await)),
         }
     }
 
-    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: &str, token: String) -> bool {
+    pub async fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<(), std::io::Error> {
+        tokio::fs::write("data/sessions.json", serde_json::to_string(sessions).unwrap_or("{}".to_string())).await
+    }
+
+    pub async fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
+        if let Ok(read) = tokio::fs::read_to_string("data/sessions.json").await {
+            if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read) {
+                let now = get_system_millis();
+                for account in &mut map {
+                    account.1.retain(|t| t.0 > now);
+                }
+                let _save = Auth::save_tokens(&map).await;
+                return map;
+            }
+        }
+        return HashMap::new();
+    }
+
+    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: &str, token_str: String) -> bool {
         let sessions_arc;
-        let sessions_lock;
+        let mut sessions_lock;
         {
             let lock = manager.lock().await;
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.lock().await;
         }
-        if let Some(auth_token) = sessions_lock.get(id) {
-            token == auth_token.clone()
+        let hashed = hash_auth(id.to_string(), token_str);
+        if let Some(auth_tokens) = sessions_lock.get_mut(&hashed.0) {
+            let now = get_system_millis();
+            auth_tokens.retain(|t| t.0 > now);
+            for token in auth_tokens {
+                if token.1 == hashed.1 {
+                    return true;
+                }
+            }
+            false
         } else {
             false
         }
+    }
+
+    pub async fn invalidate_tokens(manager: Arc<Mutex<Self>>, id: &str) {
+        let sessions_arc;
+        let mut sessions_lock;
+        {
+            let lock = manager.lock().await;
+            sessions_arc = lock.sessions.clone();
+            sessions_lock = sessions_arc.lock().await;
+        }
+        sessions_lock.remove(id);
+        let _save = Auth::save_tokens(&sessions_lock).await;
     }
 
     pub async fn start_login(manager: Arc<Mutex<Self>>, service: Service) -> String {
@@ -111,6 +151,7 @@ impl Auth {
         service: Service,
         query: AuthQuery,
     ) -> (String, Option<(String, String)>) {
+        let expires = query.expires.unwrap_or(get_system_millis() + 604800000);
         match service {
             Service::GitHub => {
                 let service_arc;
@@ -121,7 +162,7 @@ impl Auth {
                     service_lock = service_arc.lock().await;
                 }
                 service_lock
-                    .handle_oauth(manager, query.state, query.code)
+                    .handle_oauth(manager, query.state, query.code, expires)
                     .await
             }
         }
@@ -131,6 +172,7 @@ impl Auth {
         manager: Arc<Mutex<Self>>,
         service: &str,
         id: &str,
+        expires: u128,
         email: String,
     ) -> (bool, Option<(String, String)>) {
         let account_existed;
@@ -161,7 +203,13 @@ impl Auth {
                 sessions_arc = lock.sessions.clone();
                 sessions_lock = sessions_arc.lock().await;
             }
-            sessions_lock.insert(id.clone(), token.clone());
+            let hashed = hash_auth(id.clone(), token.clone());
+            if let Some(tokens) = sessions_lock.get_mut(&hashed.0) {
+                tokens.push((expires, hashed.1))
+            } else {
+                sessions_lock.insert(hashed.0, vec![(expires, hashed.1)]);
+            }
+            let _write = Auth::save_tokens(&sessions_lock).await;
         }
         (account_existed, Some((id, token)))
     }
@@ -273,6 +321,7 @@ impl GitHub {
         manager: Arc<Mutex<Auth>>,
         state: String,
         code: String,
+        expires: u128,
     ) -> (String, Option<(String, String)>) {
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());
@@ -280,7 +329,8 @@ impl GitHub {
                 let token = token.access_token().secret();
                 if let Ok(id) = self.get_id(&token).await {
                     if let Ok(email) = self.get_email(&token).await {
-                        let auth = Auth::finalize_login(manager, "github", &id, email).await;
+                        let auth =
+                            Auth::finalize_login(manager, "github", &id, expires, email).await;
                         if let Some(info) = auth.1 {
                             if auth.0 {
                                 return (
@@ -319,6 +369,14 @@ impl GitHub {
     }
 }
 
+fn hash_auth(id: String, token: String) -> (String, String) {
+    let mut hasher = Sha256::new();
+    hasher.update(id.as_bytes());
+    let id_hash = format!("{:x}", hasher.finalize_reset());
+    hasher.update(token.as_bytes());
+    (id_hash, format!("{:x}", hasher.finalize_reset()))
+}
+
 fn api_v1_login(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
         .and(warp::path!("login" / Service))
@@ -355,8 +413,14 @@ fn api_v1_oauth(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
         .boxed()
 }
 
+api_get! { (api_v1_invalidate_tokens,,warp::path("invalidate")) [auth, account, query]
+    Auth::invalidate_tokens(auth, &account.id).await;
+    warp::reply().into_response()
+}
+
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_login(auth_manager.clone())
+        .or(api_v1_invalidate_tokens(auth_manager.clone()))
         .or(api_v1_oauth(auth_manager.clone()))
         .boxed()
 }

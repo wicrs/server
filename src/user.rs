@@ -188,7 +188,7 @@ pub fn get_id(id: &str, service: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-api_get! { (api_v1_accountinfo,,) [account, query]
+api_get! { (api_v1_accountinfo,,) [auth, account, query]
         warp::reply::json(&account).into_response()
 }
 
@@ -210,7 +210,7 @@ struct Name {
     name: String,
 }
 
-api_get! { (api_v1_adduser, Name,) [account, query]
+api_get! { (api_v1_adduser, Name,) [auth, account, query]
         use crate::ApiActionError;
         let mut account = account;
         let create: Result<User, ApiActionError> = account.create_new_user(query.name).await;

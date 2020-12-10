@@ -70,13 +70,8 @@ impl Channel {
         }
     }
 
-    pub async fn get_messages(
-        &self,
-        start_time: u128,
-        end_time: u128,
-        end_to_start: bool,
-        max: usize,
-    ) -> Result<Vec<Message>, ApiActionError> {
+    pub async fn last_n_messages(&self, max: usize) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -85,11 +80,56 @@ impl Channel {
                 }
             }
             files.par_sort_by_key(|f| f.file_name());
-            if end_to_start {
+            files.reverse();
+            let mut whole_file = String::new();
+            for file in files.iter() {
+                if let Ok(mut file) = fs::File::open(file.path()).await {
+                    whole_file.clear();
+                    if let Ok(_) = file.read_to_string(&mut whole_file).await {
+                        let lines = whole_file.par_lines().collect::<Vec<&str>>();
+                        result.append(
+                            &mut lines
+                                .par_iter()
+                                .filter_map(|l| {
+                                    if let Ok(message) = l.parse::<Message>() {
+                                        Some(message)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<Message>>(),
+                        );
+                        if result.len() >= max {
+                            result.truncate(max);
+                            return result;
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub async fn get_messages(
+        &self,
+        from: u128,
+        to: u128,
+        invert: bool,
+        max: usize,
+    ) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            files.par_sort_by_key(|f| f.file_name());
+            if invert {
                 files.reverse()
             }
             let mut whole_file = String::new();
-            let mut result: Vec<Message> = Vec::new();
             for file in files.iter() {
                 if let Ok(mut file) = fs::File::open(file.path()).await {
                     whole_file.clear();
@@ -104,7 +144,7 @@ impl Channel {
                                     .unwrap_or("0")
                                     .parse::<u128>()
                                     .unwrap_or(0);
-                                if created >= start_time && created <= end_time {
+                                if created >= from && created <= to {
                                     if let Ok(message) = l.parse::<Message>() {
                                         Some(message)
                                     } else {
@@ -115,19 +155,20 @@ impl Channel {
                                 }
                             })
                             .collect();
+                        if invert {
+                            filtered.reverse()
+                        }
                         filtered.truncate(max - result.len());
                         result.append(&mut filtered);
                         if result.len() >= max {
                             result.truncate(max);
-                            return Ok(result);
+                            return result;
                         }
                     }
                 }
             }
-            Ok(result)
-        } else {
-            Err(ApiActionError::OpenFileError)
         }
+        result
     }
 
     pub async fn on_all_raw_lines<F: FnMut(Lines) -> ()>(&self, mut action: F) {

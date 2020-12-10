@@ -1,5 +1,5 @@
 macro_rules! api_get {
-    (($name:ident, $($datatype:ty)?, $($path:expr)?) [$account:ident, $query:ident] $($do:tt)*) => {
+    (($name:ident, $($datatype:ty)?, $($path:expr)?) [$auth:ident, $account:ident, $query:ident] $($do:tt)*) => {
         fn $name(
             auth_manager: std::sync::Arc<tokio::sync::Mutex<crate::auth::Auth>>
         ) -> warp::filters::BoxedFilter<(impl warp::Reply,)> {
@@ -16,11 +16,11 @@ macro_rules! api_get {
                 .and(warp::query::<AccountToken>())
                 $(.and(warp::body::json::<$datatype>()))?
                 .and_then(move |auth_query: AccountToken$(, $query: $datatype)?| {
-                    let tmp_auth = auth_manager.clone();
+                    let $auth = auth_manager.clone();
                     async move {
                         Ok::<warp::http::Response<warp::hyper::Body>, warp::Rejection>(
                             if crate::auth::Auth::is_authenticated(
-                                tmp_auth,
+                                $auth.clone(),
                                 &auth_query.account,
                                 auth_query.token,
                             )

@@ -351,7 +351,7 @@ struct GuildCreateQuery {
     user: ID,
     name: String,
 }
-api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [account, query]
+api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, account, query]
         let mut account = account;
         let create = account.create_guild(query.name, query.user).await;
         if let Err(err) = create {
@@ -390,7 +390,7 @@ struct MessageSendQuery {
     message: String,
 }
 
-api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [account, query]
+api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, account, query]
         if let Err(err) = account
             .send_guild_message(query.user, query.guild, query.channel, query.message)
             .await
