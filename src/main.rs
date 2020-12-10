@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use warp::{filters::BoxedFilter, Filter, Reply};
 
+pub mod api_v1;
 pub mod auth;
 pub mod channel;
 pub mod config;
@@ -31,6 +32,19 @@ pub enum JsonSaveError {
     Directory,
 }
 
+pub fn unexpected_response() -> warp::http::Response<warp::hyper::Body> {
+    warp::reply::with_status("Unexpected error.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+}
+
+pub fn bad_auth_response() -> warp::http::Response<warp::hyper::Body> {
+    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN)
+        .into_response()
+}
+
+pub fn account_not_found_response() -> warp::http::Response<warp::hyper::Body> {
+    warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
+}
+
 pub enum ApiActionError {
     GuildNotFound,
     ChannelNotFound,
@@ -45,6 +59,8 @@ pub enum ApiActionError {
 static USER_AGENT_STRING: &str = "wirc_server";
 static NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+
 
 #[tokio::main]
 async fn main() {

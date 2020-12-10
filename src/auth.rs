@@ -76,7 +76,7 @@ impl Auth {
         }
     }
 
-    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: String, token: String) -> bool {
+    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: &str, token: String) -> bool {
         let sessions_arc;
         let sessions_lock;
         {
@@ -84,7 +84,7 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.lock().await;
         }
-        if let Some(auth_token) = sessions_lock.get(&id) {
+        if let Some(auth_token) = sessions_lock.get(id) {
             token == auth_token.clone()
         } else {
             false

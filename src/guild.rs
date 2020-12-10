@@ -7,16 +7,9 @@ use std::{
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 
-use crate::{
-    auth::Auth,
-    channel::{Channel, Message},
-    get_system_millis, new_id,
-    permission::{
+use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, account_not_found_response, auth::Auth, bad_auth_response, channel::{Channel, Message}, get_system_millis, new_id, permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
-    },
-    user::{Account, User},
-    ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
-};
+    }, unexpected_response, user::{Account, User}};
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
 
@@ -362,7 +355,7 @@ fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
             let tmp_auth = auth_manager.clone();
             async move {
                 Ok::<_, warp::Rejection>(
-                    if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                    if Auth::is_authenticated(tmp_auth, &query.id, query.token).await {
                         if let Ok(mut account) = Account::load(&query.id).await {
                             let create = account.create_guild(query.name, query.user).await;
                             if let Err(err) = create {
@@ -389,33 +382,19 @@ fn api_v1_create(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
                                 warp::reply::with_status(ok.to_string(), StatusCode::OK)
                                     .into_response()
                             } else {
-                                warp::reply::with_status(
-                                    "The server is doing things that it shouldn't.",
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                )
-                                .into_response()
+                                unexpected_response()
                             }
                         } else {
-                            warp::reply::with_status(
-                                "Could not find that account.",
-                                StatusCode::NOT_FOUND,
-                            )
-                            .into_response()
+                            account_not_found_response()
                         }
                     } else {
-                        warp::reply::with_status(
-                            "Invalid authentication details.",
-                            StatusCode::FORBIDDEN,
-                        )
-                        .into_response()
+                        bad_auth_response()
                     },
                 )
             }
         })
         .boxed()
 }
-
-
 
 #[derive(Deserialize, Serialize)]
 struct MessageSendQuery {
@@ -424,17 +403,17 @@ struct MessageSendQuery {
     user: ID,
     guild: ID,
     channel: ID,
-    message: String
+    message: String,
 }
 
 fn api_v1_sendmessage(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::get()
-        .and(warp::path!("send_message"))
+        .and(warp::path("send_message"))
         .and(warp::body::json::<MessageSendQuery>())
         .and_then(move |query: MessageSendQuery| {
             let tmp_auth = auth_manager.clone();
             async move {
-                Ok::<_, warp::Rejection>(if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                Ok::<_, warp::Rejection>(if Auth::is_authenticated(tmp_auth, &query.id, query.token).await {
                     if let Ok(account) = Account::load(&query.id).await {
                         if let Err(err) = account.send_guild_message(query.user, query.guild, query.channel, query.message).await {
                             match err {
@@ -442,22 +421,27 @@ fn api_v1_sendmessage(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
                                 ApiActionError::ChannelNotFound | ApiActionError::NoPermission => warp::reply::with_status("You do not have permission to access that channel if it exists.", StatusCode::NOT_FOUND).into_response(),
                                 ApiActionError::OpenFileError | ApiActionError::WriteFileError => warp::reply::with_status("Server could not save your message.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
                                 ApiActionError::UserNotFound => warp::reply::with_status("That user does not exist on your account.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
-                                _ => warp::reply::with_status(
-                                    "The server is doing things that it shouldn't.",
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                ).into_response()
+                                _ => unexpected_response()
                             }
                         } else {
                             warp::reply::with_status("Message sent successfully.", StatusCode::OK).into_response()
                         }
                     } else {
-                        warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
+                        account_not_found_response()
                     }
                 } else {
-                    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
+                    bad_auth_response()
                 })
             }
         }).boxed()
+}
+
+#[derive(Deserialize, Serialize)]
+struct ChannelsQuery {
+    account: String,
+    token: String,
+    user: ID,
+    guild: ID
 }
 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {

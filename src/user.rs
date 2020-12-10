@@ -1,10 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
+    account_not_found_response,
     auth::{Auth, TokenQuery},
-    get_system_millis,
+    bad_auth_response, get_system_millis,
     guild::Guild,
-    new_id, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    new_id, unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID,
+    NAME_ALLOWED_CHARS,
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -19,7 +21,7 @@ pub struct GenericUser {
     pub id: ID,
     pub username: String,
     pub created: u128,
-    pub parent_id: String
+    pub parent_id: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -51,7 +53,7 @@ impl User {
             id: self.id.clone(),
             created: self.created.clone(),
             username: self.username.clone(),
-            parent_id: self.parent_id.clone()
+            parent_id: self.parent_id.clone(),
         }
     }
 }
@@ -84,14 +86,17 @@ impl Account {
     }
 
     pub fn users_generic(users: &HashMap<ID, User>) -> HashMap<ID, GenericUser> {
-        users.iter().map(|e| (e.0.clone(), e.1.to_generic())).collect()
+        users
+            .iter()
+            .map(|e| (e.0.clone(), e.1.to_generic()))
+            .collect()
     }
 
     pub fn to_generic(&self) -> GenericAccount {
         GenericAccount {
             id: self.id.clone(),
             created: self.created.clone(),
-            users: Self::users_generic(&self.users)
+            users: Self::users_generic(&self.users),
         }
     }
 
@@ -196,22 +201,14 @@ fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
             let tmp_auth = auth_manager.clone();
             async move {
                 Ok::<_, warp::Rejection>(
-                    if Auth::is_authenticated(tmp_auth, id.clone(), token.token).await {
+                    if Auth::is_authenticated(tmp_auth, &id, token.token).await {
                         if let Ok(account) = Account::load(&id).await {
                             warp::reply::json(&account).into_response()
                         } else {
-                            warp::reply::with_status(
-                                "Could not find that account.",
-                                StatusCode::NOT_FOUND,
-                            )
-                            .into_response()
+                            account_not_found_response()
                         }
                     } else {
-                        warp::reply::with_status(
-                            "Invalid authentication details.",
-                            StatusCode::FORBIDDEN,
-                        )
-                        .into_response()
+                        bad_auth_response()
                     },
                 )
             }
@@ -219,20 +216,17 @@ fn api_v1_accountinfo(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply
         .boxed()
 }
 
-
-
 fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
     warp::get()
-    .and(warp::path!("accounts" / String))
-    .and_then(|id: String| async move {
-        Ok::<_, warp::Rejection>(
-            if let Ok(account) = Account::load(&id).await {
+        .and(warp::path!("accounts" / String))
+        .and_then(|id: String| async move {
+            Ok::<_, warp::Rejection>(if let Ok(account) = Account::load(&id).await {
                 warp::reply::json(&account.to_generic()).into_response()
             } else {
-                warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
-            }
-        )
-    }).boxed()
+                account_not_found_response()
+            })
+        })
+        .boxed()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -249,7 +243,7 @@ fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> 
         .and_then(move |query: AddUserQuery| {
             let tmp_auth = auth_manager.clone();
             async move { Ok::<_, Rejection>(
-                if Auth::is_authenticated(tmp_auth, query.id.clone(), query.token).await {
+                if Auth::is_authenticated(tmp_auth, &query.id, query.token).await {
                     if let Ok(mut account) = Account::load(&query.id).await {
                         let create = account.create_new_user(query.username).await;
                         if let Ok(user) = create {
@@ -258,16 +252,16 @@ fn api_v1_adduser(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> 
                             match err {
                                 ApiActionError::WriteFileError => warp::reply::with_status("Server could not write user data to disk.", StatusCode::INTERNAL_SERVER_ERROR).into_response(),
                                 ApiActionError::BadNameCharacters => warp::reply::with_status(format!("Username string can only contain the following characters: \"{}\"", NAME_ALLOWED_CHARS), StatusCode::BAD_REQUEST).into_response(),
-                                _ => warp::reply::with_status("The server is doing things that it shouldn't.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+                                _ => unexpected_response()
                             }
                         } else {
-                            warp::reply::with_status("The server is doing things that it shouldn't.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+                            unexpected_response()
                         }
                     } else {
-                        warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
+                        account_not_found_response()
                     }
                 } else {
-                    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN).into_response()
+                    bad_auth_response()
                 }
             )}
         }).boxed()
