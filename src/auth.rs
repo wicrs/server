@@ -78,11 +78,11 @@ impl Auth {
         }
     }
 
-    pub async fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<(), std::io::Error> {
+    async fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<(), std::io::Error> {
         tokio::fs::write("data/sessions.json", serde_json::to_string(sessions).unwrap_or("{}".to_string())).await
     }
 
-    pub async fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
+    async fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
         if let Ok(read) = tokio::fs::read_to_string("data/sessions.json").await {
             if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read) {
                 let now = get_system_millis();
@@ -127,7 +127,7 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.lock().await;
         }
-        sessions_lock.remove(id);
+        sessions_lock.remove(hash_auth(id.to_string(), String::new()).0.as_str());
         let _save = Auth::save_tokens(&sessions_lock).await;
     }
 
@@ -466,7 +466,7 @@ mod tests {
         let login_0 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
         let login_1 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 100, EMAIL.to_string()).await;
         assert!(!login_0.0.clone() && login_1.0.clone());
-        assert!(login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0);
+        assert!(login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0 && login_0.1.clone().unwrap().0 == ACCOUNT_ID.to_string());
         let token_0 = login_0.1.unwrap().1;
         let token_1 = login_1.1.unwrap().1;
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
@@ -490,5 +490,18 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let loaded = Auth::load_tokens().await;
         assert_eq!(loaded.get(ACCOUNT_ID), Some(&vec![long]));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn invalidate_tokens() {
+        let auth = new_auth();
+        let login = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 10000, EMAIL.to_string()).await;
+        assert!(!login.0.clone());
+        assert!(login.1.clone().unwrap().0 == ACCOUNT_ID.to_string());
+        let token = login.1.unwrap().1;
+        assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token.clone()).await);
+        Auth::invalidate_tokens(auth.clone(), ACCOUNT_ID).await;
+        assert!(!Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token.clone()).await);
     }
 }
