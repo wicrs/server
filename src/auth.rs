@@ -424,3 +424,37 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
         .or(api_v1_oauth(auth_manager.clone()))
         .boxed()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::get_system_millis;
+
+    use super::{GitHub, Auth};
+    use super::{Arc, Mutex};
+    use super::HashMap;
+
+    static EMAIL: &str = "test@example.com";
+    static SERVICE_ACCOUNT_ID: &str = "testid";
+    static ACCOUNT_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
+
+    pub fn new_auth() -> Arc<Mutex<Auth>> {
+        let _delete = std::fs::remove_file("data/accounts/".to_string() + ACCOUNT_ID);
+        Arc::new(Mutex::new(Auth {
+            github: Arc::new(Mutex::new(GitHub::new("testing".to_string(),"fakesecret".to_string()))),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }))
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn auth() {
+        let auth = new_auth();
+        let login = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
+        assert!(!login.0);
+        let token_id = login.1.unwrap();
+        assert_eq!(token_id.0.clone(), ACCOUNT_ID.to_string());
+        assert!(Auth::is_authenticated(auth.clone(), token_id.0.as_str(), token_id.1).await);
+        let read = std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID).unwrap();
+        assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","users":{}}"#));
+    }
+}
