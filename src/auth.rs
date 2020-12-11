@@ -438,7 +438,7 @@ mod tests {
     static ACCOUNT_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
 
     pub fn new_auth() -> Arc<Mutex<Auth>> {
-        let _delete = std::fs::remove_file("data/accounts/".to_string() + ACCOUNT_ID);
+        let _delete = std::fs::remove_file("data/accounts/".to_string() + ACCOUNT_ID + ".json");
         Arc::new(Mutex::new(Auth {
             github: Arc::new(Mutex::new(GitHub::new("testing".to_string(),"fakesecret".to_string()))),
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(token_id.0.clone(), ACCOUNT_ID.to_string());
         assert!(token_id.0.clone() == ACCOUNT_ID.to_string());
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_id.1).await);
-        let read = std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID).unwrap();
+        let read = std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID + ".json").unwrap();
         assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","users":{}}"#));
     }
 
