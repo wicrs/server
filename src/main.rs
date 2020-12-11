@@ -11,6 +11,10 @@ use uuid::Uuid;
 
 use warp::{filters::BoxedFilter, Filter, Reply};
 
+#[cfg(test)]
+#[macro_use]
+extern crate serial_test;
+
 #[macro_use]
 pub mod macros;
 pub mod auth;
@@ -46,6 +50,7 @@ pub fn account_not_found_response() -> warp::http::Response<warp::hyper::Body> {
     warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
 }
 
+#[derive(Debug)]
 pub enum ApiActionError {
     GuildNotFound,
     ChannelNotFound,

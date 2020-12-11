@@ -87,18 +87,19 @@ impl Channel {
                     whole_file.clear();
                     if let Ok(_) = file.read_to_string(&mut whole_file).await {
                         let lines = whole_file.par_lines().collect::<Vec<&str>>();
-                        result.append(
-                            &mut lines
-                                .par_iter()
-                                .filter_map(|l| {
-                                    if let Ok(message) = l.parse::<Message>() {
-                                        Some(message)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<Message>>(),
-                        );
+                        let found = &mut lines
+                            .par_iter()
+                            .filter_map(|l| {
+                                if let Ok(message) = l.parse::<Message>() {
+                                    Some(message)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<Message>>();
+                        found.par_sort_by_key(|m| m.created);
+                        found.reverse();
+                        result.append(found);
                         if result.len() >= max {
                             result.truncate(max);
                             return result;
@@ -190,42 +191,29 @@ impl Channel {
 
     pub async fn find_messages_containing(
         &self,
-        string: &str,
+        string: String,
         case_sensitive: bool,
     ) -> Vec<Message> {
         let mut results: Vec<Message> = Vec::new();
-        let string = string;
+        let mut search = string.clone();
         if !case_sensitive {
-            string.to_ascii_lowercase();
+            search.make_ascii_uppercase()
         }
         self.on_all_raw_lines(|lines| {
             let mut result: Vec<Message> = lines
                 .filter_map(|l| {
-                    if case_sensitive {
-                        if l.splitn(4, ',').last().unwrap_or("").contains(string) {
-                            if let Ok(message) = l.parse::<Message>() {
-                                Some(message)
-                            } else {
-                                None
-                            }
+                    let mut compare_string = l.splitn(4, ',').last().unwrap_or("").to_string();
+                    if !case_sensitive {
+                        compare_string.make_ascii_uppercase();
+                    }
+                    if compare_string.contains(&search) {
+                        if let Ok(message) = l.parse::<Message>() {
+                            Some(message)
                         } else {
                             None
                         }
                     } else {
-                        if l.splitn(4, ',')
-                            .last()
-                            .unwrap_or("")
-                            .to_ascii_lowercase()
-                            .contains(string)
-                        {
-                            if let Ok(message) = l.parse::<Message>() {
-                                Some(message)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                        None
                     }
                 })
                 .collect();
@@ -274,7 +262,7 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     pub id: ID,
     pub sender: ID,
@@ -328,5 +316,205 @@ fn uuid_from_num_string(string: &str) -> Result<Uuid, ()> {
         Ok(Uuid::from_u128(num))
     } else {
         Err(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use uuid::Uuid;
+
+    use super::{Channel, Message};
+
+    fn new_test_message(variation: u128) -> Message {
+        Message {
+            id: Uuid::from_u128(123456789 + variation),
+            sender: Uuid::from_u128(0987654321),
+            created: 12222020,
+            content: "This is a test message.\nWith a newline.".to_string()
+                + &variation.to_string(),
+        }
+    }
+
+    async fn new_test_channel() -> Channel {
+        let mut channel = Channel::new(
+            "test".to_string(),
+            Uuid::from_u128(123456789),
+            Uuid::from_u128(123456789),
+        )
+        .await
+        .expect("Could not create a channel with ID \"123456789\".");
+        let _remove = tokio::fs::remove_file(channel.get_current_file().await).await;
+        channel
+    }
+
+    #[test]
+    fn message_serialize() {
+        let message_struct = new_test_message(0);
+        let message_string =
+            r#"123456789,987654321,12222020,This is a test message.\nWith a newline.0"#.to_string();
+        assert_eq!(message_struct.to_string(), message_string);
+    }
+
+    #[test]
+    fn message_deserialize() {
+        let message_struct = new_test_message(0);
+        let message_string =
+            r#"123456789,987654321,12222020,This is a test message.\nWith a newline.0"#.to_string();
+        assert_eq!(Message::from_str(&message_string).unwrap(), message_struct);
+    }
+
+    #[tokio::test]
+    async fn new_channel() {
+        new_test_channel().await;
+        assert!(std::path::Path::new("data/guilds/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").exists());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn add_message() {
+        let mut channel = new_test_channel().await;
+        let message = new_test_message(0);
+        channel.add_message(message.clone()).await.unwrap();
+        let mut file_string = tokio::fs::read_to_string(channel.get_current_file().await)
+            .await
+            .unwrap();
+        if let Some(string) = file_string.strip_suffix('\n') {
+            file_string = string.to_string();
+        }
+        assert_eq!(Message::from_str(&file_string).unwrap(), message);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_last_n_messages() {
+        let mut channel = new_test_channel().await;
+        let message_0 = new_test_message(1);
+        let message_1 = new_test_message(2);
+        let message_2 = new_test_message(3);
+        channel.add_message(message_0.clone()).await.unwrap();
+        channel.add_message(message_1.clone()).await.unwrap();
+        channel.add_message(message_2.clone()).await.unwrap();
+        assert_eq!(channel.last_n_messages(2).await, vec![message_2, message_1]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_message() {
+        let mut channel = new_test_channel().await;
+        let message_0 = new_test_message(4);
+        let message_1 = new_test_message(5);
+        let message_2 = new_test_message(6);
+        channel.add_message(message_0.clone()).await.unwrap();
+        channel.add_message(message_1.clone()).await.unwrap();
+        channel.add_message(message_2.clone()).await.unwrap();
+        assert_eq!(
+            channel
+                .get_message("00000000-0000-0000-0000-0000075bcd19".to_string())
+                .await
+                .unwrap()
+                .content,
+            "This is a test message.\nWith a newline.4".to_string()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn find_messages_containing() {
+        let mut channel = new_test_channel().await;
+        let message_0 = new_test_message(7);
+        let message_1 = new_test_message(8);
+        let message_2 = new_test_message(9);
+        channel.add_message(message_0.clone()).await.unwrap();
+        channel.add_message(message_1.clone()).await.unwrap();
+        channel.add_message(message_2.clone()).await.unwrap();
+        assert_eq!(
+            channel
+                .find_messages_containing("newline.7".to_string(), true)
+                .await,
+            vec![message_0.clone()]
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("NeWlInE.7".to_string(), true)
+                .await,
+            vec![]
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("newline.8".to_string(), false)
+                .await,
+            vec![message_1.clone()]
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("NeWlInE.8".to_string(), false)
+                .await,
+            vec![message_1.clone()]
+        );
+        let all = vec![message_0, message_1, message_2];
+        assert_eq!(
+            channel
+                .find_messages_containing("This".to_string(), true)
+                .await,
+            all.clone()
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("this".to_string(), true)
+                .await,
+            vec![]
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("This".to_string(), false)
+                .await,
+            all.clone()
+        );
+        assert_eq!(
+            channel
+                .find_messages_containing("this".to_string(), false)
+                .await,
+            all.clone()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn messages_between_dates() {
+        let mut channel = new_test_channel().await;
+        let message_0 = Message {
+            id: Uuid::from_u128(134),
+            sender: Uuid::from_u128(0987654321),
+            created: 1,
+            content: "This is a test message.\nWith a newline.".to_string(),
+        };
+        let message_1 = Message {
+            id: Uuid::from_u128(135),
+            sender: Uuid::from_u128(0987654321),
+            created: 2,
+            content: "This is a test message.\nWith a newline.".to_string(),
+        };
+        let message_2 = Message {
+            id: Uuid::from_u128(136),
+            sender: Uuid::from_u128(0987654321),
+            created: 3,
+            content: "This is a test message.\nWith a newline.".to_string(),
+        };
+        let message_3 = Message {
+            id: Uuid::from_u128(137),
+            sender: Uuid::from_u128(0987654321),
+            created: 4,
+            content: "This is a test message.\nWith a newline.".to_string(),
+        };
+        channel.add_message(message_0.clone()).await.unwrap();
+        channel.add_message(message_1.clone()).await.unwrap();
+        channel.add_message(message_2.clone()).await.unwrap();
+        channel.add_message(message_3.clone()).await.unwrap();
+        assert_eq!(channel.get_messages(2, 3, true, 2).await, vec![message_2.clone(), message_1.clone()]);
+        assert_eq!(channel.get_messages(2, 3, false, 2).await, vec![message_1.clone(), message_2.clone()]);
+        assert_eq!(channel.get_messages(2, 3, true, 1).await, vec![message_2]);
+        assert_eq!(channel.get_messages(2, 3, false, 1).await, vec![message_1]);
     }
 }
