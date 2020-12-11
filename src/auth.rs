@@ -475,4 +475,20 @@ mod tests {
         assert!(!Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_1.clone()).await);
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn save_load_sessions() {
+        let long = (get_system_millis() + 10000, "test1".to_string());
+        let tokens = vec![(get_system_millis() + 50, "test0".to_string()), long.clone()];
+        let mut map: HashMap<String, Vec<(u128, String)>> = HashMap::new();
+        map.insert(ACCOUNT_ID.to_string(), tokens.clone());
+        assert_eq!(map.get(ACCOUNT_ID), Some(&tokens));
+        let _save = Auth::save_tokens(&map).await;
+        let loaded = Auth::load_tokens().await;
+        assert_eq!(loaded.get(ACCOUNT_ID), Some(&tokens));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let loaded = Auth::load_tokens().await;
+        assert_eq!(loaded.get(ACCOUNT_ID), Some(&vec![long]));
+    }
 }
