@@ -453,8 +453,26 @@ mod tests {
         assert!(!login.0);
         let token_id = login.1.unwrap();
         assert_eq!(token_id.0.clone(), ACCOUNT_ID.to_string());
-        assert!(Auth::is_authenticated(auth.clone(), token_id.0.as_str(), token_id.1).await);
+        assert!(token_id.0.clone() == ACCOUNT_ID.to_string());
+        assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_id.1).await);
         let read = std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID).unwrap();
         assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","users":{}}"#));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn token_expiry() {
+        let auth = new_auth();
+        let login_0 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
+        let login_1 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 100, EMAIL.to_string()).await;
+        assert!(!login_0.0.clone() && login_1.0.clone());
+        assert!(login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0);
+        let token_0 = login_0.1.unwrap().1;
+        let token_1 = login_1.1.unwrap().1;
+        assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
+        assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_1.clone()).await);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        assert!(!Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
+        assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_1.clone()).await);
     }
 }
