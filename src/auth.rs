@@ -464,14 +464,14 @@ mod tests {
     async fn token_expiry() {
         let auth = new_auth();
         let login_0 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
-        let login_1 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 100, EMAIL.to_string()).await;
+        let login_1 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 100000, EMAIL.to_string()).await;
         assert!(!login_0.0.clone() && login_1.0.clone());
         assert!(login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0 && login_0.1.clone().unwrap().0 == ACCOUNT_ID.to_string());
         let token_0 = login_0.1.unwrap().1;
         let token_1 = login_1.1.unwrap().1;
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_1.clone()).await);
-        std::thread::sleep(std::time::Duration::from_millis(60));
+        std::thread::sleep(std::time::Duration::from_millis(64));
         assert!(!Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_1.clone()).await);
     }
@@ -479,17 +479,13 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn save_load_sessions() {
-        let long = (get_system_millis() + 10000, "test1".to_string());
-        let tokens = vec![(get_system_millis() + 50, "test0".to_string()), long.clone()];
+        let tokens = vec![(get_system_millis() + 10000, "test".to_string()), (get_system_millis() + 10000, "test".to_string())];
         let mut map: HashMap<String, Vec<(u128, String)>> = HashMap::new();
         map.insert(ACCOUNT_ID.to_string(), tokens.clone());
         assert_eq!(map.get(ACCOUNT_ID), Some(&tokens));
         let _save = Auth::save_tokens(&map).await;
         let loaded = Auth::load_tokens().await;
         assert_eq!(loaded.get(ACCOUNT_ID), Some(&tokens));
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let loaded = Auth::load_tokens().await;
-        assert_eq!(loaded.get(ACCOUNT_ID), Some(&vec![long]));
     }
 
     #[tokio::test]
