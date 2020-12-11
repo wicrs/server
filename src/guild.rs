@@ -88,7 +88,7 @@ impl GuildMember {
         false
     }
 
-    pub fn has_permission(&mut self, permission: GuildPermission, guild: &Guild) -> bool {
+    pub fn has_permission(&self, permission: GuildPermission, guild: &Guild) -> bool {
         if self.has_all_permissions() {
             return true;
         }
@@ -103,7 +103,7 @@ impl GuildMember {
                 PermissionSetting::NONE => {}
             };
         } else {
-            for rank in self.ranks.iter_mut() {
+            for rank in self.ranks.iter() {
                 if let Some(rank) = guild.ranks.get(&rank) {
                     if rank.has_permission(&permission) {
                         return true;
@@ -115,7 +115,7 @@ impl GuildMember {
     }
 
     pub fn has_channel_permission(
-        &mut self,
+        &self,
         channel: &ID,
         permission: &ChannelPermission,
         guild: &Guild,
@@ -140,7 +140,7 @@ impl GuildMember {
                 };
             }
         } else {
-            for rank in self.ranks.iter_mut() {
+            for rank in self.ranks.iter() {
                 if let Some(rank) = guild.ranks.get(&rank) {
                     if rank.has_channel_permission(channel, permission) {
                         return true;
@@ -308,7 +308,7 @@ impl Guild {
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = tokio::fs::write(
-                GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string(),
+                GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string() + ".json",
                 json,
             )
             .await
@@ -323,7 +323,9 @@ impl Guild {
     }
 
     pub async fn load(id: &str) -> Result<Self, JsonLoadError> {
-        if let Ok(json) = tokio::fs::read_to_string(GUILD_INFO_FOLDER.to_owned() + "/" + id).await {
+        if let Ok(json) =
+            tokio::fs::read_to_string(GUILD_INFO_FOLDER.to_owned() + "/" + id + ".json").await
+        {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
@@ -344,6 +346,21 @@ impl Guild {
         }
         Ok(())
     }
+
+    pub fn channels(user: ID, guild: &mut Self) -> Result<Vec<Channel>, ApiActionError> {
+        let guild_im = guild.clone();
+        if let Some(user) = guild.users.get_mut(&user) {
+            let mut result = Vec::new();
+            for channel in guild.channels.clone() {
+                if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &guild_im) {
+                    result.push(channel.1.clone());
+                }
+            }
+            Ok(result)
+        } else {
+            Err(ApiActionError::UserNotFound)
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -351,6 +368,7 @@ struct GuildCreateQuery {
     user: ID,
     name: String,
 }
+
 api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, account, query]
         let mut account = account;
         let create = account.create_guild(query.name, query.user).await;
@@ -437,8 +455,29 @@ struct ChannelsQuery {
     guild: ID,
 }
 
+api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, _account, query]
+    if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
+        if let Ok(channels) = Guild::channels(query.user, &mut guild) {
+            warp::reply::json(&channels).into_response()
+        } else {
+            warp::reply::with_status(
+                "You are not in that guild if it exists.",
+                StatusCode::NOT_FOUND,
+            )
+            .into_response()
+        }
+    } else {
+        warp::reply::with_status(
+            "You are not in that guild if it exists.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
+}
+
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_create(auth_manager.clone())
-        .or(api_v1_sendmessage(auth_manager))
+        .or(api_v1_getchannels(auth_manager.clone()))
+        .or(api_v1_sendmessage(auth_manager.clone()))
         .boxed()
 }
