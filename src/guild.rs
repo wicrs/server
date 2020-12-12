@@ -530,7 +530,7 @@ mod tests {
         ID,
     };
 
-    use super::{Guild, GuildMember};
+    use super::{Guild, GuildMember, Rank};
 
     fn get_user_for_test(id: u128) -> User {
         User::new(
@@ -609,5 +609,31 @@ mod tests {
         member.set_permission(GuildPermission::All, PermissionSetting::TRUE);
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
         assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+    }
+
+    #[test]
+    fn rank_permissions() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        let rank = Rank::new("test_rank".to_string(), ID::from_u128(0));
+        guild.ranks.insert(rank.id.clone(), rank.clone());
+        member.give_rank(guild.ranks.get_mut(&rank.id).expect("Failed to get test rank."));
+        assert!(!member.has_permission(GuildPermission::All, &guild));
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::ReadMessage, &guild));
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
     }
 }
