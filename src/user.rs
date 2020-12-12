@@ -1,6 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, account_not_found_response, auth::Auth, get_system_millis, guild::Guild, is_valid_username, new_id, unexpected_response};
+use crate::{
+    account_not_found_response, auth::Auth, get_system_millis, guild::Guild, is_valid_username,
+    new_id, unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID,
+    NAME_ALLOWED_CHARS,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -136,7 +140,12 @@ impl Account {
         }
     }
 
-    pub async fn create_guild(&mut self, name: String, id: ID, user: ID) -> Result<ID, ApiActionError> {
+    pub async fn create_guild(
+        &mut self,
+        name: String,
+        id: ID,
+        user: ID,
+    ) -> Result<ID, ApiActionError> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
@@ -257,6 +266,8 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+
+    use crate::guild::Guild;
 
     use super::{get_id, Account, GenericAccount, ID};
 
@@ -408,10 +419,58 @@ mod tests {
             "github".to_string(),
         );
         let _delete = std::fs::remove_file("data/accounts/".to_string() + &account.id);
-        let user = account.create_new_user("test".to_string()).await.expect("Failed to create user for test account.");
+        let user = account
+            .create_new_user("test".to_string())
+            .await
+            .expect("Failed to create user for test account.");
         let id = ID::from_u128(0);
         let _delete = std::fs::remove_file("data/guilds/info/".to_string() + &id.to_string());
-        let guild = account.create_guild("test_guild".to_string(), id.clone(), user.id).await.expect("Failed to create test guild.");
-        assert!(std::path::Path::new(&("data/guilds/info/".to_string() + &guild.to_string() + ".json")).exists());
+        let guild = account
+            .create_guild("test_guild".to_string(), id.clone(), user.id)
+            .await
+            .expect("Failed to create test guild.");
+        assert!(std::path::Path::new(
+            &("data/guilds/info/".to_string() + &guild.to_string() + ".json")
+        )
+        .exists());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn send_guild_message() {
+        let mut account = Account::new(
+            SERVICE_ACCOUNT_ID.to_string(),
+            EMAIL.to_string(),
+            "github".to_string(),
+        );
+        let user = account
+            .create_new_user("test".to_string())
+            .await
+            .expect("Failed to create user for test account.");
+        let id = ID::from_u128(0);
+        let guild_id = account
+            .create_guild("test_guild".to_string(), id.clone(), user.id)
+            .await
+            .expect("Failed to create test guild.");
+        let mut guild = Guild::load(&guild_id.to_string())
+            .await
+            .expect("Failed to load test guild.");
+        let channel = guild
+            .new_channel(user.id, "test_channel".to_string())
+            .await
+            .expect("Failed to create test channel.");
+        guild.save().await.expect("Failed to save test guild.");
+        account
+            .send_guild_message(user.id, guild_id, channel.clone(), "test".to_string())
+            .await
+            .expect("Failed to send message.");
+        let channel = guild
+            .channels
+            .get(&channel)
+            .expect("Failed to load test channel.");
+        assert!(!channel
+            .find_messages_containing("test".to_string(), true)
+            .await
+            .is_empty());
     }
 }

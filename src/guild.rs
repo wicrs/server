@@ -6,9 +6,17 @@ use std::{
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 
-use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, auth::Auth, channel::{Channel, Message}, get_system_millis, is_valid_username, new_id, permission::{
+use crate::{
+    auth::Auth,
+    channel::{Channel, Message},
+    get_system_millis, is_valid_username, new_id,
+    permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
-    }, unexpected_response, user::User};
+    },
+    unexpected_response,
+    user::User,
+    ApiActionError, JsonLoadError, JsonSaveError, ID,
+};
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
 
@@ -272,6 +280,34 @@ impl Guild {
         }
     }
 
+    pub async fn new_channel(&mut self, user: ID, name: String) -> Result<ID, ApiActionError> {
+        if is_valid_username(&name) {
+            if let Some(user) = self.users.get(&user) {
+                if user
+                    .clone()
+                    .has_permission(GuildPermission::CreateChannel, self)
+                {
+                    let mut id = new_id();
+                    while self.channels.contains_key(&id) {
+                        id = new_id();
+                    }
+                    if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
+                        self.channels.insert(id.clone(), channel);
+                        Ok(id)
+                    } else {
+                        Err(ApiActionError::WriteFileError)
+                    }
+                } else {
+                    Err(ApiActionError::NoPermission)
+                }
+            } else {
+                Err(ApiActionError::NotInGuild)
+            }
+        } else {
+            Err(ApiActionError::BadNameCharacters)
+        }
+    }
+
     pub async fn send_message(
         &mut self,
         user: ID,
@@ -488,12 +524,21 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ID, permission::GuildPermission, user::User};
+    use crate::{
+        permission::{ChannelPermission, GuildPermission, PermissionSetting},
+        user::User,
+        ID,
+    };
 
     use super::{Guild, GuildMember};
 
     fn get_user_for_test(id: u128) -> User {
-        User::new(ID::from_u128(id), "test_user".to_string(), "testid".to_string()).expect("Failed to create a testing user.")
+        User::new(
+            ID::from_u128(id),
+            "test_user".to_string(),
+            "testid".to_string(),
+        )
+        .expect("Failed to create a testing user.")
     }
 
     fn get_guild_for_test() -> Guild {
@@ -510,19 +555,59 @@ mod tests {
     #[test]
     fn guild_permissions() {
         let mut guild = get_guild_for_test();
-        let mut member = guild.user_join(&get_user_for_test(2)).expect("Test user could not join test guild.");
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
         assert!(!member.has_permission(GuildPermission::All, &guild));
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
-        member.set_permission(GuildPermission::SendMessage, crate::permission::PermissionSetting::FALSE);
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
-        member.set_permission(GuildPermission::SendMessage, crate::permission::PermissionSetting::NONE);
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
-        member.set_permission(GuildPermission::SendMessage, crate::permission::PermissionSetting::TRUE);
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
         assert!(member.has_permission(GuildPermission::SendMessage, &guild));
         assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
-        assert!(!member.has_permission(GuildPermission::Administrate, &guild));
-        member.set_permission(GuildPermission::All, crate::permission::PermissionSetting::TRUE);
+        member.set_permission(GuildPermission::All, PermissionSetting::TRUE);
         assert!(member.has_permission(GuildPermission::ReadMessage, &guild));
-        assert!(member.has_permission(GuildPermission::Administrate, &guild));
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+    }
+
+    #[test]
+    fn channel_permissions() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        assert!(!member.has_permission(GuildPermission::All, &guild));
+        let id = ID::from_u128(0);
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::FALSE,
+        );
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::NONE,
+        );
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::TRUE,
+        );
+        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
     }
 }

@@ -30,7 +30,7 @@ pub enum JsonLoadError {
     Deserialize,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum JsonSaveError {
     WriteFile,
     Serialize,
