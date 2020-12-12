@@ -1,9 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{
-    account_not_found_response, auth::Auth, get_system_millis, guild::Guild, new_id,
-    unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
-};
+use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, account_not_found_response, auth::Auth, get_system_millis, guild::Guild, is_valid_username, new_id, unexpected_response};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -31,7 +28,7 @@ pub struct User {
 
 impl User {
     pub fn new(id: ID, username: String, parent_id: String) -> Result<Self, ()> {
-        if username.len() < 32 && username.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+        if is_valid_username(&username) {
             Ok(Self {
                 id,
                 username,
@@ -139,12 +136,12 @@ impl Account {
         }
     }
 
-    pub async fn create_guild(&mut self, name: String, user: ID) -> Result<ID, ApiActionError> {
+    pub async fn create_guild(&mut self, name: String, id: ID, user: ID) -> Result<ID, ApiActionError> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
         if let Some(user) = self.users.get_mut(&user) {
-            let new_guild = Guild::new(name, new_id(), user);
+            let new_guild = Guild::new(name, id, user);
             if let Ok(_) = new_guild.save().await {
                 user.in_guilds.push(new_guild.id.clone());
                 Ok(new_guild.id)
@@ -276,29 +273,6 @@ mod tests {
     }
 
     #[test]
-    fn username_allowed_check() {
-        let uuid = ID::from_u128(0);
-        let _good_name = User::new(
-            uuid.clone(),
-            "Test_with-chars. And".to_string(),
-            ACCOUNT_ID.to_string(),
-        )
-        .expect("Valid username was marked as invalid.");
-        let _bad_name_chars = User::new(
-            uuid.clone(),
-            "Test_with-chars. And!".to_string(),
-            ACCOUNT_ID.to_string(),
-        )
-        .expect_err("Username with illegal characters was marked as valid.");
-        let _bad_name_len = User::new(
-            uuid,
-            "Test_with-chars. And this name is way to long, it should cause an error.".to_string(),
-            ACCOUNT_ID.to_string(),
-        )
-        .expect_err("Username that exceeded maximum length was marked as invalid.");
-    }
-
-    #[test]
     fn new_account() {
         let account = Account::new(
             SERVICE_ACCOUNT_ID.to_string(),
@@ -423,5 +397,21 @@ mod tests {
             .await
             .expect("Failed to load the test account from disk.");
         assert_eq!(account, loaded);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn create_guild() {
+        let mut account = Account::new(
+            SERVICE_ACCOUNT_ID.to_string(),
+            EMAIL.to_string(),
+            "github".to_string(),
+        );
+        let _delete = std::fs::remove_file("data/accounts/".to_string() + &account.id);
+        let user = account.create_new_user("test".to_string()).await.expect("Failed to create user for test account.");
+        let id = ID::from_u128(0);
+        let _delete = std::fs::remove_file("data/guilds/info/".to_string() + &id.to_string());
+        let guild = account.create_guild("test_guild".to_string(), id.clone(), user.id).await.expect("Failed to create test guild.");
+        assert!(std::path::Path::new(&("data/guilds/info/".to_string() + &guild.to_string() + ".json")).exists());
     }
 }

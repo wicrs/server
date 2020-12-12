@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(PartialEq, Serialize, Deserialize, Clone)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum PermissionSetting {
     TRUE,
     FALSE,
     NONE,
 }
 
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum GuildPermission {
     All,
     ViewChannels,
@@ -31,7 +31,7 @@ pub enum GuildPermission {
 
 pub type GuildPremissions = HashMap<GuildPermission, PermissionSetting>;
 
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum ChannelPermission {
     SendMessage,
     ReadMessage,

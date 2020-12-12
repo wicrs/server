@@ -338,14 +338,14 @@ mod tests {
     }
 
     async fn new_test_channel() -> Channel {
-        let mut channel = Channel::new(
+        let _remove = tokio::fs::remove_dir_all("data/guilds/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").await;
+        let channel = Channel::new(
             "test".to_string(),
             Uuid::from_u128(123456789),
             Uuid::from_u128(123456789),
         )
         .await
         .expect("Could not create a channel with ID \"123456789\".");
-        let _remove = tokio::fs::remove_file(channel.get_current_file().await).await;
         channel
     }
 
@@ -512,8 +512,14 @@ mod tests {
         channel.add_message(message_1.clone()).await.unwrap();
         channel.add_message(message_2.clone()).await.unwrap();
         channel.add_message(message_3.clone()).await.unwrap();
-        assert_eq!(channel.get_messages(2, 3, true, 2).await, vec![message_2.clone(), message_1.clone()]);
-        assert_eq!(channel.get_messages(2, 3, false, 2).await, vec![message_1.clone(), message_2.clone()]);
+        assert_eq!(
+            channel.get_messages(2, 3, true, 2).await,
+            vec![message_2.clone(), message_1.clone()]
+        );
+        assert_eq!(
+            channel.get_messages(2, 3, false, 2).await,
+            vec![message_1.clone(), message_2.clone()]
+        );
         assert_eq!(channel.get_messages(2, 3, true, 1).await, vec![message_2]);
         assert_eq!(channel.get_messages(2, 3, false, 1).await, vec![message_1]);
     }

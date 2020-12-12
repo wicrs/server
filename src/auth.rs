@@ -78,13 +78,20 @@ impl Auth {
         }
     }
 
-    async fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<(), std::io::Error> {
-        tokio::fs::write("data/sessions.json", serde_json::to_string(sessions).unwrap_or("{}".to_string())).await
+    async fn save_tokens(
+        sessions: &HashMap<String, Vec<(u128, String)>>,
+    ) -> Result<(), std::io::Error> {
+        tokio::fs::write(
+            "data/sessions.json",
+            serde_json::to_string(sessions).unwrap_or("{}".to_string()),
+        )
+        .await
     }
 
     async fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
         if let Ok(read) = tokio::fs::read_to_string("data/sessions.json").await {
-            if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read) {
+            if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read)
+            {
                 let now = get_system_millis();
                 for account in &mut map {
                     account.1.retain(|t| t.0 > now);
@@ -429,9 +436,9 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 mod tests {
     use crate::get_system_millis;
 
-    use super::{GitHub, Auth};
-    use super::{Arc, Mutex};
     use super::HashMap;
+    use super::{Arc, Mutex};
+    use super::{Auth, GitHub};
 
     static EMAIL: &str = "test@example.com";
     static SERVICE_ACCOUNT_ID: &str = "testid";
@@ -439,8 +446,12 @@ mod tests {
 
     pub fn new_auth() -> Arc<Mutex<Auth>> {
         let _delete = std::fs::remove_file("data/accounts/".to_string() + ACCOUNT_ID + ".json");
+        std::thread::sleep(std::time::Duration::from_millis(50));
         Arc::new(Mutex::new(Auth {
-            github: Arc::new(Mutex::new(GitHub::new("testing".to_string(),"fakesecret".to_string()))),
+            github: Arc::new(Mutex::new(GitHub::new(
+                "testing".to_string(),
+                "fakesecret".to_string(),
+            ))),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }))
     }
@@ -449,13 +460,21 @@ mod tests {
     #[serial]
     async fn auth() {
         let auth = new_auth();
-        let login = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
+        let login = Auth::finalize_login(
+            auth.clone(),
+            "github",
+            SERVICE_ACCOUNT_ID,
+            get_system_millis() + 50,
+            EMAIL.to_string(),
+        )
+        .await;
         assert!(!login.0);
         let token_id = login.1.unwrap();
         assert_eq!(token_id.0.clone(), ACCOUNT_ID.to_string());
         assert!(token_id.0.clone() == ACCOUNT_ID.to_string());
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_id.1).await);
-        let read = std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID + ".json").unwrap();
+        let read =
+            std::fs::read_to_string("data/accounts/".to_string() + ACCOUNT_ID + ".json").unwrap();
         assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","users":{}}"#));
     }
 
@@ -463,10 +482,27 @@ mod tests {
     #[serial]
     async fn token_expiry() {
         let auth = new_auth();
-        let login_0 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 50, EMAIL.to_string()).await;
-        let login_1 = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 100000, EMAIL.to_string()).await;
+        let login_0 = Auth::finalize_login(
+            auth.clone(),
+            "github",
+            SERVICE_ACCOUNT_ID,
+            get_system_millis() + 50,
+            EMAIL.to_string(),
+        )
+        .await;
+        let login_1 = Auth::finalize_login(
+            auth.clone(),
+            "github",
+            SERVICE_ACCOUNT_ID,
+            get_system_millis() + 100000,
+            EMAIL.to_string(),
+        )
+        .await;
         assert!(!login_0.0.clone() && login_1.0.clone());
-        assert!(login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0 && login_0.1.clone().unwrap().0 == ACCOUNT_ID.to_string());
+        assert!(
+            login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0
+                && login_0.1.clone().unwrap().0 == ACCOUNT_ID.to_string()
+        );
         let token_0 = login_0.1.unwrap().1;
         let token_1 = login_1.1.unwrap().1;
         assert!(Auth::is_authenticated(auth.clone(), ACCOUNT_ID, token_0.clone()).await);
@@ -479,7 +515,10 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn save_load_sessions() {
-        let tokens = vec![(get_system_millis() + 10000, "test".to_string()), (get_system_millis() + 10000, "test".to_string())];
+        let tokens = vec![
+            (get_system_millis() + 10000, "test".to_string()),
+            (get_system_millis() + 10000, "test".to_string()),
+        ];
         let mut map: HashMap<String, Vec<(u128, String)>> = HashMap::new();
         map.insert(ACCOUNT_ID.to_string(), tokens.clone());
         assert_eq!(map.get(ACCOUNT_ID), Some(&tokens));
@@ -492,7 +531,14 @@ mod tests {
     #[serial]
     async fn invalidate_tokens() {
         let auth = new_auth();
-        let login = Auth::finalize_login(auth.clone(), "github", SERVICE_ACCOUNT_ID, get_system_millis() + 10000, EMAIL.to_string()).await;
+        let login = Auth::finalize_login(
+            auth.clone(),
+            "github",
+            SERVICE_ACCOUNT_ID,
+            get_system_millis() + 10000,
+            EMAIL.to_string(),
+        )
+        .await;
         assert!(!login.0.clone());
         assert!(login.1.clone().unwrap().0 == ACCOUNT_ID.to_string());
         let token = login.1.unwrap().1;
