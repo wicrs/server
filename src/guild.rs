@@ -9,18 +9,18 @@ use warp::{filters::BoxedFilter, Filter, Reply};
 use crate::{
     auth::Auth,
     channel::{Channel, Message},
-    get_system_millis, new_id,
+    get_system_millis, is_valid_username, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
     },
     unexpected_response,
     user::User,
-    ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    ApiActionError, JsonLoadError, JsonSaveError, ID,
 };
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GuildMember {
     pub user: ID,
     pub joined: u128,
@@ -45,7 +45,7 @@ impl GuildMember {
     }
 
     pub fn set_nickname(&mut self, nickname: String) -> Result<(), ()> {
-        if nickname.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+        if is_valid_username(&nickname) {
             self.nickname = nickname;
             Ok(())
         } else {
@@ -89,9 +89,14 @@ impl GuildMember {
     }
 
     pub fn has_permission(&self, permission: GuildPermission, guild: &Guild) -> bool {
+        println!("{:?}", self.guild_permissions);
+        if guild.owner == self.user {
+            return true;
+        }
         if self.has_all_permissions() {
             return true;
         }
+        println!("passed all");
         if let Some(value) = self.guild_permissions.get(&permission) {
             match value {
                 &PermissionSetting::TRUE => {
@@ -120,6 +125,9 @@ impl GuildMember {
         permission: &ChannelPermission,
         guild: &Guild,
     ) -> bool {
+        if guild.owner == self.user {
+            return true;
+        }
         if self.has_all_permissions() {
             return true;
         }
@@ -152,7 +160,7 @@ impl GuildMember {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Rank {
     pub id: ID,
     pub name: String,
@@ -235,7 +243,7 @@ impl Rank {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Guild {
     pub channels: HashMap<ID, Channel>,
     pub users: HashMap<ID, GuildMember>,
@@ -269,6 +277,34 @@ impl Guild {
             channels: HashMap::new(),
             users,
             created: get_system_millis(),
+        }
+    }
+
+    pub async fn new_channel(&mut self, user: ID, name: String) -> Result<ID, ApiActionError> {
+        if is_valid_username(&name) {
+            if let Some(user) = self.users.get(&user) {
+                if user
+                    .clone()
+                    .has_permission(GuildPermission::CreateChannel, self)
+                {
+                    let mut id = new_id();
+                    while self.channels.contains_key(&id) {
+                        id = new_id();
+                    }
+                    if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
+                        self.channels.insert(id.clone(), channel);
+                        Ok(id)
+                    } else {
+                        Err(ApiActionError::WriteFileError)
+                    }
+                } else {
+                    Err(ApiActionError::NoPermission)
+                }
+            } else {
+                Err(ApiActionError::NotInGuild)
+            }
+        } else {
+            Err(ApiActionError::BadNameCharacters)
         }
     }
 
@@ -336,7 +372,7 @@ impl Guild {
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<(), ()> {
+    pub fn user_join(&mut self, user: &User) -> Result<GuildMember, ()> {
         let mut member = GuildMember::new(user, self.id.clone());
         for (id, rank) in self.ranks.iter_mut() {
             if id == &self.default_rank {
@@ -344,15 +380,20 @@ impl Guild {
                 break;
             }
         }
-        Ok(())
+        self.users.insert(member.user.clone(), member.clone());
+        Ok(member)
     }
 
-    pub fn channels(user: ID, guild: &mut Self) -> Result<Vec<Channel>, ApiActionError> {
-        let guild_im = guild.clone();
-        if let Some(user) = guild.users.get_mut(&user) {
+    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
+        let guild_im = self.clone();
+        if let Some(user) = self.users.get_mut(&user) {
             let mut result = Vec::new();
-            for channel in guild.channels.clone() {
-                if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &guild_im) {
+            for channel in self.channels.clone() {
+                if user.has_channel_permission(
+                    &channel.0,
+                    &ChannelPermission::ViewChannel,
+                    &guild_im,
+                ) {
                     result.push(channel.1.clone());
                 }
             }
@@ -371,7 +412,7 @@ struct GuildCreateQuery {
 
 api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, account, query]
         let mut account = account;
-        let create = account.create_guild(query.name, query.user).await;
+        let create = account.create_guild(query.name, new_id(), query.user).await;
         if let Err(err) = create {
             match err {
                 ApiActionError::OpenFileError | ApiActionError::WriteFileError => {
@@ -457,7 +498,7 @@ struct ChannelsQuery {
 
 api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, _account, query]
     if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
-        if let Ok(channels) = Guild::channels(query.user, &mut guild) {
+        if let Ok(channels) = guild.channels(query.user) {
             warp::reply::json(&channels).into_response()
         } else {
             warp::reply::with_status(
@@ -480,4 +521,202 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
         .or(api_v1_getchannels(auth_manager.clone()))
         .or(api_v1_sendmessage(auth_manager.clone()))
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        permission::{ChannelPermission, GuildPermission, PermissionSetting},
+        user::User,
+        ID,
+    };
+
+    use super::{Guild, GuildMember, Rank};
+
+    fn get_user_for_test(id: u128) -> User {
+        User::new(
+            ID::from_u128(id),
+            "test_user".to_string(),
+            "testid".to_string(),
+        )
+        .expect("Failed to create a testing user.")
+    }
+
+    fn get_guild_for_test() -> Guild {
+        Guild::new("test".to_string(), ID::from_u128(1), &get_user_for_test(1))
+    }
+
+    #[test]
+    fn guild_creator_permissions() {
+        let member = GuildMember::new(&get_user_for_test(1), ID::from_u128(1));
+        let guild = get_guild_for_test();
+        assert!(member.has_permission(GuildPermission::All, &guild));
+    }
+
+    #[test]
+    fn guild_permissions() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        assert!(!member.has_permission(GuildPermission::All, &guild));
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::ReadMessage, &guild));
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+    }
+
+    #[test]
+    fn channel_permissions() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        assert!(!member.has_permission(GuildPermission::All, &guild));
+        let id = ID::from_u128(0);
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::FALSE,
+        );
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::NONE,
+        );
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_channel_permission(
+            id.clone(),
+            ChannelPermission::SendMessage,
+            PermissionSetting::TRUE,
+        );
+        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+        member.set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &guild));
+        assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &guild));
+    }
+
+    #[test]
+    fn rank_permissions() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        let rank = Rank::new("test_rank".to_string(), ID::from_u128(0));
+        guild.ranks.insert(rank.id.clone(), rank.clone());
+        member.give_rank(
+            guild
+                .ranks
+                .get_mut(&rank.id)
+                .expect("Failed to get test rank."),
+        );
+        assert!(!member.has_permission(GuildPermission::All, &guild));
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
+        assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+        assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        assert!(member.has_permission(GuildPermission::ReadMessage, &guild));
+        assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+    }
+
+    #[tokio::test]
+    async fn channel_view() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        {
+            {
+                let member_in_guild = guild
+                    .users
+                    .get_mut(&member.user)
+                    .expect("Failed to get guild member.");
+                member_in_guild
+                    .set_permission(GuildPermission::CreateChannel, PermissionSetting::TRUE);
+                member = member_in_guild.clone();
+            }
+            assert!(!member.has_permission(GuildPermission::All, &guild));
+            assert!(member.has_permission(GuildPermission::CreateChannel, &guild));
+        }
+        let channel_0 = guild
+            .new_channel(member.user.clone(), "test0".to_string())
+            .await
+            .expect("Failed to create test channel.");
+        let _channel_1 = guild
+            .new_channel(member.user.clone(), "test1".to_string())
+            .await
+            .expect("Failed to create test channel.");
+        assert!(guild
+            .channels(member.user.clone())
+            .expect("Failed to get guild channels.")
+            .is_empty());
+
+        {
+            let member_in_guild = guild
+                .users
+                .get_mut(&member.user)
+                .expect("Failed to get guild member.");
+            member_in_guild.set_channel_permission(
+                channel_0.clone(),
+                ChannelPermission::ViewChannel,
+                PermissionSetting::TRUE,
+            );
+        }
+        let get = guild
+            .channels(member.user.clone())
+            .expect("Failed to get guild channels.");
+        assert_eq!(get.len(), 1);
+        assert_eq!(get[0].id, channel_0.clone());
+    }
+
+    #[tokio::test]
+    async fn save_load() {
+        let guild = Guild::new("test".to_string(), ID::from_u128(1234), &get_user_for_test(1));
+        let id_str = guild.id.to_string();
+        let id_str = id_str.as_str();
+        let _remove = tokio::fs::remove_file("data/guilds/info/".to_string() + &ID::from_u128(1234).to_string() + ".json").await;
+        guild.save().await.expect("Failed to save guild info.");
+        let load = Guild::load(id_str).await.expect("Failed to load guild info.");
+        assert_eq!(guild, load);
+    }
 }

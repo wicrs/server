@@ -11,6 +11,10 @@ use uuid::Uuid;
 
 use warp::{filters::BoxedFilter, Filter, Reply};
 
+#[cfg(test)]
+#[macro_use]
+extern crate serial_test;
+
 #[macro_use]
 pub mod macros;
 pub mod auth;
@@ -26,7 +30,7 @@ pub enum JsonLoadError {
     Deserialize,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum JsonSaveError {
     WriteFile,
     Serialize,
@@ -46,6 +50,7 @@ pub fn account_not_found_response() -> warp::http::Response<warp::hyper::Body> {
     warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
 }
 
+#[derive(Debug)]
 pub enum ApiActionError {
     GuildNotFound,
     ChannelNotFound,
@@ -89,6 +94,10 @@ pub fn get_system_millis() -> u128 {
         .as_millis()
 }
 
+pub fn is_valid_username(name: &str) -> bool {
+    name.len() > 0 && name.len() < 32 && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
+}
+
 pub type ID = Uuid;
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
@@ -101,4 +110,20 @@ fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::path("v1")
         .and(auth_api.or(user_api).or(guild_api))
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_username;
+
+    #[test]
+    fn valid_username_check() {
+        assert!(is_valid_username("a"));
+        assert!(is_valid_username("Test_test tHAt-tester."));
+        assert!(is_valid_username("1234567890"));
+        assert!(is_valid_username("l33t 5p34k"));
+        assert!(!is_valid_username(""));
+        assert!(!is_valid_username("Test! @thing"));
+        assert!(!is_valid_username("123456789111315171921232527293133"));
+    }
 }
