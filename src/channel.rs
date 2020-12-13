@@ -13,7 +13,7 @@ use crate::{get_system_millis, ApiActionError, ID};
 
 static GUILD_DATA_FOLDER: &str = "data/guilds/data";
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
     #[serde(skip)]
     pub messages: Vec<Message>,

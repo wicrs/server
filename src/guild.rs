@@ -20,7 +20,7 @@ use crate::{
 
 static GUILD_INFO_FOLDER: &str = "data/guilds/info";
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GuildMember {
     pub user: ID,
     pub joined: u128,
@@ -160,7 +160,7 @@ impl GuildMember {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Rank {
     pub id: ID,
     pub name: String,
@@ -243,7 +243,7 @@ impl Rank {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Guild {
     pub channels: HashMap<ID, Channel>,
     pub users: HashMap<ID, GuildMember>,
@@ -707,5 +707,16 @@ mod tests {
             .expect("Failed to get guild channels.");
         assert_eq!(get.len(), 1);
         assert_eq!(get[0].id, channel_0.clone());
+    }
+
+    #[tokio::test]
+    async fn save_load() {
+        let guild = Guild::new("test".to_string(), ID::from_u128(1234), &get_user_for_test(1));
+        let id_str = guild.id.to_string();
+        let id_str = id_str.as_str();
+        let _remove = tokio::fs::remove_file("data/guilds/info/".to_string() + &ID::from_u128(1234).to_string() + ".json").await;
+        guild.save().await.expect("Failed to save guild info.");
+        let load = Guild::load(id_str).await.expect("Failed to load guild info.");
+        assert_eq!(guild, load);
     }
 }
