@@ -380,14 +380,15 @@ impl Guild {
                 break;
             }
         }
+        self.users.insert(member.user.clone(), member.clone());
         Ok(member)
     }
 
-    pub fn channels(user: ID, guild: &mut Self) -> Result<Vec<Channel>, ApiActionError> {
-        let guild_im = guild.clone();
-        if let Some(user) = guild.users.get_mut(&user) {
+    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
+        let guild_im = self.clone();
+        if let Some(user) = self.users.get_mut(&user) {
             let mut result = Vec::new();
-            for channel in guild.channels.clone() {
+            for channel in self.channels.clone() {
                 if user.has_channel_permission(
                     &channel.0,
                     &ChannelPermission::ViewChannel,
@@ -497,7 +498,7 @@ struct ChannelsQuery {
 
 api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, _account, query]
     if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
-        if let Ok(channels) = Guild::channels(query.user, &mut guild) {
+        if let Ok(channels) = guild.channels(query.user) {
             warp::reply::json(&channels).into_response()
         } else {
             warp::reply::with_status(
@@ -619,21 +620,92 @@ mod tests {
             .expect("Test user could not join test guild.");
         let rank = Rank::new("test_rank".to_string(), ID::from_u128(0));
         guild.ranks.insert(rank.id.clone(), rank.clone());
-        member.give_rank(guild.ranks.get_mut(&rank.id).expect("Failed to get test rank."));
+        member.give_rank(
+            guild
+                .ranks
+                .get_mut(&rank.id)
+                .expect("Failed to get test rank."),
+        );
         assert!(!member.has_permission(GuildPermission::All, &guild));
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
         assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
-        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::FALSE);
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
         assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
-        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::NONE);
         assert!(!member.has_permission(GuildPermission::SendMessage, &guild));
         assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
-        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::SendMessage, PermissionSetting::TRUE);
         assert!(member.has_permission(GuildPermission::SendMessage, &guild));
         assert!(!member.has_permission(GuildPermission::ReadMessage, &guild));
-        guild.ranks.get_mut(&rank.id).expect("Failed to get test rank.").set_permission(GuildPermission::All, PermissionSetting::TRUE);
+        guild
+            .ranks
+            .get_mut(&rank.id)
+            .expect("Failed to get test rank.")
+            .set_permission(GuildPermission::All, PermissionSetting::TRUE);
         assert!(member.has_permission(GuildPermission::ReadMessage, &guild));
         assert!(member.has_permission(GuildPermission::SendMessage, &guild));
+    }
+
+    #[tokio::test]
+    async fn channel_view() {
+        let mut guild = get_guild_for_test();
+        let mut member = guild
+            .user_join(&get_user_for_test(2))
+            .expect("Test user could not join test guild.");
+        {
+            {
+                let member_in_guild = guild
+                    .users
+                    .get_mut(&member.user)
+                    .expect("Failed to get guild member.");
+                member_in_guild
+                    .set_permission(GuildPermission::CreateChannel, PermissionSetting::TRUE);
+                member = member_in_guild.clone();
+            }
+            assert!(!member.has_permission(GuildPermission::All, &guild));
+            assert!(member.has_permission(GuildPermission::CreateChannel, &guild));
+        }
+        let channel_0 = guild
+            .new_channel(member.user.clone(), "test0".to_string())
+            .await
+            .expect("Failed to create test channel.");
+        let _channel_1 = guild
+            .new_channel(member.user.clone(), "test1".to_string())
+            .await
+            .expect("Failed to create test channel.");
+        assert!(guild
+            .channels(member.user.clone())
+            .expect("Failed to get guild channels.")
+            .is_empty());
+
+        {
+            let member_in_guild = guild
+                .users
+                .get_mut(&member.user)
+                .expect("Failed to get guild member.");
+            member_in_guild.set_channel_permission(
+                channel_0.clone(),
+                ChannelPermission::ViewChannel,
+                PermissionSetting::TRUE,
+            );
+        }
+        let get = guild
+            .channels(member.user.clone())
+            .expect("Failed to get guild channels.");
+        assert_eq!(get.len(), 1);
+        assert_eq!(get[0].id, channel_0.clone());
     }
 }
