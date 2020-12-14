@@ -78,6 +78,33 @@ impl Auth {
         }
     }
 
+    pub async fn for_testing() -> (Self, String, String) {
+        let auth = Self {
+            github: Arc::new(Mutex::new(GitHub::new(
+                "testing".to_string(),
+                "testing".to_string(),
+            ))),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let account = Account::new(
+            "test-account-id".to_string(),
+            "test@example.com".to_string(),
+            "test".to_string(),
+        );
+        account.save().await.expect("Failed to save test account.");
+        let mut vec: Vec<u8> = Vec::with_capacity(64);
+        for _ in 0..vec.capacity() {
+            vec.push(rand::random());
+        }
+        let token = base64::encode_config(vec, URL_SAFE_NO_PAD);
+        let hashed = hash_auth(account.id.clone(), token.clone());
+        auth.sessions
+            .lock()
+            .await
+            .insert(hashed.0, vec![(u128::MAX, hashed.1)]);
+        (auth, account.id, token)
+    }
+
     async fn save_tokens(
         sessions: &HashMap<String, Vec<(u128, String)>>,
     ) -> Result<(), std::io::Error> {

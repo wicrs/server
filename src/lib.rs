@@ -68,23 +68,28 @@ static NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 pub async fn run() {
-    let auth = Arc::new(Mutex::new(Auth::from_config().await));
+    let config = config::load_config();
+    warp::serve(filter(Auth::from_config().await).await)
+        .run((config.listen, config.port))
+        .await;
+}
+
+pub async fn filter(auth: Auth) -> BoxedFilter<(impl Reply,)> {
+    let auth = Arc::new(Mutex::new(auth));
     let api_v1 = v1_api(auth.clone());
     let api = warp::any().and(warp::path("api")).and(api_v1);
-    warp::serve(api.or(warp::any().map(|| {
+    api.or(warp::any().map(|| {
         warp::reply::with_status(
-            "Not found. Make sure to check you provided all of the required parameters.",
+            "Not found. Make sure you provided all of the required parameters.",
             StatusCode::NOT_FOUND,
         )
-    })))
-    .run((
-        [0, 0, 0, 0],
-        std::env::var("PORT")
-            .unwrap_or(config::load_config().port.to_string())
-            .parse()
-            .unwrap_or(config::load_config().port),
-    ))
-    .await;
+    }))
+    .boxed()
+}
+
+pub async fn testing() -> (BoxedFilter<(impl Reply,)>, String, String) {
+    let auth = Auth::for_testing().await;
+    (filter(auth.0).await, auth.1, auth.2)
 }
 
 pub fn get_system_millis() -> u128 {
