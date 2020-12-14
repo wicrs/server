@@ -18,5 +18,14 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build
       run: cargo build --verbose
-    - name: Run tests
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Unit testing
       run: cargo test --verbose
+    - name: Cucumber testing
+      run: cargo test --test cucumber --verbose
+
