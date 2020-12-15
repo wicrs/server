@@ -447,7 +447,7 @@ fn api_v1_oauth(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 
 api_get! { (api_v1_invalidate_tokens,,warp::path("invalidate")) [auth, account, query]
     Auth::invalidate_tokens(auth, &account.id).await;
-    warp::reply().into_response()
+    warp::reply::with_status("Success!", StatusCode::OK).into_response()
 }
 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {

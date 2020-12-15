@@ -26,7 +26,7 @@ impl World for MyWorld {
     }
 }
 
-#[given("I have an instance of wirc on localhost")]
+#[given("wirc is running on localhost")]
 async fn wirc_running(world: &mut MyWorld) {
     if !world.wirc_running {
         let server = wirc_server::testing().await;
@@ -37,7 +37,7 @@ async fn wirc_running(world: &mut MyWorld) {
     }
 }
 
-#[when(regex = r"I perform a GET on (.*)")]
+#[when(regex = r"a user navigates to (.*)")]
 async fn get_url(world: &mut MyWorld, url: String) {
     assert!(world.wirc_running);
     world.response = Some(AssertUnwindSafe(Arc::new(
@@ -47,7 +47,7 @@ async fn get_url(world: &mut MyWorld, url: String) {
     )));
 }
 
-#[when(regex = r"I perform an authenticated GET on (.*)")]
+#[when(regex = r"an authenticated user navigates to (.*)")]
 async fn get_url_auth(world: &mut MyWorld, url: String) {
     assert!(world.wirc_running);
     world.response = Some(AssertUnwindSafe(Arc::new(
@@ -57,7 +57,7 @@ async fn get_url_auth(world: &mut MyWorld, url: String) {
     )));
 }
 
-#[then(regex = r"I should be redirected to (.*)")]
+#[then(regex = r"the user should be redirected to (.*)")]
 fn redirect_to(world: &mut MyWorld, url: String) {
     assert!(&world
         .response
@@ -68,7 +68,7 @@ fn redirect_to(world: &mut MyWorld, url: String) {
         .starts_with(&url));
 }
 
-#[then(regex = r"I should see (.*)")]
+#[then(regex = r"the user should receive (.*)")]
 async fn recieve_json(world: &mut MyWorld, json: String) {
     let taken = world.response.take().unwrap().0;
     let response = Arc::try_unwrap(taken).expect("Failed to extract resposne from Arc");
