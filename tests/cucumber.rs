@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use cucumber_rust::{given, then, when, World, WorldInit};
-use reqwest::Response;
+use reqwest::{Method, Response};
+use serde::Serialize;
 use std::{
     convert::Infallible,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     panic::AssertUnwindSafe,
     sync::Arc,
 };
+use wirc_server::user::{Account, GenericAccount, GenericUser, User};
 
 #[derive(WorldInit)]
 pub struct MyWorld {
@@ -57,22 +59,73 @@ async fn get_url_auth(world: &mut MyWorld, url: String) {
     )));
 }
 
-#[then(regex = r"the user should be redirected to (.*)")]
-fn redirect_to(world: &mut MyWorld, url: String) {
-    assert!(&world
-        .response
-        .as_deref()
-        .unwrap()
-        .url()
-        .as_str()
-        .starts_with(&url));
+#[derive(Serialize)]
+struct Name {
+    name: String,
 }
 
-#[then(regex = r"the user should receive (.*)")]
-async fn recieve_json(world: &mut MyWorld, json: String) {
+#[when(regex = r"an authenticated user sends a name to (.*)")]
+async fn get_send_name(world: &mut MyWorld, url: String) {
+    assert!(world.wirc_running);
+    let request = reqwest::Client::new()
+        .request(
+            Method::GET,
+            reqwest::Url::parse(&(url + "?account=testaccount&token=testtoken")).unwrap(),
+        )
+        .json(&Name {
+            name: "test_name".to_string(),
+        });
+    world.response = Some(AssertUnwindSafe(Arc::new(request.send().await.unwrap())));
+}
+
+fn get_response(world: &mut MyWorld) -> Response {
     let taken = world.response.take().unwrap().0;
-    let response = Arc::try_unwrap(taken).expect("Failed to extract resposne from Arc");
-    assert_eq!(&json, &response.text().await.expect("Empty response."))
+    Arc::try_unwrap(taken).expect("Failed to extract response from Arc")
+}
+
+#[then(regex = r"the user should be redirected to (.*)")]
+fn redirect_to(world: &mut MyWorld, url: String) {
+    assert!(get_response(world).url().as_str().starts_with(&url));
+}
+
+#[then(regex = r"the user should receive an account")]
+async fn recieve_account(world: &mut MyWorld) {
+    get_response(world)
+        .json::<Account>()
+        .await
+        .expect("Did not receive valid account data");
+}
+
+#[then(regex = r"the user should receive a generic account")]
+async fn recieve_generic_account(world: &mut MyWorld) {
+    get_response(world)
+        .json::<GenericAccount>()
+        .await
+        .expect("Did not receive valid generic account data");
+}
+
+#[then(regex = r"the user should receive a user")]
+async fn recieve_user(world: &mut MyWorld) {
+    get_response(world)
+        .json::<User>()
+        .await
+        .expect("Did not receive valid user data");
+}
+
+#[then(regex = r"the user should receive a generic user")]
+async fn recieve_generic_user(world: &mut MyWorld) {
+    get_response(world)
+        .json::<GenericUser>()
+        .await
+        .expect("Did not receive valid generic user data");
+}
+
+#[then(regex = r"the user should receive text (.*)")]
+async fn recieve_text(world: &mut MyWorld, json: String) {
+    assert_eq!(
+        &json,
+        &get_response(world).text().await.expect("Empty response.")
+    );
 }
 
 #[tokio::main]
