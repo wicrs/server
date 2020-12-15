@@ -86,17 +86,15 @@ impl Auth {
             ))),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         };
-        let account = Account::new(
-            "test-account-id".to_string(),
-            "test@example.com".to_string(),
-            "test".to_string(),
-        );
+        let account = Account {
+            id: "testaccount".to_string(),
+            email:  "test@example.com".to_string(),
+            created: 0,
+            service: "testing".to_string(),
+            users: HashMap::new(),
+        };
         account.save().await.expect("Failed to save test account.");
-        let mut vec: Vec<u8> = Vec::with_capacity(64);
-        for _ in 0..vec.capacity() {
-            vec.push(rand::random());
-        }
-        let token = base64::encode_config(vec, URL_SAFE_NO_PAD);
+        let token = "testtoken".to_string();
         let hashed = hash_auth(account.id.clone(), token.clone());
         auth.sessions
             .lock()
@@ -138,7 +136,7 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.lock().await;
         }
-        let hashed = hash_auth(id.to_string(), token_str);
+        let hashed = hash_auth(id.to_string(), token_str.clone());
         if let Some(auth_tokens) = sessions_lock.get_mut(&hashed.0) {
             let now = get_system_millis();
             auth_tokens.retain(|t| t.0 > now);

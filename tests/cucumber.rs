@@ -1,13 +1,16 @@
 use async_trait::async_trait;
 use cucumber_rust::{given, then, when, World, WorldInit};
 use reqwest::Response;
-use std::{convert::Infallible, net::{IpAddr, Ipv4Addr, SocketAddr}, panic::AssertUnwindSafe, sync::Arc};
+use std::{
+    convert::Infallible,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    panic::AssertUnwindSafe,
+    sync::Arc,
+};
 
 #[derive(WorldInit)]
 pub struct MyWorld {
     wirc_running: bool,
-    id: Option<String>,
-    token: Option<String>,
     response: Option<AssertUnwindSafe<Arc<Response>>>,
 }
 
@@ -18,8 +21,6 @@ impl World for MyWorld {
     async fn new() -> Result<Self, Infallible> {
         Ok(Self {
             wirc_running: false,
-            id: None,
-            token: None,
             response: None,
         })
     }
@@ -27,14 +28,12 @@ impl World for MyWorld {
 
 #[given("I have an instance of wirc on localhost")]
 async fn wirc_running(world: &mut MyWorld) {
-    if !world.wirc_running || world.id.is_none() || world.token.is_none() {
+    if !world.wirc_running {
         let server = wirc_server::testing().await;
         tokio::task::spawn(
             warp::serve(server.0).run(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 24816)),
         );
         world.wirc_running = true;
-        world.id = Some(server.1);
-        world.token = Some(server.2);
     }
 }
 
@@ -52,19 +51,9 @@ async fn get_url(world: &mut MyWorld, url: String) {
 async fn get_url_auth(world: &mut MyWorld, url: String) {
     assert!(world.wirc_running);
     world.response = Some(AssertUnwindSafe(Arc::new(
-        reqwest::get(
-            reqwest::Url::parse(
-                &(url
-                    + &format!(
-                        "?account={}&token={}",
-                        world.id.clone().unwrap(),
-                        world.token.clone().unwrap()
-                    )),
-            )
+        reqwest::get(reqwest::Url::parse(&(url + "?account=testaccount&token=testtoken")).unwrap())
+            .await
             .unwrap(),
-        )
-        .await
-        .unwrap(),
     )));
 }
 
