@@ -411,6 +411,7 @@ struct GuildCreateQuery {
 }
 
 api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, account, query]
+    if account.users.contains_key(&query.user) {
         let mut account = account;
         let create = account.create_guild(query.name, new_id(), query.user).await;
         if let Err(err) = create {
@@ -439,6 +440,13 @@ api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, accoun
         } else {
             unexpected_response()
         }
+    } else {
+        warp::reply::with_status(
+            "Your account does not have a user with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
 }
 
 #[derive(Deserialize)]
@@ -450,6 +458,7 @@ struct MessageSendQuery {
 }
 
 api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, account, query]
+    if account.users.contains_key(&query.user) {
         if let Err(err) = account
             .send_guild_message(query.user, query.guild, query.channel, query.message)
             .await
@@ -486,20 +495,33 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
         } else {
             warp::reply::with_status("Message sent successfully.", StatusCode::OK).into_response()
         }
+    } else {
+        warp::reply::with_status(
+            "Your account does not have a user with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
 }
 
 #[derive(Deserialize, Serialize)]
 struct ChannelsQuery {
-    account: String,
-    token: String,
     user: ID,
     guild: ID,
 }
 
-api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, _account, query]
-    if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
-        if let Ok(channels) = guild.channels(query.user) {
-            warp::reply::json(&channels).into_response()
+api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, account, query]
+    if account.users.contains_key(&query.user) {
+        if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
+            if let Ok(channels) = guild.channels(query.user) {
+                warp::reply::json(&channels).into_response()
+            } else {
+                warp::reply::with_status(
+                    "You are not in that guild if it exists.",
+                    StatusCode::NOT_FOUND,
+                )
+                .into_response()
+            }
         } else {
             warp::reply::with_status(
                 "You are not in that guild if it exists.",
@@ -509,7 +531,7 @@ api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, _a
         }
     } else {
         warp::reply::with_status(
-            "You are not in that guild if it exists.",
+            "Your account does not have a user with that ID.",
             StatusCode::NOT_FOUND,
         )
         .into_response()
@@ -711,12 +733,21 @@ mod tests {
 
     #[tokio::test]
     async fn save_load() {
-        let guild = Guild::new("test".to_string(), ID::from_u128(1234), &get_user_for_test(1));
+        let guild = Guild::new(
+            "test".to_string(),
+            ID::from_u128(1234),
+            &get_user_for_test(1),
+        );
         let id_str = guild.id.to_string();
         let id_str = id_str.as_str();
-        let _remove = tokio::fs::remove_file("data/guilds/info/".to_string() + &ID::from_u128(1234).to_string() + ".json").await;
+        let _remove = tokio::fs::remove_file(
+            "data/guilds/info/".to_string() + &ID::from_u128(1234).to_string() + ".json",
+        )
+        .await;
         guild.save().await.expect("Failed to save guild info.");
-        let load = Guild::load(id_str).await.expect("Failed to load guild info.");
+        let load = Guild::load(id_str)
+            .await
+            .expect("Failed to load guild info.");
         assert_eq!(guild, load);
     }
 }
