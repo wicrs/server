@@ -70,7 +70,7 @@ impl Channel {
         }
     }
 
-    pub async fn last_n_messages(&self, max: usize) -> Vec<Message> {
+    pub async fn get_last_messages(&self, max: usize) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -262,7 +262,7 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub id: ID,
     pub sender: ID,
@@ -396,7 +396,7 @@ mod tests {
         channel.add_message(message_0.clone()).await.unwrap();
         channel.add_message(message_1.clone()).await.unwrap();
         channel.add_message(message_2.clone()).await.unwrap();
-        assert_eq!(channel.last_n_messages(2).await, vec![message_2, message_1]);
+        assert_eq!(channel.get_last_messages(2).await, vec![message_2, message_1]);
     }
 
     #[tokio::test]

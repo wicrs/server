@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::{HashMap, HashSet}, convert::TryInto, sync::Arc};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 
@@ -487,7 +484,7 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
                 }
                 ApiActionError::UserNotFound => warp::reply::with_status(
                     "That user does not exist on your account.",
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::NOT_FOUND,
                 )
                 .into_response(),
                 _ => unexpected_response(),
@@ -538,10 +535,63 @@ api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, ac
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct LastMessagesQuery {
+    user: ID,
+    guild: ID,
+    channel: ID,
+    count: u128
+}
+
+api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [auth, account, query]
+    if account.users.contains_key(&query.user) {
+        if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
+            if let Some(user) = guild.users.get(&query.user) {
+                if user.has_channel_permission(&query.channel, &ChannelPermission::ViewChannel, &guild) && user.has_channel_permission(&query.channel, &ChannelPermission::ReadMessage, &guild) {
+                    if let Some(channel) = guild.channels.get_mut(&query.channel) {
+                        warp::reply::json(&channel.get_last_messages(query.count.try_into().unwrap()).await).into_response()
+                    } else {
+                        warp::reply::with_status(
+                            "You do not have permission to access that channel if it exists.",
+                            StatusCode::NOT_FOUND,
+                        )
+                        .into_response()
+                    }
+                } else {
+                    warp::reply::with_status(
+                        "You do not have permission to access that channel if it exists.",
+                        StatusCode::NOT_FOUND,
+                    )
+                    .into_response()
+                }
+            } else {
+                warp::reply::with_status(
+                    "You are not in that guild if it exists.",
+                    StatusCode::NOT_FOUND,
+                )
+                .into_response()
+            }
+        } else {
+            warp::reply::with_status(
+                "You are not in that guild if it exists.",
+                StatusCode::NOT_FOUND,
+            )
+            .into_response()
+        }
+    } else {
+        warp::reply::with_status(
+            "Your account does not have a user with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
+}
+
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_create(auth_manager.clone())
         .or(api_v1_getchannels(auth_manager.clone()))
         .or(api_v1_sendmessage(auth_manager.clone()))
+        .or(api_v1_getlastmessages(auth_manager.clone()))
         .boxed()
 }
 
