@@ -1,6 +1,7 @@
 Feature: Create hubs
 
-  Scenario: A user wants to create a hub
+  Scenario: An authenticated user wants to create a hub
     Given wirc is running on localhost
-    When the authenticated user attempts to create a new hub
-    Then the server should respond with the OK status
+    Given the user has an account
+    When the user attempts to create a new hub
+    Then the user should receive an ID

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::{
     convert::Infallible,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -7,17 +10,20 @@ use async_trait::async_trait;
 use cucumber_rust::{given, then, when, World, WorldInit};
 use reqwest::Url;
 use serde::Serialize;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
+use wirc_server::channel::Channel;
 use wirc_server::user::{Account, GenericAccount, GenericUser, User};
 use wirc_server::ID;
 
 #[derive(WorldInit)]
 pub struct MyWorld {
-    wirc_running: bool,
     response: String,
     account: Option<ID>,
     hub: Option<ID>,
     channel: Option<ID>,
+    running: Option<AssertUnwindSafe<JoinHandle<()>>>,
 }
 
 #[async_trait(? Send)]
@@ -26,24 +32,22 @@ impl World for MyWorld {
 
     async fn new() -> Result<Self, Infallible> {
         Ok(Self {
-            wirc_running: false,
             response: String::new(),
             account: None,
             hub: None,
             channel: None,
+            running: None,
         })
     }
 }
 
 #[given("wirc is running on localhost")]
 async fn wirc_running(world: &mut MyWorld) {
-    if !world.wirc_running {
-        let server = wirc_server::testing().await;
-        tokio::task::spawn(
-            warp::serve(server.0).run(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 24816)),
-        );
-        world.wirc_running = true;
-    }
+    assert!(world.running.is_none());
+    let server = wirc_server::testing().await;
+    world.running = Some(AssertUnwindSafe(tokio::task::spawn(
+        warp::serve(server.0).run(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 24816)),
+    )));
 }
 
 #[when("the user attempts to login using their GitHub account")]
@@ -59,8 +63,11 @@ struct Name {
     name: String,
 }
 
-#[when("the authenticated user attempts to create a new account")]
+#[when("the user attempts to create a new account")]
 async fn create_account(world: &mut MyWorld) {
+    if world.account.is_some() {
+        return;
+    }
     let response = reqwest::Client::new()
         .get(
             Url::parse(
@@ -80,7 +87,7 @@ async fn create_account(world: &mut MyWorld) {
     world.account = Some(account.id);
 }
 
-#[when("the authenticated user requests their information")]
+#[when("the user requests their information")]
 async fn get_user_auth(world: &mut MyWorld) {
     let response = reqwest::get(
         Url::parse("http://localhost:24816/api/v1/user?user=testuser&token=testtoken").unwrap(),
@@ -90,7 +97,7 @@ async fn get_user_auth(world: &mut MyWorld) {
     world.response = response.text().await.expect("Empty repsonse.").to_string();
 }
 
-#[when("the authenticated user tells the server to invalidate all of their tokens")]
+#[when("the user tells the server to invalidate all of their tokens")]
 async fn invalidate_user_tokens(world: &mut MyWorld) {
     let response = reqwest::get(
         Url::parse("http://localhost:24816/api/v1/invalidate?user=testuser&token=testtoken")
@@ -110,9 +117,12 @@ async fn get_user(world: &mut MyWorld) {
     world.response = response.text().await.expect("Empty repsonse.").to_string();
 }
 
-#[when("the authenticated user attempts to create a new hub")]
+#[when("the user attempts to create a new hub")]
 async fn create_hub(world: &mut MyWorld) {
-    create_account(world).await;
+    if world.hub.is_some() {
+        return;
+    }
+    assert!(world.account.is_some());
     let response = reqwest::Client::new()
         .get(
             Url::parse("http://localhost:24816/api/v1/hubs/create?user=testuser&token=testtoken")
@@ -120,13 +130,73 @@ async fn create_hub(world: &mut MyWorld) {
         )
         .json(&serde_json::json!({
         "name": "testhub",
-        "account": world.account.expect("No account has been created for testing").to_string(),
+        "account": world.account.unwrap().to_string(),
         }))
         .send()
         .await
         .expect("No response.");
     world.response = response.text().await.unwrap_or("".to_string());
     world.hub = Some(world.response.parse().unwrap());
+}
+
+#[given("the user has an account")]
+async fn setup_account(world: &mut MyWorld) {
+    create_account(world).await;
+}
+
+#[given("the user is in a hub")]
+async fn setup_hub(world: &mut MyWorld) {
+    create_hub(world).await;
+}
+
+#[when("the user attempts to create a new text channel")]
+async fn create_channel(world: &mut MyWorld) {
+    if world.channel.is_some() {
+        return;
+    }
+    assert!(world.account.is_some());
+    assert!(world.hub.is_some());
+    let response = reqwest::Client::new()
+        .get(
+            Url::parse(
+                "http://localhost:24816/api/v1/hubs/create_channel?user=testuser&token=testtoken",
+            )
+            .unwrap(),
+        )
+        .json(&serde_json::json!({
+        "hub": world.hub.unwrap(),
+        "name": "testchannel",
+        "account": world.account.unwrap().to_string(),
+        }))
+        .send()
+        .await
+        .expect("No response.");
+    world.response = response.text().await.unwrap_or("".to_string());
+    world.channel = Some(world.response.parse().unwrap());
+}
+
+#[given("the user has access to a text channel")]
+async fn setup_channel(world: &mut MyWorld) {
+    create_channel(world).await;
+}
+
+#[when("the user asks the server for a list of text channels")]
+async fn get_channels(world: &mut MyWorld) {
+    assert!(world.account.is_some());
+    assert!(world.hub.is_some());
+    let response = reqwest::Client::new()
+        .get(
+            Url::parse("http://localhost:24816/api/v1/hubs/channels?user=testuser&token=testtoken")
+                .unwrap(),
+        )
+        .json(&serde_json::json!({
+        "hub": world.hub.unwrap(),
+        "account": world.account.unwrap().to_string(),
+        }))
+        .send()
+        .await
+        .expect("No response.");
+    world.response = response.text().await.unwrap_or("".to_string());
 }
 
 #[then("the server should respond with the OK status")]
@@ -144,31 +214,50 @@ async fn github_redirected(world: &mut MyWorld) {
     assert!(world.response.starts_with("https://github.com/login"));
 }
 
-#[then(regex = r"the user should receive user information")]
+#[then("the user should receive user information")]
 async fn recieve_user(world: &mut MyWorld) {
     serde_json::from_str::<User>(&world.response).expect("Did not receive valid user information");
 }
 
-#[then(regex = r"the user should receive basic user information")]
+#[then("the user should receive basic user information")]
 async fn recieve_generic_user(world: &mut MyWorld) {
     serde_json::from_str::<GenericUser>(&world.response)
         .expect("Did not receive valid user information");
 }
 
-#[then(regex = r"the user should receive account information")]
+#[then("the user should receive account information")]
 async fn recieve_account(world: &mut MyWorld) {
     serde_json::from_str::<Account>(&world.response)
         .expect("Did not receive valid account information");
 }
 
-#[then(regex = r"the user should receive basic account information")]
+#[then("the user should receive basic account information")]
 async fn recieve_generic_account(world: &mut MyWorld) {
     serde_json::from_str::<GenericAccount>(&world.response)
         .expect("Did not receive valid account information");
 }
 
+#[then("the user should receive an ID")]
+async fn recieve_id(world: &mut MyWorld) {
+    world
+        .response
+        .parse::<ID>()
+        .expect("Did not receive valid account information");
+}
+
+#[then("the user should receive a list of text channels")]
+async fn recieve_channel_list(world: &mut MyWorld) {
+    serde_json::from_str::<Vec<Channel>>(&world.response)
+        .expect("Did not receive a valid list of channels");
+}
+
+#[then("panic response")]
+async fn panic_response(world: &mut MyWorld) {
+    panic!(world.response.clone());
+}
+
 #[tokio::main]
 async fn main() {
     let runner = MyWorld::init(&["tests/features"]);
-    runner.run().await;
+    runner.cli().run().await;
 }

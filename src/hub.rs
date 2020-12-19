@@ -16,7 +16,7 @@ use crate::{
     },
     unexpected_response,
     user::Account,
-    ApiActionError, JsonLoadError, JsonSaveError, ID,
+    ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 
 static GUILD_INFO_FOLDER: &str = "data/hubs/info";
@@ -448,6 +448,70 @@ api_get! { (api_v1_create, HubCreateQuery, warp::path("create")) [auth, user, qu
 }
 
 #[derive(Deserialize)]
+struct ChannelCreateQuery {
+    account: ID,
+    hub: ID,
+    name: String,
+}
+
+api_get! { (api_v1_createchannel, ChannelCreateQuery, warp::path("create_channel")) [auth, user, query]
+    if user.accounts.contains_key(&query.account) {
+        if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
+            let create = hub.new_channel(query.account, query.name).await;
+            if let Ok(id) = create {
+                warp::reply::with_status(id.to_string(), StatusCode::OK).into_response()
+            } else {
+                match create.unwrap_err() {
+                    ApiActionError::BadNameCharacters => {
+                        warp::reply::with_status(
+                            format!(
+                                "Username string can only contain the following characters: \"{}\"",
+                                NAME_ALLOWED_CHARS
+                            ),
+                            StatusCode::BAD_REQUEST,
+                        )
+                        .into_response()
+                    }
+                    ApiActionError::NotInHub => {
+                        warp::reply::with_status(
+                            "You are not in that hub if it exists.",
+                            StatusCode::BAD_REQUEST,
+                        )
+                        .into_response()
+                    }
+                    ApiActionError::NoPermission => {
+                        warp::reply::with_status(
+                            "You do not have permission to create channels.",
+                            StatusCode::FORBIDDEN,
+                        )
+                        .into_response()
+                    }
+                    _ => {
+                        warp::reply::with_status(
+                            "Server could not create the channel.",
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    }
+                }
+            }
+        } else {
+            warp::reply::with_status(
+                "You are not in that hub if it exists.",
+                StatusCode::NOT_FOUND,
+            )
+            .into_response()
+        }
+    } else {
+        warp::reply::with_status(
+            "Your user does not have an account with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
+}
+
+#[derive(Deserialize)]
 struct MessageSendQuery {
     user: ID,
     hub: ID,
@@ -504,14 +568,14 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
 
 #[derive(Deserialize, Serialize)]
 struct ChannelsQuery {
-    user: ID,
+    account: ID,
     hub: ID,
 }
 
 api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, user, query]
-    if user.accounts.contains_key(&query.user) {
+    if user.accounts.contains_key(&query.account) {
         if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
-            if let Ok(channels) = hub.channels(query.user) {
+            if let Ok(channels) = hub.channels(query.account) {
                 warp::reply::json(&channels).into_response()
             } else {
                 warp::reply::with_status(
@@ -590,6 +654,7 @@ api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [
 
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_create(auth_manager.clone())
+        .or(api_v1_createchannel(auth_manager.clone()))
         .or(api_v1_getchannels(auth_manager.clone()))
         .or(api_v1_sendmessage(auth_manager.clone()))
         .or(api_v1_getlastmessages(auth_manager.clone()))
