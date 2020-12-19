@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{get_system_millis, ApiActionError, ID};
 
-static GUILD_DATA_FOLDER: &str = "data/guilds/data";
+static HUB_DATA_FOLDER: &str = "data/hubs/data";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -40,7 +40,7 @@ impl Channel {
     }
 
     pub fn get_folder(&self) -> String {
-        format!("{}/{}/{}", GUILD_DATA_FOLDER, self.server_id, self.id)
+        format!("{}/{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
     }
 
     pub async fn create_dir(&self) -> tokio::io::Result<()> {
@@ -338,7 +338,7 @@ mod tests {
     }
 
     async fn new_test_channel() -> Channel {
-        let _remove = tokio::fs::remove_dir_all("data/guilds/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").await;
+        let _remove = tokio::fs::remove_dir_all("data/hubs/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").await;
         let channel = Channel::new(
             "test".to_string(),
             Uuid::from_u128(123456789),
@@ -368,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn new_channel() {
         new_test_channel().await;
-        assert!(std::path::Path::new("data/guilds/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").exists());
+        assert!(std::path::Path::new("data/hubs/data/00000000-0000-0000-0000-0000075bcd15/00000000-0000-0000-0000-0000075bcd15").exists());
     }
 
     #[tokio::test]
@@ -396,7 +396,10 @@ mod tests {
         channel.add_message(message_0.clone()).await.unwrap();
         channel.add_message(message_1.clone()).await.unwrap();
         channel.add_message(message_2.clone()).await.unwrap();
-        assert_eq!(channel.get_last_messages(2).await, vec![message_2, message_1]);
+        assert_eq!(
+            channel.get_last_messages(2).await,
+            vec![message_2, message_1]
+        );
     }
 
     #[tokio::test]

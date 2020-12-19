@@ -9,7 +9,7 @@ pub enum PermissionSetting {
 }
 
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug)]
-pub enum GuildPermission {
+pub enum HubPermission {
     All,
     ViewChannels,
     ConfigureChannels,
@@ -29,7 +29,7 @@ pub enum GuildPermission {
     AddBot,
 }
 
-pub type GuildPremissions = HashMap<GuildPermission, PermissionSetting>;
+pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug)]
 pub enum ChannelPermission {
@@ -41,13 +41,13 @@ pub enum ChannelPermission {
 }
 
 impl ChannelPermission {
-    pub fn guild_equivalent(&self) -> GuildPermission {
+    pub fn hub_equivalent(&self) -> HubPermission {
         match self {
-            ChannelPermission::SendMessage => GuildPermission::SendMessage,
-            ChannelPermission::ReadMessage => GuildPermission::ReadMessage,
-            ChannelPermission::ViewChannel => GuildPermission::ViewChannels,
-            ChannelPermission::Configure => GuildPermission::ConfigureChannels,
-            ChannelPermission::MuteUser => GuildPermission::MuteUser,
+            ChannelPermission::SendMessage => HubPermission::SendMessage,
+            ChannelPermission::ReadMessage => HubPermission::ReadMessage,
+            ChannelPermission::ViewChannel => HubPermission::ViewChannels,
+            ChannelPermission::Configure => HubPermission::ConfigureChannels,
+            ChannelPermission::MuteUser => HubPermission::MuteUser,
         }
     }
 }

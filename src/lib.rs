@@ -15,7 +15,7 @@ pub mod macros;
 pub mod auth;
 pub mod channel;
 pub mod config;
-pub mod guild;
+pub mod hub;
 pub mod permission;
 pub mod user;
 
@@ -53,10 +53,10 @@ pub fn account_not_found_response() -> warp::http::Response<warp::hyper::Body> {
 
 #[derive(Debug)]
 pub enum ApiActionError {
-    GuildNotFound,
+    HubNotFound,
     ChannelNotFound,
     NoPermission,
-    NotInGuild,
+    NotInHub,
     WriteFileError,
     OpenFileError,
     UserNotFound,
@@ -109,7 +109,7 @@ pub fn new_id() -> ID {
 }
 
 fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    let guild_api = warp::path("guilds").and(guild::api_v1(auth_manager.clone()));
+    let guild_api = warp::path("hubs").and(hub::api_v1(auth_manager.clone()));
     let auth_api = auth::api_v1(auth_manager.clone());
     let user_api = user::api_v1(auth_manager.clone());
     warp::path("v1")

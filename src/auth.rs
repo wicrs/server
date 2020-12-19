@@ -87,8 +87,8 @@ impl Auth {
             sessions: Arc::new(Mutex::new(HashMap::new())),
         };
         let account = User {
-            id: "testaccount".to_string(),
-            email:  "test@example.com".to_string(),
+            id: "testuser".to_string(),
+            email: "test@example.com".to_string(),
             created: 0,
             service: "testing".to_string(),
             accounts: HashMap::new(),
@@ -445,8 +445,8 @@ fn api_v1_oauth(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
         .boxed()
 }
 
-api_get! { (api_v1_invalidate_tokens,,warp::path("invalidate")) [auth, account, query]
-    Auth::invalidate_tokens(auth, &account.id).await;
+api_get! { (api_v1_invalidate_tokens,,warp::path("invalidate")) [auth, user, query]
+    Auth::invalidate_tokens(auth, &user.id).await;
     warp::reply::with_status("Success!", StatusCode::OK).into_response()
 }
 
@@ -498,8 +498,7 @@ mod tests {
         assert_eq!(token_id.0.clone(), USER_ID.to_string());
         assert!(token_id.0.clone() == USER_ID.to_string());
         assert!(Auth::is_authenticated(auth.clone(), USER_ID, token_id.1).await);
-        let read =
-            std::fs::read_to_string("data/users/".to_string() + USER_ID + ".json").unwrap();
+        let read = std::fs::read_to_string("data/users/".to_string() + USER_ID + ".json").unwrap();
         assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","accounts":{}}"#));
     }
 

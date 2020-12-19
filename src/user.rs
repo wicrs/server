@@ -3,12 +3,11 @@ use std::{collections::HashMap, sync::Arc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use warp::{Filter, filters::BoxedFilter, Reply};
+use warp::{filters::BoxedFilter, Filter, Reply};
 
 use crate::{
-    account_not_found_response, ApiActionError, auth::Auth, get_system_millis, guild::Guild,
-    ID, is_valid_username, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, new_id,
-    unexpected_response,
+    account_not_found_response, auth::Auth, get_system_millis, hub::Hub, is_valid_username, new_id,
+    unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 
 static ACCOUNT_FOLDER: &str = "data/users/";
@@ -19,7 +18,7 @@ pub struct GenericAccount {
     pub username: String,
     pub created: u128,
     pub parent_id: String,
-    pub guilds_hashed: Vec<String>,
+    pub hubs_hashed: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -28,7 +27,7 @@ pub struct Account {
     pub username: String,
     pub created: u128,
     pub parent_id: String,
-    pub in_guilds: Vec<ID>,
+    pub in_hubs: Vec<ID>,
 }
 
 impl Account {
@@ -39,7 +38,7 @@ impl Account {
                 username,
                 parent_id,
                 created: get_system_millis(),
-                in_guilds: Vec::new(),
+                in_hubs: Vec::new(),
             })
         } else {
             Err(())
@@ -48,17 +47,17 @@ impl Account {
 
     pub fn to_generic(&self) -> GenericAccount {
         let mut hasher = Sha256::new();
-        let mut guilds_hashed = Vec::new();
-        for guild in self.in_guilds.clone() {
-            hasher.update(guild.to_string());
-            guilds_hashed.push(format!("{:x}", hasher.finalize_reset()));
+        let mut hubs_hashed = Vec::new();
+        for hub in self.in_hubs.clone() {
+            hasher.update(hub.to_string());
+            hubs_hashed.push(format!("{:x}", hasher.finalize_reset()));
         }
         GenericAccount {
             id: self.id.clone(),
             created: self.created.clone(),
             username: self.username.clone(),
             parent_id: self.parent_id.clone(),
-            guilds_hashed,
+            hubs_hashed,
         }
     }
 }
@@ -105,7 +104,10 @@ impl User {
         }
     }
 
-    pub async fn create_new_account(&mut self, username: String) -> Result<Account, ApiActionError> {
+    pub async fn create_new_account(
+        &mut self,
+        username: String,
+    ) -> Result<Account, ApiActionError> {
         let uuid = new_id();
         if let Ok(user) = Account::new(uuid.clone(), username, self.id.clone()) {
             self.accounts.insert(uuid, user.clone());
@@ -119,29 +121,29 @@ impl User {
         }
     }
 
-    pub async fn send_guild_message(
+    pub async fn send_hub_message(
         &self,
         user: ID,
-        guild: ID,
+        hub: ID,
         channel: ID,
         message: String,
     ) -> Result<(), ApiActionError> {
         if let Some(user) = self.accounts.get(&user) {
-            if user.in_guilds.contains(&guild) {
-                if let Ok(mut guild) = Guild::load(&guild.to_string()).await {
-                    guild.send_message(user.id, channel, message).await
+            if user.in_hubs.contains(&hub) {
+                if let Ok(mut hub) = Hub::load(&hub.to_string()).await {
+                    hub.send_message(user.id, channel, message).await
                 } else {
-                    Err(ApiActionError::GuildNotFound)
+                    Err(ApiActionError::HubNotFound)
                 }
             } else {
-                Err(ApiActionError::NotInGuild)
+                Err(ApiActionError::NotInHub)
             }
         } else {
             Err(ApiActionError::UserNotFound)
         }
     }
 
-    pub async fn create_guild(
+    pub async fn create_hub(
         &mut self,
         name: String,
         id: ID,
@@ -151,10 +153,10 @@ impl User {
             return Err(ApiActionError::BadNameCharacters);
         }
         if let Some(user) = self.accounts.get_mut(&user) {
-            let new_guild = Guild::new(name, id, user);
-            if let Ok(_) = new_guild.save().await {
-                user.in_guilds.push(new_guild.id.clone());
-                Ok(new_guild.id)
+            let new_hub = Hub::new(name, id, user);
+            if let Ok(_) = new_hub.save().await {
+                user.in_hubs.push(new_hub.id.clone());
+                Ok(new_hub.id)
             } else {
                 Err(ApiActionError::WriteFileError)
             }
@@ -210,7 +212,7 @@ api_get! { (api_v1_userinfo,,) [auth, user, query]
         warp::reply::json(&user).into_response()
 }
 
-fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply, )> {
+fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply,)> {
     warp::get()
         .and(warp::path!(String))
         .and_then(|id: String| async move {
@@ -254,7 +256,7 @@ api_get! { (api_v1_addaccount, Name,) [auth, user, query]
         }
 }
 
-pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply, )> {
+pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::path("user")
         .and(
             (warp::path("addaccount").and(api_v1_addaccount(auth_manager.clone())))
@@ -268,9 +270,9 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply, )> {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::guild::Guild;
+    use crate::hub::Hub;
 
-    use super::{GenericUser, get_id, ID, User};
+    use super::{get_id, GenericUser, User, ID};
     use super::{Account, GenericAccount};
 
     static USER_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
@@ -314,14 +316,14 @@ mod tests {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
-            in_guilds: Vec::new(),
+            in_hubs: Vec::new(),
             parent_id: USER_ID.to_string(),
         };
         let generic = GenericAccount {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
-            guilds_hashed: Vec::new(),
+            hubs_hashed: Vec::new(),
             parent_id: USER_ID.to_string(),
         };
         (id, account, generic)
@@ -335,13 +337,13 @@ mod tests {
             "Test_with-chars. And".to_string(),
             USER_ID.to_string(),
         )
-            .expect("Valid username was marked as invalid.");
+        .expect("Valid username was marked as invalid.");
         let generic = GenericAccount {
             id: uuid,
             username: "Test_with-chars. And".to_string(),
             created: account.created,
             parent_id: USER_ID.to_string(),
-            guilds_hashed: Vec::new(),
+            hubs_hashed: Vec::new(),
         };
         assert_eq!(account.to_generic(), generic);
     }
@@ -412,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn create_guild() {
+    async fn create_hub() {
         let mut user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
@@ -424,20 +426,20 @@ mod tests {
             .await
             .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
-        let _delete = std::fs::remove_file("data/guilds/info/".to_string() + &id.to_string());
-        let guild = user
-            .create_guild("test_guild".to_string(), id.clone(), account.id)
+        let _delete = std::fs::remove_file("data/hubs/info/".to_string() + &id.to_string());
+        let hub = user
+            .create_hub("test_hub".to_string(), id.clone(), account.id)
             .await
-            .expect("Failed to create test guild.");
+            .expect("Failed to create test hub.");
         assert!(std::path::Path::new(
-            &("data/guilds/info/".to_string() + &guild.to_string() + ".json")
+            &("data/hubs/info/".to_string() + &hub.to_string() + ".json")
         )
-            .exists());
+        .exists());
     }
 
     #[tokio::test]
     #[serial]
-    async fn send_guild_message() {
+    async fn send_hub_message() {
         let mut account = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
@@ -448,23 +450,23 @@ mod tests {
             .await
             .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
-        let guild_id = account
-            .create_guild("test_guild".to_string(), id.clone(), user.id)
+        let hub_id = account
+            .create_hub("test_hub".to_string(), id.clone(), user.id)
             .await
-            .expect("Failed to create test guild.");
-        let mut guild = Guild::load(&guild_id.to_string())
+            .expect("Failed to create test hub.");
+        let mut hub = Hub::load(&hub_id.to_string())
             .await
-            .expect("Failed to load test guild.");
-        let channel = guild
+            .expect("Failed to load test hub.");
+        let channel = hub
             .new_channel(user.id, "test_channel".to_string())
             .await
             .expect("Failed to create test channel.");
-        guild.save().await.expect("Failed to save test guild.");
+        hub.save().await.expect("Failed to save test hub.");
         account
-            .send_guild_message(user.id, guild_id, channel.clone(), "test".to_string())
+            .send_hub_message(user.id, hub_id, channel.clone(), "test".to_string())
             .await
             .expect("Failed to send message.");
-        let channel = guild
+        let channel = hub
             .channels
             .get(&channel)
             .expect("Failed to load test channel.");
