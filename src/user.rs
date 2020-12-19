@@ -1,19 +1,20 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{
-    account_not_found_response, auth::Auth, get_system_millis, guild::Guild, is_valid_username,
-    new_id, unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID,
-    NAME_ALLOWED_CHARS,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use warp::{filters::BoxedFilter, Filter, Reply};
+use warp::{Filter, filters::BoxedFilter, Reply};
 
-static ACCOUNT_FOLDER: &str = "data/accounts/";
+use crate::{
+    account_not_found_response, ApiActionError, auth::Auth, get_system_millis, guild::Guild,
+    ID, is_valid_username, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, new_id,
+    unexpected_response,
+};
+
+static ACCOUNT_FOLDER: &str = "data/users/";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GenericUser {
+pub struct GenericAccount {
     pub id: ID,
     pub username: String,
     pub created: u128,
@@ -22,7 +23,7 @@ pub struct GenericUser {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct User {
+pub struct Account {
     pub id: ID,
     pub username: String,
     pub created: u128,
@@ -30,7 +31,7 @@ pub struct User {
     pub in_guilds: Vec<ID>,
 }
 
-impl User {
+impl Account {
     pub fn new(id: ID, username: String, parent_id: String) -> Result<Self, ()> {
         if is_valid_username(&username) {
             Ok(Self {
@@ -45,14 +46,14 @@ impl User {
         }
     }
 
-    pub fn to_generic(&self) -> GenericUser {
+    pub fn to_generic(&self) -> GenericAccount {
         let mut hasher = Sha256::new();
         let mut guilds_hashed = Vec::new();
         for guild in self.in_guilds.clone() {
             hasher.update(guild.to_string());
             guilds_hashed.push(format!("{:x}", hasher.finalize_reset()));
         }
-        GenericUser {
+        GenericAccount {
             id: self.id.clone(),
             created: self.created.clone(),
             username: self.username.clone(),
@@ -63,51 +64,51 @@ impl User {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GenericAccount {
+pub struct GenericUser {
     id: String,
     created: u128,
-    users: HashMap<ID, GenericUser>,
+    users: HashMap<ID, GenericAccount>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Account {
+pub struct User {
     pub id: String,
     pub email: String,
     pub created: u128,
     pub service: String,
-    pub users: HashMap<ID, User>,
+    pub accounts: HashMap<ID, Account>,
 }
 
-impl Account {
+impl User {
     pub fn new(id: String, email: String, service: String) -> Self {
         Self {
             id: get_id(&id, &service),
             email,
             service,
-            users: HashMap::new(),
+            accounts: HashMap::new(),
             created: get_system_millis(),
         }
     }
 
-    pub fn users_generic(users: &HashMap<ID, User>) -> HashMap<ID, GenericUser> {
+    pub fn accounts_generic(users: &HashMap<ID, Account>) -> HashMap<ID, GenericAccount> {
         users
             .iter()
             .map(|e| (e.0.clone(), e.1.to_generic()))
             .collect()
     }
 
-    pub fn to_generic(&self) -> GenericAccount {
-        GenericAccount {
+    pub fn to_generic(&self) -> GenericUser {
+        GenericUser {
             id: self.id.clone(),
             created: self.created.clone(),
-            users: Self::users_generic(&self.users),
+            users: Self::accounts_generic(&self.accounts),
         }
     }
 
-    pub async fn create_new_user(&mut self, username: String) -> Result<User, ApiActionError> {
+    pub async fn create_new_account(&mut self, username: String) -> Result<Account, ApiActionError> {
         let uuid = new_id();
-        if let Ok(user) = User::new(uuid.clone(), username, self.id.clone()) {
-            self.users.insert(uuid, user.clone());
+        if let Ok(user) = Account::new(uuid.clone(), username, self.id.clone()) {
+            self.accounts.insert(uuid, user.clone());
             if let Ok(_) = self.save().await {
                 Ok(user)
             } else {
@@ -125,7 +126,7 @@ impl Account {
         channel: ID,
         message: String,
     ) -> Result<(), ApiActionError> {
-        if let Some(user) = self.users.get(&user) {
+        if let Some(user) = self.accounts.get(&user) {
             if user.in_guilds.contains(&guild) {
                 if let Ok(mut guild) = Guild::load(&guild.to_string()).await {
                     guild.send_message(user.id, channel, message).await
@@ -149,7 +150,7 @@ impl Account {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
-        if let Some(user) = self.users.get_mut(&user) {
+        if let Some(user) = self.accounts.get_mut(&user) {
             let new_guild = Guild::new(name, id, user);
             if let Ok(_) = new_guild.save().await {
                 user.in_guilds.push(new_guild.id.clone());
@@ -205,16 +206,16 @@ pub fn get_id(id: &str, service: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-api_get! { (api_v1_accountinfo,,) [auth, account, query]
-        warp::reply::json(&account).into_response()
+api_get! { (api_v1_userinfo,,) [auth, user, query]
+        warp::reply::json(&user).into_response()
 }
 
-fn api_v1_accountinfo_noauth() -> BoxedFilter<(impl Reply,)> {
+fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply, )> {
     warp::get()
         .and(warp::path!(String))
         .and_then(|id: String| async move {
-            Ok::<_, warp::Rejection>(if let Ok(account) = Account::load(&id).await {
-                warp::reply::json(&account.to_generic()).into_response()
+            Ok::<_, warp::Rejection>(if let Ok(user) = User::load(&id).await {
+                warp::reply::json(&user.to_generic()).into_response()
             } else {
                 account_not_found_response()
             })
@@ -227,12 +228,12 @@ struct Name {
     name: String,
 }
 
-api_get! { (api_v1_adduser, Name,) [auth, account, query]
+api_get! { (api_v1_addaccount, Name,) [auth, user, query]
         use crate::ApiActionError;
-        let mut account = account;
-        let create: Result<User, ApiActionError> = account.create_new_user(query.name).await;
-        if let Ok(user) = create {
-            warp::reply::json(&user).into_response()
+        let mut user = user;
+        let create: Result<Account, ApiActionError> = user.create_new_account(query.name).await;
+        if let Ok(account) = create {
+            warp::reply::json(&account).into_response()
         } else {
             match create.err() {
                 Some(ApiActionError::WriteFileError) => warp::reply::with_status(
@@ -253,12 +254,12 @@ api_get! { (api_v1_adduser, Name,) [auth, account, query]
         }
 }
 
-pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::path("account")
+pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply, )> {
+    warp::path("user")
         .and(
-            (warp::path("adduser").and(api_v1_adduser(auth_manager.clone())))
-                .or(api_v1_accountinfo(auth_manager.clone()))
-                .or(api_v1_accountinfo_noauth()),
+            (warp::path("addaccount").and(api_v1_addaccount(auth_manager.clone())))
+                .or(api_v1_userinfo(auth_manager.clone()))
+                .or(api_v1_userinfo_noauth()),
         )
         .boxed()
 }
@@ -269,184 +270,183 @@ mod tests {
 
     use crate::guild::Guild;
 
-    use super::{get_id, Account, GenericAccount, ID};
+    use super::{GenericUser, get_id, ID, User};
+    use super::{Account, GenericAccount};
 
-    use super::{GenericUser, User};
-
-    static ACCOUNT_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
-    static SERVICE_ACCOUNT_ID: &str = "testid";
+    static USER_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
+    static SERVICE_USER_ID: &str = "testid";
     static EMAIL: &str = "test@example.com";
 
     #[test]
     fn id_gen() {
-        assert_eq!(get_id(SERVICE_ACCOUNT_ID, "github"), ACCOUNT_ID.to_string());
-        assert_ne!(get_id(SERVICE_ACCOUNT_ID, "other"), ACCOUNT_ID.to_string());
+        assert_eq!(get_id(SERVICE_USER_ID, "github"), USER_ID.to_string());
+        assert_ne!(get_id(SERVICE_USER_ID, "other"), USER_ID.to_string());
     }
 
     #[test]
     fn new_account() {
-        let account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
+        let user = User::new(
+            SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             "github".to_string(),
         );
-        assert_eq!(account.id, ACCOUNT_ID.to_string());
+        assert_eq!(user.id, USER_ID.to_string());
     }
 
     #[tokio::test]
     async fn create_new_user() {
-        let mut account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
+        let mut user = User::new(
+            SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             "github".to_string(),
         );
-        assert!(account.users.is_empty());
-        let user = account
-            .create_new_user("user".to_string())
+        assert!(user.accounts.is_empty());
+        let account = user
+            .create_new_account("user".to_string())
             .await
             .expect("Failed to add a new user to the test account.");
-        assert_eq!(account.users.get(&user.id), Some(&user));
+        assert_eq!(user.accounts.get(&account.id), Some(&account));
     }
 
-    fn user_generic_pair(n: u128) -> (ID, User, GenericUser) {
+    fn account_generic_pair(n: u128) -> (ID, Account, GenericAccount) {
         let id = ID::from_u128(n);
-        let user = User {
+        let account = Account {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
             in_guilds: Vec::new(),
-            parent_id: ACCOUNT_ID.to_string(),
+            parent_id: USER_ID.to_string(),
         };
-        let generic = GenericUser {
+        let generic = GenericAccount {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
             guilds_hashed: Vec::new(),
-            parent_id: ACCOUNT_ID.to_string(),
+            parent_id: USER_ID.to_string(),
         };
-        (id, user, generic)
+        (id, account, generic)
     }
 
     #[test]
-    fn user_to_generic() {
+    fn account_to_generic() {
         let uuid = ID::from_u128(0);
-        let user = User::new(
+        let account = Account::new(
             uuid.clone(),
             "Test_with-chars. And".to_string(),
-            ACCOUNT_ID.to_string(),
+            USER_ID.to_string(),
         )
-        .expect("Valid username was marked as invalid.");
-        let generic = GenericUser {
+            .expect("Valid username was marked as invalid.");
+        let generic = GenericAccount {
             id: uuid,
             username: "Test_with-chars. And".to_string(),
-            created: user.created,
-            parent_id: ACCOUNT_ID.to_string(),
-            guilds_hashed: Vec::new(),
-        };
-        assert_eq!(user.to_generic(), generic);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn account_to_generic() {
-        let mut account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
-            EMAIL.to_string(),
-            "github".to_string(),
-        );
-        let user_0 = account
-            .create_new_user("user".to_string())
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let user_1 = account
-            .create_new_user("user".to_string())
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let user_2 = account
-            .create_new_user("user".to_string())
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let mut map: HashMap<ID, GenericUser> = HashMap::new();
-        map.insert(user_0.id.clone(), user_0.to_generic().clone());
-        map.insert(user_1.id.clone(), user_1.to_generic().clone());
-        map.insert(user_2.id.clone(), user_2.to_generic().clone());
-        let generic = GenericAccount {
-            id: ACCOUNT_ID.to_string(),
             created: account.created,
-            users: map,
+            parent_id: USER_ID.to_string(),
+            guilds_hashed: Vec::new(),
         };
         assert_eq!(account.to_generic(), generic);
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn user_to_generic() {
+        let mut user = User::new(
+            SERVICE_USER_ID.to_string(),
+            EMAIL.to_string(),
+            "github".to_string(),
+        );
+        let account_0 = user
+            .create_new_account("user".to_string())
+            .await
+            .expect("Failed to add a new user to the test account.");
+        let account_1 = user
+            .create_new_account("user".to_string())
+            .await
+            .expect("Failed to add a new user to the test account.");
+        let account_2 = user
+            .create_new_account("user".to_string())
+            .await
+            .expect("Failed to add a new user to the test account.");
+        let mut map: HashMap<ID, GenericAccount> = HashMap::new();
+        map.insert(account_0.id.clone(), account_0.to_generic().clone());
+        map.insert(account_1.id.clone(), account_1.to_generic().clone());
+        map.insert(account_2.id.clone(), account_2.to_generic().clone());
+        let generic = GenericUser {
+            id: USER_ID.to_string(),
+            created: user.created,
+            users: map,
+        };
+        assert_eq!(user.to_generic(), generic);
+    }
+
     #[test]
     fn vec_to_generic() {
-        let mut map_user: HashMap<ID, User> = HashMap::new();
-        let mut map_generic: HashMap<ID, GenericUser> = HashMap::new();
-        let set_0 = user_generic_pair(0);
-        let set_1 = user_generic_pair(1);
-        let set_2 = user_generic_pair(2);
-        map_user.insert(set_0.0, set_0.1);
-        map_user.insert(set_1.0, set_1.1);
-        map_user.insert(set_2.0, set_2.1);
+        let mut map_account: HashMap<ID, Account> = HashMap::new();
+        let mut map_generic: HashMap<ID, GenericAccount> = HashMap::new();
+        let set_0 = account_generic_pair(0);
+        let set_1 = account_generic_pair(1);
+        let set_2 = account_generic_pair(2);
+        map_account.insert(set_0.0, set_0.1);
+        map_account.insert(set_1.0, set_1.1);
+        map_account.insert(set_2.0, set_2.1);
         map_generic.insert(set_0.0, set_0.2);
         map_generic.insert(set_1.0, set_1.2);
         map_generic.insert(set_2.0, set_2.2);
-        assert_eq!(Account::users_generic(&map_user), map_generic);
+        assert_eq!(User::accounts_generic(&map_account), map_generic);
     }
 
     #[tokio::test]
     #[serial]
-    async fn account_save_load() {
-        let account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
+    async fn user_save_load() {
+        let user = User::new(
+            SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             "service".to_string(),
         );
-        let _delete = std::fs::remove_file("data/accounts/".to_string() + &account.id);
-        let _save = account.save().await;
-        let loaded = Account::load(&account.id)
+        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id);
+        let _save = user.save().await;
+        let loaded = User::load(&user.id)
             .await
             .expect("Failed to load the test account from disk.");
-        assert_eq!(account, loaded);
+        assert_eq!(user, loaded);
     }
 
     #[tokio::test]
     #[serial]
     async fn create_guild() {
-        let mut account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
+        let mut user = User::new(
+            SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             "github".to_string(),
         );
-        let _delete = std::fs::remove_file("data/accounts/".to_string() + &account.id);
-        let user = account
-            .create_new_user("test".to_string())
+        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id);
+        let account = user
+            .create_new_account("test".to_string())
             .await
-            .expect("Failed to create user for test account.");
+            .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
         let _delete = std::fs::remove_file("data/guilds/info/".to_string() + &id.to_string());
-        let guild = account
-            .create_guild("test_guild".to_string(), id.clone(), user.id)
+        let guild = user
+            .create_guild("test_guild".to_string(), id.clone(), account.id)
             .await
             .expect("Failed to create test guild.");
         assert!(std::path::Path::new(
             &("data/guilds/info/".to_string() + &guild.to_string() + ".json")
         )
-        .exists());
+            .exists());
     }
 
     #[tokio::test]
     #[serial]
     async fn send_guild_message() {
-        let mut account = Account::new(
-            SERVICE_ACCOUNT_ID.to_string(),
+        let mut account = User::new(
+            SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             "github".to_string(),
         );
         let user = account
-            .create_new_user("test".to_string())
+            .create_new_account("test".to_string())
             .await
-            .expect("Failed to create user for test account.");
+            .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
         let guild_id = account
             .create_guild("test_guild".to_string(), id.clone(), user.id)

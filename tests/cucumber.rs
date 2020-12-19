@@ -5,15 +5,13 @@ use serde::Serialize;
 use std::{
     convert::Infallible,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    panic::AssertUnwindSafe,
-    sync::Arc,
 };
-use wirc_server::user::{Account, GenericAccount, GenericUser, User};
+use wirc_server::user::{User, GenericUser, GenericAccount, Account};
 
 #[derive(WorldInit)]
 pub struct MyWorld {
     wirc_running: bool,
-    response: Option<AssertUnwindSafe<Arc<Response>>>,
+    response: String,
 }
 
 #[async_trait(?Send)]
@@ -23,7 +21,7 @@ impl World for MyWorld {
     async fn new() -> Result<Self, Infallible> {
         Ok(Self {
             wirc_running: false,
-            response: None,
+            response: String::new(),
         })
     }
 }
@@ -39,93 +37,35 @@ async fn wirc_running(world: &mut MyWorld) {
     }
 }
 
-#[when(regex = r"a user navigates to (.*)")]
-async fn get_url(world: &mut MyWorld, url: String) {
-    assert!(world.wirc_running);
-    world.response = Some(AssertUnwindSafe(Arc::new(
-        reqwest::get(reqwest::Url::parse(&url).unwrap())
-            .await
-            .unwrap(),
-    )));
+#[when("a user attempts to login using their GitHub account")]
+async fn github_login(world: &mut MyWorld) {
+    let response = reqwest::get("http://localhost:24816/api/v1/login/github").await.expect("No response.");
+    world.response = response.url().to_string();
 }
 
-#[when(regex = r"an authenticated user navigates to (.*)")]
-async fn get_url_auth(world: &mut MyWorld, url: String) {
-    assert!(world.wirc_running);
-    world.response = Some(AssertUnwindSafe(Arc::new(
-        reqwest::get(reqwest::Url::parse(&(url + "?account=testaccount&token=testtoken")).unwrap())
-            .await
-            .unwrap(),
-    )));
+#[then("the user should be redirected to the github login page")]
+async fn github_redirected(world: &mut MyWorld) {
+    assert!(world.response.starts_with("https://github.com/login"));
 }
 
-#[derive(Serialize)]
-struct Name {
-    name: String,
-}
-
-#[when(regex = r"an authenticated user sends a name to (.*)")]
-async fn get_send_name(world: &mut MyWorld, url: String) {
-    assert!(world.wirc_running);
-    let request = reqwest::Client::new()
-        .request(
-            Method::GET,
-            reqwest::Url::parse(&(url + "?account=testaccount&token=testtoken")).unwrap(),
-        )
-        .json(&Name {
-            name: "test_name".to_string(),
-        });
-    world.response = Some(AssertUnwindSafe(Arc::new(request.send().await.unwrap())));
-}
-
-fn get_response(world: &mut MyWorld) -> Response {
-    let taken = world.response.take().unwrap().0;
-    Arc::try_unwrap(taken).expect("Failed to extract response from Arc")
-}
-
-#[then(regex = r"the user should be redirected to (.*)")]
-fn redirect_to(world: &mut MyWorld, url: String) {
-    assert!(get_response(world).url().as_str().starts_with(&url));
-}
-
-#[then(regex = r"the user should receive an account")]
-async fn recieve_account(world: &mut MyWorld) {
-    get_response(world)
-        .json::<Account>()
-        .await
-        .expect("Did not receive valid account data");
-}
-
-#[then(regex = r"the user should receive a generic account")]
-async fn recieve_generic_account(world: &mut MyWorld) {
-    get_response(world)
-        .json::<GenericAccount>()
-        .await
-        .expect("Did not receive valid generic account data");
-}
-
-#[then(regex = r"the user should receive a user")]
+#[then(regex = r"the user should receive user information")]
 async fn recieve_user(world: &mut MyWorld) {
-    get_response(world)
-        .json::<User>()
-        .await
-        .expect("Did not receive valid user data");
+    serde_json::from_str::<User>(&world.response).expect("Did not receive valid user information");
 }
 
-#[then(regex = r"the user should receive a generic user")]
+#[then(regex = r"the user should receive basic user information")]
 async fn recieve_generic_user(world: &mut MyWorld) {
-    get_response(world)
-        .json::<GenericUser>()
-        .await
-        .expect("Did not receive valid generic user data");
+    serde_json::from_str::<GenericUser>(&world.response).expect("Did not receive valid user information");
 }
 
-#[then(regex = r"the user should receive text (.*)")]
-async fn recieve_text(world: &mut MyWorld, json: String) {
-    assert_eq!(
-        &json,
-        &get_response(world).text().await.expect("Empty response.")
-    );
+#[then(regex = r"the user should receive account information")]
+async fn recieve_account(world: &mut MyWorld) {
+    serde_json::from_str::<Account>(&world.response).expect("Did not receive valid account information");
+}
+
+#[then(regex = r"the user should receive basic account information")]
+async fn recieve_generic_account(world: &mut MyWorld) {
+    serde_json::from_str::<GenericAccount>(&world.response).expect("Did not receive valid account information");
 }
 
 #[tokio::main]

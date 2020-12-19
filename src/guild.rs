@@ -11,7 +11,7 @@ use crate::{
         ChannelPermission, ChannelPermissions, GuildPermission, GuildPremissions, PermissionSetting,
     },
     unexpected_response,
-    user::User,
+    user::Account,
     ApiActionError, JsonLoadError, JsonSaveError, ID,
 };
 
@@ -29,7 +29,7 @@ pub struct GuildMember {
 }
 
 impl GuildMember {
-    pub fn new(user: &User, guild: ID) -> Self {
+    pub fn new(user: &Account, guild: ID) -> Self {
         Self {
             nickname: user.username.clone(),
             user: user.id.clone(),
@@ -254,7 +254,7 @@ pub struct Guild {
 }
 
 impl Guild {
-    pub fn new(name: String, id: ID, creator: &User) -> Self {
+    pub fn new(name: String, id: ID, creator: &Account) -> Self {
         let creator_id = creator.id.clone();
         let mut everyone = Rank::new(String::from("everyone"), new_id());
         let mut owner = GuildMember::new(creator, id.clone());
@@ -369,7 +369,7 @@ impl Guild {
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<GuildMember, ()> {
+    pub fn user_join(&mut self, user: &Account) -> Result<GuildMember, ()> {
         let mut member = GuildMember::new(user, self.id.clone());
         for (id, rank) in self.ranks.iter_mut() {
             if id == &self.default_rank {
@@ -407,10 +407,10 @@ struct GuildCreateQuery {
     name: String,
 }
 
-api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, account, query]
-    if account.users.contains_key(&query.user) {
-        let mut account = account;
-        let create = account.create_guild(query.name, new_id(), query.user).await;
+api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, user, query]
+    if user.accounts.contains_key(&query.user) {
+        let mut user = user;
+        let create = user.create_guild(query.name, new_id(), query.user).await;
         if let Err(err) = create {
             match err {
                 ApiActionError::OpenFileError | ApiActionError::WriteFileError => {
@@ -422,7 +422,7 @@ api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, accoun
                 }
 
                 ApiActionError::UserNotFound => warp::reply::with_status(
-                    "That user does not exist on your account.",
+                    "Your user does not have an account with that ID.",
                     StatusCode::INTERNAL_SERVER_ERROR,
                 )
                 .into_response(),
@@ -439,7 +439,7 @@ api_get! { (api_v1_create, GuildCreateQuery, warp::path("create")) [auth, accoun
         }
     } else {
         warp::reply::with_status(
-            "Your account does not have a user with that ID.",
+            "Your user does not have an account with that ID.",
             StatusCode::NOT_FOUND,
         )
         .into_response()
@@ -454,9 +454,9 @@ struct MessageSendQuery {
     message: String,
 }
 
-api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, account, query]
-    if account.users.contains_key(&query.user) {
-        if let Err(err) = account
+api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, user, query]
+    if user.accounts.contains_key(&query.user) {
+        if let Err(err) = user
             .send_guild_message(query.user, query.guild, query.channel, query.message)
             .await
         {
@@ -483,7 +483,7 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
                     .into_response()
                 }
                 ApiActionError::UserNotFound => warp::reply::with_status(
-                    "That user does not exist on your account.",
+                    "Your user does not have an account with that ID.",
                     StatusCode::NOT_FOUND,
                 )
                 .into_response(),
@@ -494,7 +494,7 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
         }
     } else {
         warp::reply::with_status(
-            "Your account does not have a user with that ID.",
+            "Your user does not have an account with that ID.",
             StatusCode::NOT_FOUND,
         )
         .into_response()
@@ -507,8 +507,8 @@ struct ChannelsQuery {
     guild: ID,
 }
 
-api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, account, query]
-    if account.users.contains_key(&query.user) {
+api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, user, query]
+    if user.accounts.contains_key(&query.user) {
         if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
             if let Ok(channels) = guild.channels(query.user) {
                 warp::reply::json(&channels).into_response()
@@ -528,7 +528,7 @@ api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, ac
         }
     } else {
         warp::reply::with_status(
-            "Your account does not have a user with that ID.",
+            "Your user does not have an account with that ID.",
             StatusCode::NOT_FOUND,
         )
         .into_response()
@@ -543,8 +543,8 @@ struct LastMessagesQuery {
     count: u128
 }
 
-api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [auth, account, query]
-    if account.users.contains_key(&query.user) {
+api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [auth, user, query]
+    if user.accounts.contains_key(&query.user) {
         if let Ok(mut guild) = Guild::load(&query.guild.to_string()).await {
             if let Some(user) = guild.users.get(&query.user) {
                 if user.has_channel_permission(&query.channel, &ChannelPermission::ViewChannel, &guild) && user.has_channel_permission(&query.channel, &ChannelPermission::ReadMessage, &guild) {
@@ -580,7 +580,7 @@ api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [
         }
     } else {
         warp::reply::with_status(
-            "Your account does not have a user with that ID.",
+            "Your user does not have an account with that ID.",
             StatusCode::NOT_FOUND,
         )
         .into_response()
@@ -599,14 +599,14 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 mod tests {
     use crate::{
         permission::{ChannelPermission, GuildPermission, PermissionSetting},
-        user::User,
+        user::Account,
         ID,
     };
 
     use super::{Guild, GuildMember, Rank};
 
-    fn get_user_for_test(id: u128) -> User {
-        User::new(
+    fn get_user_for_test(id: u128) -> Account {
+        Account::new(
             ID::from_u128(id),
             "test_user".to_string(),
             "testid".to_string(),
