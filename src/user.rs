@@ -123,15 +123,15 @@ impl User {
 
     pub async fn send_hub_message(
         &self,
-        user: ID,
+        account: ID,
         hub: ID,
         channel: ID,
         message: String,
-    ) -> Result<(), ApiActionError> {
-        if let Some(user) = self.accounts.get(&user) {
-            if user.in_hubs.contains(&hub) {
+    ) -> Result<ID, ApiActionError> {
+        if let Some(account) = self.accounts.get(&account) {
+            if account.in_hubs.contains(&hub) {
                 if let Ok(mut hub) = Hub::load(&hub.to_string()).await {
-                    hub.send_message(user.id, channel, message).await
+                    hub.send_message(account.id, channel, message).await
                 } else {
                     Err(ApiActionError::HubNotFound)
                 }
@@ -147,16 +147,20 @@ impl User {
         &mut self,
         name: String,
         id: ID,
-        user: ID,
+        owner: ID,
     ) -> Result<ID, ApiActionError> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
-        if let Some(user) = self.accounts.get_mut(&user) {
-            let new_hub = Hub::new(name, id, user);
+        if let Some(account) = self.accounts.get_mut(&owner) {
+            let new_hub = Hub::new(name, id, account);
             if let Ok(_) = new_hub.save().await {
-                user.in_hubs.push(new_hub.id.clone());
-                Ok(new_hub.id)
+                account.in_hubs.push(new_hub.id.clone());
+                if let Ok(_) = self.save().await {
+                    Ok(new_hub.id)
+                } else {
+                    Err(ApiActionError::WriteFileError)
+                }
             } else {
                 Err(ApiActionError::WriteFileError)
             }

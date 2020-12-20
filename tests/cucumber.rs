@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
 use std::{
     convert::Infallible,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -10,10 +8,9 @@ use async_trait::async_trait;
 use cucumber_rust::{given, then, when, World, WorldInit};
 use reqwest::Url;
 use serde::Serialize;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use wirc_server::channel::Channel;
+use wirc_server::channel::{Channel, Message};
 use wirc_server::user::{Account, GenericAccount, GenericUser, User};
 use wirc_server::ID;
 
@@ -23,6 +20,7 @@ pub struct MyWorld {
     account: Option<ID>,
     hub: Option<ID>,
     channel: Option<ID>,
+    message: Option<ID>,
     running: Option<AssertUnwindSafe<JoinHandle<()>>>,
 }
 
@@ -36,6 +34,7 @@ impl World for MyWorld {
             account: None,
             hub: None,
             channel: None,
+            message: None,
             running: None,
         })
     }
@@ -65,9 +64,6 @@ struct Name {
 
 #[when("the user attempts to create a new account")]
 async fn create_account(world: &mut MyWorld) {
-    if world.account.is_some() {
-        return;
-    }
     let response = reqwest::Client::new()
         .get(
             Url::parse(
@@ -199,6 +195,70 @@ async fn get_channels(world: &mut MyWorld) {
     world.response = response.text().await.unwrap_or("".to_string());
 }
 
+#[when("the user sends a message in a channel in a hub")]
+async fn send_message(world: &mut MyWorld) {
+    assert!(world.account.is_some());
+    assert!(world.hub.is_some());
+    assert!(world.channel.is_some());
+    let response = reqwest::Client::new()
+        .get(
+            Url::parse(
+                "http://localhost:24816/api/v1/hubs/send_message?user=testuser&token=testtoken",
+            )
+            .unwrap(),
+        )
+        .json(&serde_json::json!({
+        "hub": world.hub.unwrap(),
+        "account": world.account.unwrap(),
+        "channel": world.channel.unwrap(),
+        "message": "test message"
+        }))
+        .send()
+        .await
+        .expect("No response.");
+    world.response = response.text().await.unwrap_or("".to_string());
+    world.message = Some(world.response.parse().unwrap());
+}
+
+#[given(regex = r"(\\d+) messages have been sent in the channel")]
+async fn n_messages_sent(world: &mut MyWorld, n: String) {
+    for _i in 0..n.parse::<u32>().unwrap() {
+        send_message(world).await;
+    }
+}
+
+#[when(regex = r"the user tries to get the last (\\d+) messages")]
+async fn get_last_messages(world: &mut MyWorld, n: String) {
+    assert!(world.account.is_some());
+    assert!(world.hub.is_some());
+    assert!(world.channel.is_some());
+    let response = reqwest::Client::new()
+        .get(
+            Url::parse("http://localhost:24816/api/v1/hubs/messages?user=testuser&token=testtoken")
+                .unwrap(),
+        )
+        .json(&serde_json::json!({
+        "hub": world.hub.unwrap(),
+        "account": world.account.unwrap().to_string(),
+        "channel": world.channel.unwrap().to_string(),
+        "count": n.parse::<u128>().unwrap()
+        }))
+        .send()
+        .await
+        .expect("No response.");
+    world.response = response.text().await.unwrap_or("".to_string());
+}
+
+#[then(regex = r"the user should see (\\d+) messages")]
+async fn check_channel_messages(world: &mut MyWorld, n: String) {
+    assert_eq!(
+        serde_json::from_str::<Vec<Message>>(&world.response)
+            .unwrap()
+            .len(),
+        n.parse::<usize>().unwrap()
+    );
+}
+
 #[then("the server should respond with the OK status")]
 async fn hub_create_success(world: &mut MyWorld) {
     assert!(&world.hub.is_some());
@@ -258,6 +318,7 @@ async fn panic_response(world: &mut MyWorld) {
 
 #[tokio::main]
 async fn main() {
+    let _reset = std::fs::remove_dir_all("data");
     let runner = MyWorld::init(&["tests/features"]);
     runner.cli().run().await;
 }

@@ -1,9 +1,10 @@
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
 };
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 
@@ -23,7 +24,7 @@ static GUILD_INFO_FOLDER: &str = "data/hubs/info";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
-    pub user: ID,
+    pub account: ID,
     pub joined: u128,
     pub hub: ID,
     pub nickname: String,
@@ -36,7 +37,7 @@ impl HubMember {
     pub fn new(user: &Account, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
-            user: user.id.clone(),
+            account: user.id.clone(),
             hub,
             ranks: Vec::new(),
             joined: get_system_millis(),
@@ -58,8 +59,8 @@ impl HubMember {
         if !self.ranks.contains(&rank.id) {
             self.ranks.push(rank.id.clone());
         }
-        if !rank.members.contains(&self.user) {
-            rank.members.push(self.user.clone());
+        if !rank.members.contains(&self.account) {
+            rank.members.push(self.account.clone());
         }
     }
 
@@ -91,7 +92,7 @@ impl HubMember {
 
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
         println!("{:?}", self.hub_permissions);
-        if hub.owner == self.user {
+        if hub.owner == self.account {
             return true;
         }
         if self.has_all_permissions() {
@@ -126,7 +127,7 @@ impl HubMember {
         permission: &ChannelPermission,
         hub: &Hub,
     ) -> bool {
-        if hub.owner == self.user {
+        if hub.owner == self.account {
             return true;
         }
         if self.has_all_permissions() {
@@ -247,7 +248,7 @@ impl PermissionGroup {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hub {
     pub channels: HashMap<ID, Channel>,
-    pub users: HashMap<ID, HubMember>,
+    pub members: HashMap<ID, HubMember>,
     pub bans: HashSet<ID>,
     pub owner: ID,
     pub ranks: HashMap<ID, PermissionGroup>,
@@ -262,11 +263,11 @@ impl Hub {
         let creator_id = creator.id.clone();
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
-        let mut users = HashMap::new();
+        let mut members = HashMap::new();
         let mut ranks = HashMap::new();
         owner.give_rank(&mut everyone);
         owner.set_permission(HubPermission::All, PermissionSetting::TRUE);
-        users.insert(creator_id.clone(), owner);
+        members.insert(creator_id.clone(), owner);
         ranks.insert(everyone.id.clone(), everyone);
         Self {
             name,
@@ -276,14 +277,14 @@ impl Hub {
             owner: creator_id,
             bans: HashSet::new(),
             channels: HashMap::new(),
-            users,
+            members,
             created: get_system_millis(),
         }
     }
 
     pub async fn new_channel(&mut self, user: ID, name: String) -> Result<ID, ApiActionError> {
         if is_valid_username(&name) {
-            if let Some(user) = self.users.get(&user) {
+            if let Some(user) = self.members.get(&user) {
                 if user
                     .clone()
                     .has_permission(HubPermission::CreateChannel, self)
@@ -294,7 +295,11 @@ impl Hub {
                     }
                     if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
                         self.channels.insert(id.clone(), channel);
-                        Ok(id)
+                        if let Ok(_) = self.save().await {
+                            Ok(id)
+                        } else {
+                            Err(ApiActionError::WriteFileError)
+                        }
                     } else {
                         Err(ApiActionError::WriteFileError)
                     }
@@ -311,23 +316,26 @@ impl Hub {
 
     pub async fn send_message(
         &mut self,
-        user: ID,
+        account: ID,
         channel: ID,
         message: String,
-    ) -> Result<(), ApiActionError> {
-        if let Some(user) = self.users.get(&user) {
-            if user
-                .clone()
-                .has_channel_permission(&channel, &ChannelPermission::SendMessage, self)
-            {
+    ) -> Result<ID, ApiActionError> {
+        if let Some(member) = self.members.get(&account) {
+            if member.clone().has_channel_permission(
+                &channel,
+                &ChannelPermission::SendMessage,
+                self,
+            ) {
                 if let Some(channel) = self.channels.get_mut(&channel) {
+                    let id = new_id();
                     let message = Message {
-                        id: new_id(),
-                        sender: user.user.clone(),
+                        id: id.clone(),
+                        sender: member.account.clone(),
                         created: get_system_millis(),
                         content: message,
                     };
-                    channel.add_message(message).await
+                    channel.add_message(message).await?;
+                    Ok(id)
                 } else {
                     Err(ApiActionError::ChannelNotFound)
                 }
@@ -381,13 +389,13 @@ impl Hub {
                 break;
             }
         }
-        self.users.insert(member.user.clone(), member.clone());
+        self.members.insert(member.account.clone(), member.clone());
         Ok(member)
     }
 
     pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
         let hub_im = self.clone();
-        if let Some(user) = self.users.get_mut(&user) {
+        if let Some(user) = self.members.get_mut(&user) {
             let mut result = Vec::new();
             for channel in self.channels.clone() {
                 if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &hub_im)
@@ -513,19 +521,22 @@ api_get! { (api_v1_createchannel, ChannelCreateQuery, warp::path("create_channel
 
 #[derive(Deserialize)]
 struct MessageSendQuery {
-    user: ID,
+    account: ID,
     hub: ID,
     channel: ID,
     message: String,
 }
 
 api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, user, query]
-    if user.accounts.contains_key(&query.user) {
-        if let Err(err) = user
-            .send_hub_message(query.user, query.hub, query.channel, query.message)
-            .await
+    if user.accounts.contains_key(&query.account) {
+    let send = user
+            .send_hub_message(query.account, query.hub, query.channel, query.message)
+            .await;
+        if let Ok(id) = send
         {
-            match err {
+            warp::reply::with_status(id.to_string(), StatusCode::OK).into_response()
+        } else {
+            match send.unwrap_err() {
                 ApiActionError::HubNotFound | ApiActionError::NotInHub => {
                     warp::reply::with_status(
                         "You are not in that hub if it exists.",
@@ -554,8 +565,6 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
                 .into_response(),
                 _ => unexpected_response(),
             }
-        } else {
-            warp::reply::with_status("Message sent successfully.", StatusCode::OK).into_response()
         }
     } else {
         warp::reply::with_status(
@@ -602,17 +611,17 @@ api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, us
 
 #[derive(Deserialize, Serialize)]
 struct LastMessagesQuery {
-    user: ID,
+    account: ID,
     hub: ID,
     channel: ID,
     count: u128,
 }
 
 api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [auth, user, query]
-    if user.accounts.contains_key(&query.user) {
+    if user.accounts.contains_key(&query.account) {
         if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
-            if let Some(user) = hub.users.get(&query.user) {
-                if user.has_channel_permission(&query.channel, &ChannelPermission::ViewChannel, &hub) && user.has_channel_permission(&query.channel, &ChannelPermission::ReadMessage, &hub) {
+            if let Some(member) = hub.members.get(&query.account) {
+                if member.has_channel_permission(&query.channel, &ChannelPermission::ViewChannel, &hub) && member.has_channel_permission(&query.channel, &ChannelPermission::ReadMessage, &hub) {
                     if let Some(channel) = hub.channels.get_mut(&query.channel) {
                         warp::reply::json(&channel.get_last_messages(query.count.try_into().unwrap()).await).into_response()
                     } else {
@@ -801,8 +810,8 @@ mod tests {
         {
             {
                 let member_in_hub = hub
-                    .users
-                    .get_mut(&member.user)
+                    .members
+                    .get_mut(&member.account)
                     .expect("Failed to get hub member.");
                 member_in_hub.set_permission(HubPermission::CreateChannel, PermissionSetting::TRUE);
                 member = member_in_hub.clone();
@@ -811,22 +820,22 @@ mod tests {
             assert!(member.has_permission(HubPermission::CreateChannel, &hub));
         }
         let channel_0 = hub
-            .new_channel(member.user.clone(), "test0".to_string())
+            .new_channel(member.account.clone(), "test0".to_string())
             .await
             .expect("Failed to create test channel.");
         let _channel_1 = hub
-            .new_channel(member.user.clone(), "test1".to_string())
+            .new_channel(member.account.clone(), "test1".to_string())
             .await
             .expect("Failed to create test channel.");
         assert!(hub
-            .channels(member.user.clone())
+            .channels(member.account.clone())
             .expect("Failed to get hub channels.")
             .is_empty());
 
         {
             let member_in_hub = hub
-                .users
-                .get_mut(&member.user)
+                .members
+                .get_mut(&member.account)
                 .expect("Failed to get hub member.");
             member_in_hub.set_channel_permission(
                 channel_0.clone(),
@@ -835,7 +844,7 @@ mod tests {
             );
         }
         let get = hub
-            .channels(member.user.clone())
+            .channels(member.account.clone())
             .expect("Failed to get hub channels.");
         assert_eq!(get.len(), 1);
         assert_eq!(get[0].id, channel_0.clone());

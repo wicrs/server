@@ -6,7 +6,7 @@ Feature: Send and get messages
     Given the user is in a hub
     Given the user has access to a text channel
     When the user sends a message in a channel in a hub
-    Then the user should their message in the channel
+    Then the user should receive an ID
 
   Scenario: An authenticated user wants to get the last messages sent in a channel
     Given wirc is running on localhost
