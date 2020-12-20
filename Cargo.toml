@@ -21,7 +21,14 @@ tokio = { version = "0.2.24", features = ["macros"] }
 uuid = { version = "0.8.1", features = ["serde", "v4"] }
 warp = "0.2.5"
 rayon = "1.5.0"
+async-trait = "0.1.42"
+futures = "0.3.8"
+
+[[test]]
+name = "cucumber"
+harness = false
 
 [dev-dependencies]
 tokio-test = "0.3.0"
 serial_test = "0.5.1"
+cucumber_rust = { git = "https://github.com/bbqsrc/cucumber-rust", branch = "main", features = ["macros"] }

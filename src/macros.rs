@@ -7,31 +7,31 @@ macro_rules! api_get {
             use warp::Filter;
             use warp::Reply;
             #[derive(Deserialize)]
-            struct AccountToken {
-                account: String,
+            struct UserToken {
+                user: String,
                 token: String,
             }
             warp::get()
                 $(.and($path))?
-                .and(warp::query::<AccountToken>())
+                .and(warp::query::<UserToken>())
                 $(.and(warp::body::json::<$datatype>()))?
-                .and_then(move |auth_query: AccountToken$(, $query: $datatype)?| {
+                .and_then(move |auth_query: UserToken$(, $query: $datatype)?| {
                     let $auth = auth_manager.clone();
                     async move {
                         Ok::<warp::http::Response<warp::hyper::Body>, warp::Rejection>(
                             if crate::auth::Auth::is_authenticated(
                                 $auth.clone(),
-                                &auth_query.account,
+                                &auth_query.user,
                                 auth_query.token,
                             )
                             .await
                             {
-                                if let Ok($account) = crate::user::Account::load(&auth_query.account).await {
+                                if let Ok($account) = crate::user::User::load(&auth_query.user).await {
                                     $($do)*
                                 } else {
                                     warp::reply::with_status(
-                                        "Could not find that account.",
-                                        StatusCode::NOT_FOUND,
+                                        "Server failed to load the user.",
+                                        StatusCode::INTERNAL_SERVER_ERROR,
                                     )
                                     .into_response()
                                 }

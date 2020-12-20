@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub auth_services: AuthConfigs,
+    pub listen: [u8; 4],
     pub port: u16,
 }
 
