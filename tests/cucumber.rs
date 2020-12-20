@@ -220,14 +220,14 @@ async fn send_message(world: &mut MyWorld) {
     world.message = Some(world.response.parse().unwrap());
 }
 
-#[given(regex = r"(\\d+) messages have been sent in the channel")]
+#[given(regex = r"(\d+) messages have been sent in the channel")]
 async fn n_messages_sent(world: &mut MyWorld, n: String) {
     for _i in 0..n.parse::<u32>().unwrap() {
         send_message(world).await;
     }
 }
 
-#[when(regex = r"the user tries to get the last (\\d+) messages")]
+#[when(regex = r"the user tries to get the last (\d+) messages")]
 async fn get_last_messages(world: &mut MyWorld, n: String) {
     assert!(world.account.is_some());
     assert!(world.hub.is_some());
@@ -241,7 +241,7 @@ async fn get_last_messages(world: &mut MyWorld, n: String) {
         "hub": world.hub.unwrap(),
         "account": world.account.unwrap().to_string(),
         "channel": world.channel.unwrap().to_string(),
-        "count": n.parse::<u128>().unwrap()
+        "count": n.parse::<i32>().unwrap()
         }))
         .send()
         .await
@@ -249,7 +249,7 @@ async fn get_last_messages(world: &mut MyWorld, n: String) {
     world.response = response.text().await.unwrap_or("".to_string());
 }
 
-#[then(regex = r"the user should see (\\d+) messages")]
+#[then(regex = r"the user should see (\d+) messages")]
 async fn check_channel_messages(world: &mut MyWorld, n: String) {
     assert_eq!(
         serde_json::from_str::<Vec<Message>>(&world.response)
