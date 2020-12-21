@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "wirc_server"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.13.0",
