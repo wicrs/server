@@ -63,11 +63,13 @@ pub enum ApiActionError {
     BadNameCharacters,
 }
 
-static USER_AGENT_STRING: &str = "wirc_server";
-static NAME_ALLOWED_CHARS: &str =
+
+static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 pub async fn run() {
+    println!("Starting {}...", USER_AGENT_STRING);
     let config = config::load_config();
     warp::serve(filter(Auth::from_config().await).await)
         .run((config.listen, config.port))

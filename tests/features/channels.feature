@@ -1,14 +1,14 @@
 Feature: Text channels
 
   Scenario: An authenticated user wants to create a text channel
-    Given wirc is running on localhost
+    Given the server is running on localhost
     Given the user has an account
     Given the user is in a hub
     When the user attempts to create a new text channel
     Then the user should receive an ID
 
   Scenario: An authenticated user wants to know what text channels they have access to
-    Given wirc is running on localhost
+    Given the server is running on localhost
     Given the user has an account
     Given the user is in a hub
     Given the user has access to a text channel

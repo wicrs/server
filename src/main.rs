@@ -1,4 +1,4 @@
 #[tokio::main]
 async fn main() {
-    wirc_server::run().await;
+    wicrs_server::run().await;
 }

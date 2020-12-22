@@ -1,3 +1,5 @@
+use std::process::exit;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -20,8 +22,15 @@ pub struct AuthConfigs {
 }
 
 pub fn load_config() -> Config {
-    serde_json::from_str::<Config>(
-        &std::fs::read_to_string("config.json").expect("Failed to read config file."),
-    )
-    .expect("Failed to parse JSON in config file.")
+    if let Ok(read) = std::fs::read_to_string("config.json") {
+        if let Ok(config) = serde_json::from_str::<Config>(&read) {
+            return config;
+        } else {
+            println!("config.json does not contain a valid configuration.");
+            exit(1);
+        }
+    } else {
+        println!("Failed to load config.json.");
+        exit(1);
+    }
 }

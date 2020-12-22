@@ -10,9 +10,9 @@ use reqwest::Url;
 use serde::Serialize;
 use tokio::task::JoinHandle;
 
-use wirc_server::channel::{Channel, Message};
-use wirc_server::user::{Account, GenericAccount, GenericUser, User};
-use wirc_server::ID;
+use wicrs_server::channel::{Channel, Message};
+use wicrs_server::user::{Account, GenericAccount, GenericUser, User};
+use wicrs_server::ID;
 
 #[derive(WorldInit)]
 pub struct MyWorld {
@@ -40,10 +40,10 @@ impl World for MyWorld {
     }
 }
 
-#[given("wirc is running on localhost")]
-async fn wirc_running(world: &mut MyWorld) {
+#[given("the server is running on localhost")]
+async fn wicrs_running(world: &mut MyWorld) {
     assert!(world.running.is_none());
-    let server = wirc_server::testing().await;
+    let server = wicrs_server::testing().await;
     world.running = Some(AssertUnwindSafe(tokio::task::spawn(
         warp::serve(server.0).run(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 24816)),
     )));

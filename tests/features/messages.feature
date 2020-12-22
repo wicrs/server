@@ -1,7 +1,7 @@
 Feature: Send and get messages
 
   Scenario: An authenticated user wants to send a message in a channel
-    Given wirc is running on localhost
+    Given the server is running on localhost
     Given the user has an account
     Given the user is in a hub
     Given the user has access to a text channel
@@ -9,7 +9,7 @@ Feature: Send and get messages
     Then the user should receive an ID
 
   Scenario: An authenticated user wants to get the last messages sent in a channel
-    Given wirc is running on localhost
+    Given the server is running on localhost
     Given the user has an account
     Given the user is in a hub
     Given the user has access to a text channel

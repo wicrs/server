@@ -1,11 +1,11 @@
 [package]
-name = "wirc_server"
+name = "wicrs_server"
 version = "0.3.0"
 authors = ["willemml <willem@leit.so>"]
 edition = "2018"
 license = "GPL-3.0"
 description = "A server/channel based chat handler backend."
-repository = "https://github.com/willemml/wirc_server"
+repository = "https://github.com/wicrs/server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

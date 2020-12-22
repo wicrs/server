@@ -69,11 +69,8 @@ impl Auth {
         let github_conf = auth_config.github.expect(
             "GitHub is currently the only support authentication provider, it cannot be empty.",
         );
-        let client_id = std::env::var("GITHUB_CLIENT_ID").unwrap_or(github_conf.client_id);
-        let client_secret =
-            std::env::var("GITHUB_CLIENT_SECRET").unwrap_or(github_conf.client_secret);
         Self {
-            github: Arc::new(Mutex::new(GitHub::new(client_id, client_secret))),
+            github: Arc::new(Mutex::new(GitHub::new(github_conf.client_id, github_conf.client_secret))),
             sessions: Arc::new(Mutex::new(Auth::load_tokens().await)),
         }
     }
