@@ -300,6 +300,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn create_new_user() {
         let mut user = User::new(
             SERVICE_USER_ID.to_string(),
