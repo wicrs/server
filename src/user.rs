@@ -12,32 +12,38 @@ use crate::{
 
 static ACCOUNT_FOLDER: &str = "data/users/";
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GenericAccount {
-    pub id: ID,
-    pub username: String,
-    pub created: u128,
-    pub parent_id: String,
-    pub hubs_hashed: Vec<String>,
-}
-
+/// An Account, a "subidenty" for a user, exists so that a user can have multiple accounts without signing up multiple times, if
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Account {
     pub id: ID,
     pub username: String,
     pub created: u128,
     pub parent_id: String,
+    pub is_bot: bool,
     pub in_hubs: Vec<ID>,
 }
 
+/// A version of an Account, uses a hashed version of the list of hubs the user is a member of, the is_bot variable indicates whether or not the account is dedicated to automation/chatbot.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GenericAccount {
+    pub id: ID,
+    pub username: String,
+    pub created: u128,
+    pub parent_id: String,
+    pub is_bot: bool,
+    pub hubs_hashed: Vec<String>,
+}
+
 impl Account {
-    pub fn new(id: ID, username: String, parent_id: String) -> Result<Self, ()> {
+    /// Create a new account, while checking that the username only contains allowed characters, if it doesnt an error is returned.
+    pub fn new(id: ID, username: String, parent_id: String, is_bot: bool) -> Result<Self, ()> {
         if is_valid_username(&username) {
             Ok(Self {
                 id,
                 username,
                 parent_id,
                 created: get_system_millis(),
+                is_bot,
                 in_hubs: Vec::new(),
             })
         } else {
@@ -45,6 +51,7 @@ impl Account {
         }
     }
 
+    /// Hashes the IDs of hubs the account is a member of and outputs a GenericAccount
     pub fn to_generic(&self) -> GenericAccount {
         let mut hasher = Sha256::new();
         let mut hubs_hashed = Vec::new();
@@ -57,18 +64,13 @@ impl Account {
             created: self.created.clone(),
             username: self.username.clone(),
             parent_id: self.parent_id.clone(),
+            is_bot: self.is_bot.clone(),
             hubs_hashed,
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GenericUser {
-    id: String,
-    created: u128,
-    users: HashMap<ID, GenericAccount>,
-}
-
+/// Represents a user, keeps track of which accounts it owns and their metadata.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct User {
     pub id: String,
@@ -78,7 +80,16 @@ pub struct User {
     pub accounts: HashMap<ID, Account>,
 }
 
+/// Represents the publicly available information on a user, (excludes their email address and the service they signed up with) also only includes the generic version of accounts.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GenericUser {
+    id: String,
+    created: u128,
+    users: HashMap<ID, GenericAccount>,
+}
+
 impl User {
+    /// Creates a new user and generates an ID by hashing the service used and the ID of the user according to that service.
     pub fn new(id: String, email: String, service: String) -> Self {
         Self {
             id: get_id(&id, &service),
@@ -89,6 +100,7 @@ impl User {
         }
     }
 
+    /// Converts a HashMap of Accounts into a a HashMap of Generic Accounts.
     pub fn accounts_generic(users: &HashMap<ID, Account>) -> HashMap<ID, GenericAccount> {
         users
             .iter()
@@ -96,6 +108,7 @@ impl User {
             .collect()
     }
 
+    /// Converts the standard user into a GenericUser.
     pub fn to_generic(&self) -> GenericUser {
         GenericUser {
             id: self.id.clone(),
@@ -107,9 +120,10 @@ impl User {
     pub async fn create_new_account(
         &mut self,
         username: String,
+        bot: bool,
     ) -> Result<Account, ApiActionError> {
         let uuid = new_id();
-        if let Ok(user) = Account::new(uuid.clone(), username, self.id.clone()) {
+        if let Ok(user) = Account::new(uuid.clone(), username, self.id.clone(), bot) {
             self.accounts.insert(uuid, user.clone());
             if let Ok(_) = self.save().await {
                 Ok(user)
@@ -230,14 +244,15 @@ fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply,)> {
 }
 
 #[derive(Deserialize)]
-struct Name {
+struct CreateAccount {
     name: String,
+    is_bot: bool
 }
 
-api_get! { (api_v1_addaccount, Name,) [auth, user, query]
+api_get! { (api_v1_addaccount, CreateAccount,) [auth, user, query]
         use crate::ApiActionError;
         let mut user = user;
-        let create: Result<Account, ApiActionError> = user.create_new_account(query.name).await;
+        let create: Result<Account, ApiActionError> = user.create_new_account(query.name, query.is_bot).await;
         if let Ok(account) = create {
             warp::reply::json(&account).into_response()
         } else {
@@ -309,7 +324,7 @@ mod tests {
         );
         assert!(user.accounts.is_empty());
         let account = user
-            .create_new_account("user".to_string())
+            .create_new_account("user".to_string(), false)
             .await
             .expect("Failed to add a new user to the test account.");
         assert_eq!(user.accounts.get(&account.id), Some(&account));
@@ -321,6 +336,7 @@ mod tests {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
+            is_bot: false,
             in_hubs: Vec::new(),
             parent_id: USER_ID.to_string(),
         };
@@ -328,6 +344,7 @@ mod tests {
             id: id.clone(),
             username: "test".to_string(),
             created: n,
+            is_bot: false,
             hubs_hashed: Vec::new(),
             parent_id: USER_ID.to_string(),
         };
@@ -341,12 +358,14 @@ mod tests {
             uuid.clone(),
             "Test_with-chars. And".to_string(),
             USER_ID.to_string(),
+            false
         )
         .expect("Valid username was marked as invalid.");
         let generic = GenericAccount {
             id: uuid,
             username: "Test_with-chars. And".to_string(),
             created: account.created,
+            is_bot: false,
             parent_id: USER_ID.to_string(),
             hubs_hashed: Vec::new(),
         };
@@ -362,15 +381,15 @@ mod tests {
             "github".to_string(),
         );
         let account_0 = user
-            .create_new_account("user".to_string())
+            .create_new_account("user".to_string(), false)
             .await
             .expect("Failed to add a new user to the test account.");
         let account_1 = user
-            .create_new_account("user".to_string())
+            .create_new_account("user".to_string(), false)
             .await
             .expect("Failed to add a new user to the test account.");
         let account_2 = user
-            .create_new_account("user".to_string())
+            .create_new_account("user".to_string(), false)
             .await
             .expect("Failed to add a new user to the test account.");
         let mut map: HashMap<ID, GenericAccount> = HashMap::new();
@@ -427,7 +446,7 @@ mod tests {
         );
         let _delete = std::fs::remove_file("data/users/".to_string() + &user.id);
         let account = user
-            .create_new_account("test".to_string())
+            .create_new_account("test".to_string(), false)
             .await
             .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
@@ -451,7 +470,7 @@ mod tests {
             "github".to_string(),
         );
         let user = account
-            .create_new_account("test".to_string())
+            .create_new_account("test".to_string(), false)
             .await
             .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);

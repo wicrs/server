@@ -31,4 +31,4 @@ harness = false
 [dev-dependencies]
 tokio-test = "0.3.0"
 serial_test = "0.5.1"
-cucumber_rust = { git = "https://github.com/bbqsrc/cucumber-rust", branch = "main", features = ["macros"] }
+cucumber_rust = "0.7.3"

@@ -685,6 +685,7 @@ mod tests {
             ID::from_u128(id),
             "test_user".to_string(),
             "testid".to_string(),
+            false
         )
         .expect("Failed to create a testing user.")
     }
