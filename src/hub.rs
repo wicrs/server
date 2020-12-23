@@ -7,18 +7,25 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
+use wicrs_common::{
+    api_types::{
+        ChannelCreateQuery, ChannelsQuery, HubCreateQuery, LastMessagesQuery, MessageSendQuery,
+    },
+    ID,
+};
 
 use crate::{
     auth::Auth,
     channel::{Channel, Message},
-    get_system_millis, is_valid_username, new_id,
-    permission::{
-        ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
-    },
     unexpected_response,
     user::Account,
-    ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    ApiActionError, JsonLoadError, JsonSaveError,
 };
+
+use wicrs_common::permissions::{
+    ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
+};
+use wicrs_common::{get_system_millis, is_valid_username, new_id, NAME_ALLOWED_CHARS};
 
 static GUILD_INFO_FOLDER: &str = "data/hubs/info";
 
@@ -175,7 +182,7 @@ pub struct PermissionGroup {
 impl PermissionGroup {
     pub fn new(name: String, id: ID) -> Self {
         Self {
-            created: crate::get_system_millis(),
+            created: wicrs_common::get_system_millis(),
             id,
             name,
             members: Vec::new(),
@@ -410,12 +417,6 @@ impl Hub {
     }
 }
 
-#[derive(Deserialize)]
-struct HubCreateQuery {
-    account: ID,
-    name: String,
-}
-
 api_get! { (api_v1_create, HubCreateQuery, warp::path("create")) [auth, user, query]
     if user.accounts.contains_key(&query.account) {
         let mut user = user;
@@ -453,13 +454,6 @@ api_get! { (api_v1_create, HubCreateQuery, warp::path("create")) [auth, user, qu
         )
         .into_response()
     }
-}
-
-#[derive(Deserialize)]
-struct ChannelCreateQuery {
-    account: ID,
-    hub: ID,
-    name: String,
 }
 
 api_get! { (api_v1_createchannel, ChannelCreateQuery, warp::path("create_channel")) [auth, user, query]
@@ -519,14 +513,6 @@ api_get! { (api_v1_createchannel, ChannelCreateQuery, warp::path("create_channel
     }
 }
 
-#[derive(Deserialize)]
-struct MessageSendQuery {
-    account: ID,
-    hub: ID,
-    channel: ID,
-    message: String,
-}
-
 api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [auth, user, query]
     if user.accounts.contains_key(&query.account) {
     let send = user
@@ -575,12 +561,6 @@ api_get! { (api_v1_sendmessage, MessageSendQuery, warp::path("send_message")) [a
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct ChannelsQuery {
-    account: ID,
-    hub: ID,
-}
-
 api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, user, query]
     if user.accounts.contains_key(&query.account) {
         if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
@@ -607,14 +587,6 @@ api_get! { (api_v1_getchannels, ChannelsQuery, warp::path("channels")) [auth, us
         )
         .into_response()
     }
-}
-
-#[derive(Deserialize, Serialize)]
-struct LastMessagesQuery {
-    account: ID,
-    hub: ID,
-    channel: ID,
-    count: u128,
 }
 
 api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [auth, user, query]
@@ -672,11 +644,9 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        permission::{ChannelPermission, HubPermission, PermissionSetting},
-        user::Account,
-        ID,
-    };
+    use super::{Account, ChannelPermission, HubPermission, PermissionSetting};
+
+    use wicrs_common::ID;
 
     use super::{Hub, HubMember, PermissionGroup};
 
@@ -685,7 +655,7 @@ mod tests {
             ID::from_u128(id),
             "test_user".to_string(),
             "testid".to_string(),
-            false
+            false,
         )
         .expect("Failed to create a testing user.")
     }

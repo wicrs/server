@@ -6,8 +6,8 @@ use cucumber_rust::{Cucumber, World};
 use reqwest::Url;
 use tokio::task::JoinHandle;
 
+use wicrs_common::ID;
 use wicrs_server::user::Account;
-use wicrs_server::ID;
 
 pub struct MyWorld {
     response: String,
@@ -42,10 +42,10 @@ async fn create_account(world: &mut MyWorld) {
             )
             .unwrap(),
         )
-        .json(&serde_json::json!({
-            "name": "test",
-            "is_bot": false
-        }))
+        .json(&wicrs_common::api_types::CreateAccountQuery {
+            name: "test account".to_string(),
+            is_bot: false,
+        })
         .send()
         .await
         .expect("No response.");
@@ -65,10 +65,10 @@ async fn create_hub(world: &mut MyWorld) {
             Url::parse("http://localhost:24816/api/v1/hubs/create?user=testuser&token=testtoken")
                 .unwrap(),
         )
-        .json(&serde_json::json!({
-        "name": "testhub",
-        "account": world.account.unwrap().to_string(),
-        }))
+        .json(&wicrs_common::api_types::HubCreateQuery {
+            account: world.account.unwrap(),
+            name: "test hub".to_string(),
+        })
         .send()
         .await
         .expect("No response.");
@@ -89,11 +89,11 @@ async fn create_channel(world: &mut MyWorld) {
             )
             .unwrap(),
         )
-        .json(&serde_json::json!({
-        "hub": world.hub.unwrap(),
-        "name": "testchannel",
-        "account": world.account.unwrap().to_string(),
-        }))
+        .json(&wicrs_common::api_types::ChannelCreateQuery {
+            account: world.account.unwrap(),
+            hub: world.hub.unwrap(),
+            name: "test channel".to_string(),
+        })
         .send()
         .await
         .expect("No response.");
@@ -112,12 +112,12 @@ async fn send_message(world: &mut MyWorld) {
             )
             .unwrap(),
         )
-        .json(&serde_json::json!({
-        "hub": world.hub.unwrap(),
-        "account": world.account.unwrap(),
-        "channel": world.channel.unwrap(),
-        "message": "test message"
-        }))
+        .json(&wicrs_common::api_types::MessageSendQuery {
+            account: world.account.unwrap(),
+            hub: world.hub.unwrap(),
+            channel: world.channel.unwrap(),
+            message: "test message".to_string(),
+        })
         .send()
         .await
         .expect("No response.");
@@ -132,9 +132,8 @@ mod steps {
         panic::AssertUnwindSafe,
     };
 
-    use wicrs_server::channel::{Channel, Message};
-    use wicrs_server::user::{Account, GenericAccount, GenericUser, User};
-    use wicrs_server::ID;
+    use super::ID;
+    use wicrs_common::types::{Account, Channel, GenericAccount, GenericUser, Message, User};
 
     #[derive(Serialize)]
     struct Name {
@@ -211,24 +210,7 @@ mod steps {
         .when_async(
             "the user attempts to create a new account",
             t!(|mut world, _step| {
-                let response = reqwest::Client::new()
-                    .get(
-                        Url::parse(
-                            "http://localhost:24816/api/v1/user/addaccount?user=testuser&token=testtoken",
-                        )
-                        .unwrap(),
-                    )
-                    .json(&serde_json::json!({
-                        "name": "test",
-                        "is_bot": false
-                    }))
-                    .send()
-                    .await
-                    .expect("No response.");
-                world.response = response.text().await.expect("Empty repsonse.").to_string();
-                let account = serde_json::from_str::<Account>(&world.response)
-                    .expect("Failed to create a new account for the test");
-                world.account = Some(account.id);
+                create_account(&mut world).await;
                 world
             }),
         )
@@ -292,10 +274,10 @@ mod steps {
                         Url::parse("http://localhost:24816/api/v1/hubs/channels?user=testuser&token=testtoken")
                             .unwrap(),
                     )
-                    .json(&serde_json::json!({
-                    "hub": world.hub.unwrap(),
-                    "account": world.account.unwrap().to_string(),
-                    }))
+                    .json(&wicrs_common::api_types::ChannelsQuery {
+                        account: world.account.unwrap(),
+                        hub: world.hub.unwrap(),
+                    })
                     .send()
                     .await
                     .expect("No response.");
@@ -321,12 +303,12 @@ mod steps {
                         Url::parse("http://localhost:24816/api/v1/hubs/messages?user=testuser&token=testtoken")
                             .unwrap(),
                     )
-                    .json(&serde_json::json!({
-                    "hub": world.hub.unwrap(),
-                    "account": world.account.unwrap().to_string(),
-                    "channel": world.channel.unwrap().to_string(),
-                    "count": matches[1].parse::<i32>().unwrap()
-                    }))
+                    .json(&wicrs_common::api_types::LastMessagesQuery {
+                        account: world.account.unwrap(),
+                        hub: world.hub.unwrap(),
+                        channel: world.channel.unwrap(),
+                        count: matches[1].parse().unwrap(),
+                    })
                     .send()
                     .await
                     .expect("No response.");

@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
+use wicrs_common::{ID, NAME_ALLOWED_CHARS, api_types::CreateAccountQuery, get_id, get_system_millis, is_valid_username, new_id};
 
 use crate::{
-    account_not_found_response, auth::Auth, get_system_millis, hub::Hub, is_valid_username, new_id,
-    unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    account_not_found_response, auth::Auth, hub::Hub, unexpected_response, ApiActionError,
+    JsonLoadError, JsonSaveError,
 };
 
 static ACCOUNT_FOLDER: &str = "data/users/";
@@ -219,13 +220,6 @@ impl User {
     }
 }
 
-pub fn get_id(id: &str, service: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(id);
-    hasher.update(service);
-    format!("{:x}", hasher.finalize())
-}
-
 api_get! { (api_v1_userinfo,,) [auth, user, query]
         warp::reply::json(&user).into_response()
 }
@@ -243,13 +237,7 @@ fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply,)> {
         .boxed()
 }
 
-#[derive(Deserialize)]
-struct CreateAccount {
-    name: String,
-    is_bot: bool
-}
-
-api_get! { (api_v1_addaccount, CreateAccount,) [auth, user, query]
+api_get! { (api_v1_addaccount, CreateAccountQuery,) [auth, user, query]
         use crate::ApiActionError;
         let mut user = user;
         let create: Result<Account, ApiActionError> = user.create_new_account(query.name, query.is_bot).await;
@@ -358,7 +346,7 @@ mod tests {
             uuid.clone(),
             "Test_with-chars. And".to_string(),
             USER_ID.to_string(),
-            false
+            false,
         )
         .expect("Valid username was marked as invalid.");
         let generic = GenericAccount {

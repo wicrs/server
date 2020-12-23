@@ -1,6 +1,6 @@
 [package]
 name = "wicrs_server"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["willemml <willem@leit.so>"]
 edition = "2018"
 license = "GPL-3.0"
@@ -23,6 +23,7 @@ warp = "0.2.5"
 rayon = "1.5.0"
 async-trait = "0.1.42"
 futures = "0.3.8"
+wicrs_common = "0.1.2"
 
 [[test]]
 name = "cucumber"

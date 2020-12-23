@@ -7,9 +7,9 @@ use rayon::{prelude::*, str::Lines};
 use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
-use uuid::Uuid;
+use wicrs_common::{get_system_millis, uuid_from_num_string, ID};
 
-use crate::{get_system_millis, ApiActionError, ID};
+use crate::ApiActionError;
 
 static HUB_DATA_FOLDER: &str = "data/hubs/data";
 
@@ -30,7 +30,7 @@ impl Channel {
             id,
             server_id,
             messages: Vec::new(),
-            created: crate::get_system_millis(),
+            created: get_system_millis(),
         };
         if let Ok(_) = new.create_dir().await {
             Ok(new)
@@ -308,14 +308,6 @@ impl FromStr for Message {
             }
         }
         return Err(());
-    }
-}
-
-fn uuid_from_num_string(string: &str) -> Result<Uuid, ()> {
-    if let Ok(num) = string.parse::<u128>() {
-        Ok(Uuid::from_u128(num))
-    } else {
-        Err(())
     }
 }
 
