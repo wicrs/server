@@ -2787,9 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "wicrs_common"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbf7d9649942e2dd3a33c3a4877a55e44601f708fe85ef1b584a95180b4d1193"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -9,7 +9,8 @@ use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, Filter, Reply};
 use wicrs_common::{
     api_types::{
-        ChannelCreateQuery, ChannelsQuery, HubCreateQuery, LastMessagesQuery, MessageSendQuery,
+        ChannelCreateQuery, ChannelDeleteQuery, ChannelRenameQuery, ChannelsQuery, HubCreateQuery,
+        LastMessagesQuery, MessageSendQuery,
     },
     ID,
 };
@@ -141,6 +142,11 @@ impl HubMember {
             return true;
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
+            if let Some(value) = channel.get(&ChannelPermission::All) {
+                if value == &PermissionSetting::TRUE {
+                    return true;
+                }
+            }
             if let Some(value) = channel.get(permission) {
                 match value {
                     &PermissionSetting::TRUE => {
@@ -238,6 +244,11 @@ impl PermissionGroup {
             return true;
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
+            if let Some(value) = channel.get(&ChannelPermission::All) {
+                if value == &PermissionSetting::TRUE {
+                    return true;
+                }
+            }
             if let Some(value) = channel.get(&permission) {
                 if value == &PermissionSetting::TRUE {
                     return true;
@@ -289,10 +300,10 @@ impl Hub {
         }
     }
 
-    pub async fn new_channel(&mut self, user: ID, name: String) -> Result<ID, ApiActionError> {
+    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID, ApiActionError> {
         if is_valid_username(&name) {
-            if let Some(user) = self.members.get(&user) {
-                if user
+            if let Some(member) = self.members.get(&member_id) {
+                if member
                     .clone()
                     .has_permission(HubPermission::CreateChannel, self)
                 {
@@ -318,6 +329,72 @@ impl Hub {
             }
         } else {
             Err(ApiActionError::BadNameCharacters)
+        }
+    }
+
+    pub async fn rename_channel(
+        &mut self,
+        user: ID,
+        channel: ID,
+        name: String,
+    ) -> Result<String, ApiActionError> {
+        if is_valid_username(&name) {
+            if let Some(user) = self.members.get(&user) {
+                if user.clone().has_channel_permission(
+                    &channel,
+                    &ChannelPermission::ViewChannel,
+                    self,
+                ) {
+                    if let Some(channel) = self.channels.get_mut(&channel) {
+                        let old_name = channel.name.clone();
+                        channel.name = name;
+                        if let Ok(_) = self.save().await {
+                            Ok(old_name)
+                        } else {
+                            Err(ApiActionError::WriteFileError)
+                        }
+                    } else {
+                        Err(ApiActionError::ChannelNotFound)
+                    }
+                } else {
+                    Err(ApiActionError::NoPermission)
+                }
+            } else {
+                Err(ApiActionError::NotInHub)
+            }
+        } else {
+            Err(ApiActionError::BadNameCharacters)
+        }
+    }
+
+    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<(), ApiActionError> {
+        if let Some(user) = self.members.get(&user) {
+            if user
+                .clone()
+                .has_permission(HubPermission::DeleteChannel, self)
+            {
+                if user.clone().has_channel_permission(
+                    &channel,
+                    &ChannelPermission::ViewChannel,
+                    self,
+                ) {
+                    if let Some(_) = self.channels.remove(&channel) {
+                        if let Ok(_) = self.save().await {
+                            Ok(())
+                        } else {
+                            Err(ApiActionError::WriteFileError)
+                        }
+                    } else {
+                        Err(ApiActionError::ChannelNotFound)
+                    }
+                } else {
+                    Err(ApiActionError::NoPermission)
+                }
+            } else {
+                Err(ApiActionError::NoPermission)
+            }
+        } else {
+            Err(ApiActionError::NotInHub)
         }
     }
 
@@ -430,7 +507,6 @@ api_get! { (api_v1_create, HubCreateQuery, warp::path("create")) [auth, user, qu
                     )
                     .into_response()
                 }
-
                 ApiActionError::UserNotFound => warp::reply::with_status(
                     "Your user does not have an account with that ID.",
                     StatusCode::NOT_FOUND,
@@ -491,6 +567,100 @@ api_get! { (api_v1_createchannel, ChannelCreateQuery, warp::path("create_channel
                     _ => {
                         warp::reply::with_status(
                             "Server could not create the channel.",
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    }
+                }
+            }
+        } else {
+            warp::reply::with_status(
+                "You are not in that hub if it exists.",
+                StatusCode::NOT_FOUND,
+            )
+            .into_response()
+        }
+    } else {
+        warp::reply::with_status(
+            "Your user does not have an account with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
+}
+
+api_get! { (api_v1_deletechannel, ChannelDeleteQuery, warp::path("delete_channel")) [auth, user, query]
+    if user.accounts.contains_key(&query.account) {
+        if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
+            let delete = hub.delete_channel(query.account, query.channel).await;
+            if let Ok(_) = delete {
+                warp::reply::with_status("Success!", StatusCode::OK).into_response()
+            } else {
+                match delete.unwrap_err() {
+                    ApiActionError::NotInHub => {
+                        warp::reply::with_status(
+                            "You are not in that hub if it exists.",
+                            StatusCode::BAD_REQUEST,
+                        )
+                        .into_response()
+                    }
+                    ApiActionError::NoPermission | ApiActionError::ChannelNotFound => {
+                        warp::reply::with_status(
+                            "You do not have permission view that channel and or delete it or it does not exist.",
+                            StatusCode::FORBIDDEN,
+                        )
+                        .into_response()
+                    }
+                    _ => {
+                        warp::reply::with_status(
+                            "Server could not delete the channel.",
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response()
+                    }
+                }
+            }
+        } else {
+            warp::reply::with_status(
+                "You are not in that hub if it exists.",
+                StatusCode::NOT_FOUND,
+            )
+            .into_response()
+        }
+    } else {
+        warp::reply::with_status(
+            "Your user does not have an account with that ID.",
+            StatusCode::NOT_FOUND,
+        )
+        .into_response()
+    }
+}
+
+api_get! { (api_v1_renamechannel, ChannelRenameQuery, warp::path("rename_channel")) [auth, user, query]
+    if user.accounts.contains_key(&query.account) {
+        if let Ok(mut hub) = Hub::load(&query.hub.to_string()).await {
+            let rename = hub.rename_channel(query.account, query.channel, query.new_name).await;
+            if let Ok(old_name) = rename {
+                warp::reply::with_status(old_name, StatusCode::OK).into_response()
+            } else {
+                match rename.unwrap_err() {
+                    ApiActionError::NotInHub => {
+                        warp::reply::with_status(
+                            "You are not in that hub if it exists.",
+                            StatusCode::BAD_REQUEST,
+                        )
+                        .into_response()
+                    }
+                    ApiActionError::NoPermission | ApiActionError::ChannelNotFound => {
+                        warp::reply::with_status(
+                            "You do not have permission view that channel and or rename it or it does not exist.",
+                            StatusCode::FORBIDDEN,
+                        )
+                        .into_response()
+                    }
+                    _ => {
+                        warp::reply::with_status(
+                            "Server could not rename the channel.",
                             StatusCode::INTERNAL_SERVER_ERROR,
                         )
                         .into_response()
@@ -636,6 +806,8 @@ api_get! { (api_v1_getlastmessages, LastMessagesQuery, warp::path("messages")) [
 pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     api_v1_create(auth_manager.clone())
         .or(api_v1_createchannel(auth_manager.clone()))
+        .or(api_v1_deletechannel(auth_manager.clone()))
+        .or(api_v1_renamechannel(auth_manager.clone()))
         .or(api_v1_getchannels(auth_manager.clone()))
         .or(api_v1_sendmessage(auth_manager.clone()))
         .or(api_v1_getlastmessages(auth_manager.clone()))

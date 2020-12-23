@@ -23,7 +23,7 @@ warp = "0.2"
 rayon = "1.5"
 async-trait = "0.1"
 futures = "0.3"
-wicrs_common = "0.1"
+wicrs_common = { version = "0.2", path = "../common" }
 
 [[test]]
 name = "cucumber"
