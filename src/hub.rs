@@ -433,7 +433,7 @@ api_get! { (api_v1_create, HubCreateQuery, warp::path("create")) [auth, user, qu
 
                 ApiActionError::UserNotFound => warp::reply::with_status(
                     "Your user does not have an account with that ID.",
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::NOT_FOUND,
                 )
                 .into_response(),
                 _ => warp::reply::with_status(
