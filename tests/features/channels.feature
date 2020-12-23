@@ -19,8 +19,3 @@ Feature: Channels
         Given the user has a text channel
         When the user attempts to rename to text channel
         Then the user should receive the OK response
-
-    Scenario: An authenticated user wants to rename a text channel
-        Given the user has a text channel
-        When the user attempts to delete the text channel
-        Then the user should receive the OK response

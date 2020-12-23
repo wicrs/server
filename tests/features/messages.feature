@@ -6,6 +6,6 @@ Feature: Send and get messages
         Then the user should receive an ID
 
     Scenario: An authenticated user wants to get the last messages sent in a channel
-        Given 3 messages have been sent in the channel
+        Given the user has sent 3 messages in a text channel
         When the user tries to get the last 2 messages
         Then the user should see 2 messages
