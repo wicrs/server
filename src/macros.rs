@@ -6,7 +6,11 @@ macro_rules! api_get {
             use reqwest::StatusCode;
             use warp::Filter;
             use warp::Reply;
-            use wicrs_common::api_types::UserToken;
+            #[derive(Deserialize)]
+            struct UserToken {
+                user: String,
+                token: String,
+            }
             warp::get()
                 $(.and($path))?
                 .and(warp::query::<UserToken>())

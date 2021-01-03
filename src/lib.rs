@@ -1,5 +1,8 @@
 use reqwest::StatusCode;
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::sync::Mutex;
 
 #[cfg(test)]
@@ -13,9 +16,12 @@ pub mod auth;
 pub mod channel;
 pub mod config;
 pub mod hub;
+pub mod permission;
 pub mod user;
 
 use auth::Auth;
+
+use uuid::Uuid;
 
 use warp::{filters::BoxedFilter, Filter, Reply};
 
@@ -57,7 +63,10 @@ pub enum ApiActionError {
     BadNameCharacters,
 }
 
+
 static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+const NAME_ALLOWED_CHARS: &str =
+    " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 pub async fn run() {
     println!("Starting {}...", USER_AGENT_STRING);
@@ -85,6 +94,22 @@ pub async fn testing() -> (BoxedFilter<(impl Reply,)>, String, String) {
     (filter(auth.0).await, auth.1, auth.2)
 }
 
+pub fn get_system_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+}
+
+pub fn is_valid_username(name: &str) -> bool {
+    name.len() > 0 && name.len() < 32 && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
+}
+
+pub type ID = Uuid;
+pub fn new_id() -> ID {
+    uuid::Uuid::new_v4()
+}
+
 fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     let guild_api = warp::path("hubs").and(hub::api_v1(auth_manager.clone()));
     let auth_api = auth::api_v1(auth_manager.clone());
@@ -92,4 +117,20 @@ fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
     warp::path("v1")
         .and(auth_api.or(user_api).or(guild_api))
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_username;
+
+    #[test]
+    fn valid_username_check() {
+        assert!(is_valid_username("a"));
+        assert!(is_valid_username("Test_test tHAt-tester."));
+        assert!(is_valid_username("1234567890"));
+        assert!(is_valid_username("l33t 5p34k"));
+        assert!(!is_valid_username(""));
+        assert!(!is_valid_username("Test! @thing"));
+        assert!(!is_valid_username("123456789111315171921232527293133"));
+    }
 }

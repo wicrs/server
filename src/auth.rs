@@ -1,23 +1,60 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use base64::URL_SAFE_NO_PAD;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use warp::{filters::BoxedFilter, hyper::Uri, Filter, Rejection, Reply};
 
-use crate::{user::User, USER_AGENT_STRING};
+use crate::{get_system_millis, user::User, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
-use wicrs_common::api_types::{AccountTokenResponse, AuthQuery, Service};
-use wicrs_common::get_system_millis;
 
 type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>;
 type LoginSession = (u128, BasicClient);
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 
+#[derive(Deserialize, Serialize)]
+pub struct AuthQuery {
+    state: String,
+    code: String,
+    expires: Option<u128>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct TokenQuery {
+    pub token: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct AccountTokenResponse {
+    id: String,
+    token: String,
+}
+#[derive(Serialize, Deserialize)]
+pub struct UserQuery {
+    pub account: String,
+    pub user: ID,
+    pub token: String,
+}
+
+pub enum Service {
+    GitHub,
+}
+
+impl FromStr for Service {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "github" => Ok(Self::GitHub),
+            _ => Err(()),
+        }
+    }
+}
 
 pub struct Auth {
     github: Arc<Mutex<GitHub>>,
@@ -419,7 +456,7 @@ pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
 
 #[cfg(test)]
 mod tests {
-    use super::get_system_millis;
+    use crate::get_system_millis;
 
     use super::HashMap;
     use super::{Arc, Mutex};
