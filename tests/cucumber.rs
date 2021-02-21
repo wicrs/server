@@ -15,7 +15,7 @@ pub struct MyWorld {
     hub: Option<ID>,
     channel: Option<ID>,
     message: Option<ID>,
-    running: Option<AssertUnwindSafe<JoinHandle<()>>>,
+    running: Option<AssertUnwindSafe<JoinHandle<std::io::Result<()>>>>,
 }
 
 #[async_trait(?Send)]
@@ -127,10 +127,7 @@ async fn send_message(world: &mut MyWorld) {
 
 mod steps {
     use serde::Serialize;
-    use std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        panic::AssertUnwindSafe,
-    };
+    use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, panic::AssertUnwindSafe, sync::Arc};
 
     use wicrs_server::channel::{Channel, Message};
     use wicrs_server::user::{Account, GenericAccount, GenericUser, User};
@@ -154,11 +151,9 @@ mod steps {
                 "the server is running on localhost",
                 t!(|mut world, _step| {
                     assert!(world.running.is_none());
-                    let server = wicrs_server::testing().await;
-                    world.running = Some(AssertUnwindSafe(tokio::task::spawn(
-                        warp::serve(server.0)
-                            .run(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 24816)),
-                    )));
+                    /*world.running = Some(AssertUnwindSafe(Arc::new(tokio::task::spawn(
+                        wicrs_server::start("127.0.0.1:24816"),
+                    ))));*/
                     world
                 }),
             )

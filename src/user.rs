@@ -1,13 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, io::Read};
 
+use actix_web::{FromRequest, HttpRequest, ResponseError, dev::Payload};
+use futures::future::{Ready, err};
+use futures::future::ok;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
-use warp::{filters::BoxedFilter, Filter, Reply};
 
 use crate::{
-    account_not_found_response, auth::Auth, get_system_millis, hub::Hub, is_valid_username, new_id,
-    unexpected_response, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    auth::Auth, get_system_millis, hub::Hub, is_valid_username, new_id, ApiActionError,
+    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 
 static ACCOUNT_FOLDER: &str = "data/users/";
@@ -219,70 +220,62 @@ impl User {
     }
 }
 
+impl FromRequest for User {
+    type Error = std::io::Error;
+
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    type Config  = ();
+
+    fn from_request(request: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        
+        let result = futures::executor::block_on(async {
+                let mut done = err(std::io::Error::new(std::io::ErrorKind::Other, "Authentication Failed."));
+                if let Some(header) = request.headers().get_all("Authorization").next() {
+                    if let Ok(header_str) = header.to_str() {
+                        if let Some(encoded) = header_str.trim().strip_prefix("Bearer") {
+                            let mut result = String::new();
+                            if let Ok(decoded) = base64::decode(encoded) {
+                                let _tostring = decoded.as_slice().read_to_string(&mut result);
+                                if let Some(split) = result.split_once(':') {
+                                    if Auth::is_authenticated(
+                                        crate::AUTH.clone(),
+                                        split.0,
+                                        split.1.to_string(),
+                                    )
+                                    .await
+                                    {
+                                        if let Ok(user) = Self::load(split.0).await {
+                                            done = ok(user)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                done
+            });
+        result
+    }
+
+    fn extract(req: &actix_web::HttpRequest) -> Self::Future {
+        Self::from_request(req, &mut actix_web::dev::Payload::None)
+    }
+
+    fn configure<F>(f: F) -> Self::Config
+    where
+        F: FnOnce(Self::Config) -> Self::Config,
+    {
+        f(Self::Config::default())
+    }
+}
+
 pub fn get_id(id: &str, service: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(id);
     hasher.update(service);
     format!("{:x}", hasher.finalize())
-}
-
-api_get! { (api_v1_userinfo,,) [auth, user, query]
-        warp::reply::json(&user).into_response()
-}
-
-fn api_v1_userinfo_noauth() -> BoxedFilter<(impl Reply,)> {
-    warp::get()
-        .and(warp::path!(String))
-        .and_then(|id: String| async move {
-            Ok::<_, warp::Rejection>(if let Ok(user) = User::load(&id).await {
-                warp::reply::json(&user.to_generic()).into_response()
-            } else {
-                account_not_found_response()
-            })
-        })
-        .boxed()
-}
-
-#[derive(Deserialize)]
-struct CreateAccount {
-    name: String,
-    is_bot: bool
-}
-
-api_get! { (api_v1_addaccount, CreateAccount,) [auth, user, query]
-        use crate::ApiActionError;
-        let mut user = user;
-        let create: Result<Account, ApiActionError> = user.create_new_account(query.name, query.is_bot).await;
-        if let Ok(account) = create {
-            warp::reply::json(&account).into_response()
-        } else {
-            match create.err() {
-                Some(ApiActionError::WriteFileError) => warp::reply::with_status(
-                    "Server could not write user data to disk.",
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                )
-                .into_response(),
-                Some(ApiActionError::BadNameCharacters) => warp::reply::with_status(
-                    format!(
-                        "Username string can only contain the following characters: \"{}\"",
-                        NAME_ALLOWED_CHARS
-                    ),
-                    StatusCode::BAD_REQUEST,
-                )
-                .into_response(),
-                _ => unexpected_response(),
-            }
-        }
-}
-
-pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::path("user")
-        .and(
-            (warp::path("addaccount").and(api_v1_addaccount(auth_manager.clone())))
-                .or(api_v1_userinfo(auth_manager.clone()))
-                .or(api_v1_userinfo_noauth()),
-        )
-        .boxed()
 }
 
 #[cfg(test)]
@@ -358,7 +351,7 @@ mod tests {
             uuid.clone(),
             "Test_with-chars. And".to_string(),
             USER_ID.to_string(),
-            false
+            false,
         )
         .expect("Valid username was marked as invalid.");
         let generic = GenericAccount {

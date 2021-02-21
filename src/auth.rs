@@ -5,10 +5,9 @@ use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
-use warp::{filters::BoxedFilter, hyper::Uri, Filter, Rejection, Reply};
+use futures::lock::Mutex;
 
-use crate::{get_system_millis, user::User, ID, USER_AGENT_STRING};
+use crate::{get_system_millis, user::User, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -17,32 +16,21 @@ type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>;
 type LoginSession = (u128, BasicClient);
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 
-#[derive(Deserialize, Serialize)]
-pub struct AuthQuery {
-    state: String,
-    code: String,
-    expires: Option<u128>,
-}
-
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TokenQuery {
     pub token: String,
 }
 
-#[derive(Deserialize, Serialize)]
-struct AccountTokenResponse {
-    id: String,
-    token: String,
-}
-#[derive(Serialize, Deserialize)]
-pub struct UserQuery {
-    pub account: String,
-    pub user: ID,
-    pub token: String,
-}
-
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Service {
     GitHub,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct AuthQuery {
+    pub state: String,
+    pub code: String,
+    pub expires: Option<u128>,
 }
 
 impl FromStr for Service {
@@ -62,7 +50,7 @@ pub struct Auth {
 }
 
 impl Auth {
-    pub async fn from_config() -> Self {
+    pub fn from_config() -> Self {
         std::fs::create_dir_all("data/users")
             .expect("Failed to create the ./data/users directory.");
         let auth_config = crate::config::load_config().auth_services;
@@ -70,8 +58,11 @@ impl Auth {
             "GitHub is currently the only support authentication provider, it cannot be empty.",
         );
         Self {
-            github: Arc::new(Mutex::new(GitHub::new(github_conf.client_id, github_conf.client_secret))),
-            sessions: Arc::new(Mutex::new(Auth::load_tokens().await)),
+            github: Arc::new(Mutex::new(GitHub::new(
+                github_conf.client_id,
+                github_conf.client_secret,
+            ))),
+            sessions: Arc::new(Mutex::new(tokio::runtime::Builder::new().build().unwrap().block_on(Auth::load_tokens())))
         }
     }
 
@@ -404,54 +395,6 @@ fn hash_auth(id: String, token: String) -> (String, String) {
     let id_hash = format!("{:x}", hasher.finalize_reset());
     hasher.update(token.as_bytes());
     (id_hash, format!("{:x}", hasher.finalize_reset()))
-}
-
-fn api_v1_login(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::get()
-        .and(warp::path!("login" / Service))
-        .and_then(move |service: Service| {
-            let tmp_auth = auth_manager.clone();
-            async move {
-                let uri_string = Auth::start_login(tmp_auth, service).await;
-                let uri = uri_string.parse::<Uri>().unwrap();
-                Ok::<_, Rejection>(warp::redirect::temporary(uri).into_response())
-            }
-        })
-        .boxed()
-}
-
-fn api_v1_oauth(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    warp::get()
-        .and(warp::path!("auth" / Service))
-        .and(warp::query::<AuthQuery>())
-        .and_then(move |service: Service, query: AuthQuery| {
-            let tmp_auth = auth_manager.clone();
-            async move {
-                let result = Auth::handle_oauth(tmp_auth, service, query).await;
-                Ok::<_, warp::Rejection>(if let Some(id_token) = result.1 {
-                    warp::reply::json(&AccountTokenResponse {
-                        id: id_token.0,
-                        token: id_token.1,
-                    })
-                    .into_response()
-                } else {
-                    warp::reply::json(&result.0).into_response()
-                })
-            }
-        })
-        .boxed()
-}
-
-api_get! { (api_v1_invalidate_tokens,,warp::path("invalidate")) [auth, user, query]
-    Auth::invalidate_tokens(auth, &user.id).await;
-    warp::reply::with_status("Success!", StatusCode::OK).into_response()
-}
-
-pub fn api_v1(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    api_v1_login(auth_manager.clone())
-        .or(api_v1_invalidate_tokens(auth_manager.clone()))
-        .or(api_v1_oauth(auth_manager.clone()))
-        .boxed()
 }
 
 #[cfg(test)]

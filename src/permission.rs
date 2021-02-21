@@ -38,6 +38,7 @@ pub enum ChannelPermission {
     ViewChannel,
     Configure,
     MuteUser,
+    All,
 }
 
 impl ChannelPermission {
@@ -48,7 +49,8 @@ impl ChannelPermission {
             ChannelPermission::ViewChannel => HubPermission::ViewChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
             ChannelPermission::MuteUser => HubPermission::MuteUser,
-        }
+	    ChannelPermission::All => HubPermission::All,
+	}
     }
 }
 

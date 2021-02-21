@@ -1,29 +1,28 @@
-use reqwest::StatusCode;
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
-use tokio::sync::Mutex;
+#![feature(proc_macro_hygiene, decl_macro)]
+#![feature(str_split_once)]
+#![feature(in_band_lifetimes)]
+
+use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use auth::Auth;
+use futures::lock::Mutex;
+
+#[allow(unused_imports)]
+#[macro_use]
+extern crate lazy_static;
 
 #[cfg(test)]
 #[macro_use]
 extern crate serial_test;
 
-#[macro_use]
-pub mod macros;
-
 pub mod auth;
 pub mod channel;
 pub mod config;
+pub mod httpapi;
 pub mod hub;
 pub mod permission;
 pub mod user;
 
-use auth::Auth;
-
 use uuid::Uuid;
-
-use warp::{filters::BoxedFilter, Filter, Reply};
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum JsonLoadError {
@@ -38,19 +37,6 @@ pub enum JsonSaveError {
     Directory,
 }
 
-pub fn unexpected_response() -> warp::http::Response<warp::hyper::Body> {
-    warp::reply::with_status("Unexpected error.", StatusCode::INTERNAL_SERVER_ERROR).into_response()
-}
-
-pub fn bad_auth_response() -> warp::http::Response<warp::hyper::Body> {
-    warp::reply::with_status("Invalid authentication details.", StatusCode::FORBIDDEN)
-        .into_response()
-}
-
-pub fn account_not_found_response() -> warp::http::Response<warp::hyper::Body> {
-    warp::reply::with_status("Could not find that account.", StatusCode::NOT_FOUND).into_response()
-}
-
 #[derive(Debug)]
 pub enum ApiActionError {
     HubNotFound,
@@ -60,38 +46,20 @@ pub enum ApiActionError {
     WriteFileError,
     OpenFileError,
     UserNotFound,
+    BadAuth,
     BadNameCharacters,
 }
 
-
-static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
-const NAME_ALLOWED_CHARS: &str =
+pub static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+pub const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-pub async fn run() {
-    println!("Starting {}...", USER_AGENT_STRING);
-    let config = config::load_config();
-    warp::serve(filter(Auth::from_config().await).await)
-        .run((config.listen, config.port))
-        .await;
+lazy_static! {
+    static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));
 }
 
-pub async fn filter(auth: Auth) -> BoxedFilter<(impl Reply,)> {
-    let auth = Arc::new(Mutex::new(auth));
-    let api_v1 = v1_api(auth.clone());
-    let api = warp::any().and(warp::path("api")).and(api_v1);
-    api.or(warp::any().map(|| {
-        warp::reply::with_status(
-            "Not found. Make sure you provided all of the required parameters.",
-            StatusCode::NOT_FOUND,
-        )
-    }))
-    .boxed()
-}
-
-pub async fn testing() -> (BoxedFilter<(impl Reply,)>, String, String) {
-    let auth = Auth::for_testing().await;
-    (filter(auth.0).await, auth.1, auth.2)
+pub async fn start(bind_address: &str) -> std::io::Result<()> {
+    httpapi::server(bind_address).await
 }
 
 pub fn get_system_millis() -> u128 {
@@ -108,15 +76,6 @@ pub fn is_valid_username(name: &str) -> bool {
 pub type ID = Uuid;
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
-}
-
-fn v1_api(auth_manager: Arc<Mutex<Auth>>) -> BoxedFilter<(impl Reply,)> {
-    let guild_api = warp::path("hubs").and(hub::api_v1(auth_manager.clone()));
-    let auth_api = auth::api_v1(auth_manager.clone());
-    let user_api = user::api_v1(auth_manager.clone());
-    warp::path("v1")
-        .and(auth_api.or(user_api).or(guild_api))
-        .boxed()
 }
 
 #[cfg(test)]
