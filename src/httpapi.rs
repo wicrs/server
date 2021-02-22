@@ -2,13 +2,15 @@ use std::str::FromStr;
 
 use crate::{
     auth::{Auth, AuthQuery, Service},
+    is_valid_username,
     user::User,
     AUTH, ID,
 };
 
 use actix_web::{
+    delete,
     dev::Payload,
-    error, get,
+    error, get, post, put,
     web::{Json, Path, Query},
     App, FromRequest, HttpRequest, HttpResponse, HttpServer, Responder, Result,
 };
@@ -16,6 +18,7 @@ use futures::{
     future::{err, ok, Ready},
     AsyncReadExt,
 };
+use serde::Deserialize;
 
 pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
@@ -120,6 +123,12 @@ async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result
     }
 }
 
+#[post("/v2/invalidate_tokens")]
+async fn invalidate_tokens(user: User) -> impl Responder {
+    Auth::invalidate_tokens(AUTH.clone(), &user.id).await;
+    "All authentication tokens for your account have been invalidated."
+}
+
 #[get("/v2/user")]
 async fn get_user(user: User) -> impl Responder {
     Json(user)
@@ -165,5 +174,79 @@ async fn get_user_account(
         }
     } else {
         Err(error::ErrorNotFound("User not found."))
+    }
+}
+
+#[derive(Deserialize)]
+struct IsBotAccount {
+    bot: Option<bool>,
+}
+
+#[post("/v2/user/account/create/{name}")]
+async fn create_account(
+    mut user: User,
+    name: Path<String>,
+    query: Query<IsBotAccount>,
+) -> Result<impl Responder> {
+    if is_valid_username(&name.0) {
+        if let Ok(new_account) = user
+            .create_new_account(name.0, query.0.bot.unwrap_or(false))
+            .await
+        {
+            Ok(Json(new_account))
+        } else {
+            Err(error::ErrorInternalServerError(
+                "Failed to save new account data.",
+            ))
+        }
+    } else {
+        Err(error::ErrorBadRequest("Malformed request."))
+    }
+}
+
+#[delete("/v2/user/account/{id}/delete")]
+async fn delete_account(mut user: User, id: Path<String>) -> Result<impl Responder> {
+    if let Ok(id) = ID::from_str(&id) {
+        if let Some(_removed) = user.accounts.remove(&id) {
+            if let Ok(()) = user.save().await {
+                Ok("Account has been removed.")
+            } else {
+                Err(error::ErrorInternalServerError(
+                    "Unable to remove the account.",
+                ))
+            }
+        } else {
+            Err(error::ErrorNotFound("No account with that ID."))
+        }
+    } else {
+        Err(error::ErrorBadRequest("Malformed request."))
+    }
+}
+
+#[derive(Deserialize)]
+struct AccountName {
+    name: String,
+}
+
+#[put("/v2/user/account/{account_id}/rename")]
+async fn rename_account(
+    mut user: User,
+    account_id: Path<String>,
+    query: Query<AccountName>,
+) -> Result<impl Responder> {
+    if is_valid_username(&query.0.name) {
+        if let Ok(id) = ID::from_str(&account_id) {
+            if let Some(account) = user.accounts.get_mut(&id) {
+                let old_name = account.username.clone();
+                account.username = query.0.name;
+                Ok(old_name)
+            } else {
+                Err(error::ErrorNotFound("No account with that ID."))
+            }
+        } else {
+            Err(error::ErrorBadRequest("Malformed request."))
+        }
+    } else {
+        Err(error::ErrorBadRequest("Malformed request."))
     }
 }
