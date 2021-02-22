@@ -1,14 +1,11 @@
-use std::{collections::HashMap, io::Read};
+use std::collections::HashMap;
 
-use actix_web::{FromRequest, HttpRequest, ResponseError, dev::Payload};
-use futures::future::{Ready, err};
-use futures::future::ok;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    auth::Auth, get_system_millis, hub::Hub, is_valid_username, new_id, ApiActionError,
-    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    get_system_millis, hub::Hub, is_valid_username, new_id, ApiActionError, JsonLoadError,
+    JsonSaveError, ID, NAME_ALLOWED_CHARS,
 };
 
 static ACCOUNT_FOLDER: &str = "data/users/";
@@ -217,57 +214,6 @@ impl User {
 
     pub async fn load_get_id(id: &str, service: &str) -> Result<Self, JsonLoadError> {
         Self::load(&get_id(id, service)).await
-    }
-}
-
-impl FromRequest for User {
-    type Error = std::io::Error;
-
-    type Future = Ready<Result<Self, Self::Error>>;
-
-    type Config  = ();
-
-    fn from_request(request: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        
-        let result = futures::executor::block_on(async {
-                let mut done = err(std::io::Error::new(std::io::ErrorKind::Other, "Authentication Failed."));
-                if let Some(header) = request.headers().get_all("Authorization").next() {
-                    if let Ok(header_str) = header.to_str() {
-                        if let Some(encoded) = header_str.trim().strip_prefix("Bearer") {
-                            let mut result = String::new();
-                            if let Ok(decoded) = base64::decode(encoded) {
-                                let _tostring = decoded.as_slice().read_to_string(&mut result);
-                                if let Some(split) = result.split_once(':') {
-                                    if Auth::is_authenticated(
-                                        crate::AUTH.clone(),
-                                        split.0,
-                                        split.1.to_string(),
-                                    )
-                                    .await
-                                    {
-                                        if let Ok(user) = Self::load(split.0).await {
-                                            done = ok(user)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                done
-            });
-        result
-    }
-
-    fn extract(req: &actix_web::HttpRequest) -> Self::Future {
-        Self::from_request(req, &mut actix_web::dev::Payload::None)
-    }
-
-    fn configure<F>(f: F) -> Self::Config
-    where
-        F: FnOnce(Self::Config) -> Self::Config,
-    {
-        f(Self::Config::default())
     }
 }
 

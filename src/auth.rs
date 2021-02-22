@@ -62,7 +62,7 @@ impl Auth {
                 github_conf.client_id,
                 github_conf.client_secret,
             ))),
-            sessions: Arc::new(Mutex::new(tokio::runtime::Builder::new().build().unwrap().block_on(Auth::load_tokens())))
+            sessions: Arc::new(Mutex::new(Auth::load_tokens()))
         }
     }
 
@@ -91,25 +91,24 @@ impl Auth {
         (auth, account.id, token)
     }
 
-    async fn save_tokens(
+    fn save_tokens(
         sessions: &HashMap<String, Vec<(u128, String)>>,
     ) -> Result<(), std::io::Error> {
-        tokio::fs::write(
+        std::fs::write(
             "data/sessions.json",
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
         )
-        .await
     }
 
-    async fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
-        if let Ok(read) = tokio::fs::read_to_string("data/sessions.json").await {
+    fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
+        if let Ok(read) = std::fs::read_to_string("data/sessions.json") {
             if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read)
             {
                 let now = get_system_millis();
                 for account in &mut map {
                     account.1.retain(|t| t.0 > now);
                 }
-                let _save = Auth::save_tokens(&map).await;
+                let _save = Auth::save_tokens(&map);
                 return map;
             }
         }
@@ -148,7 +147,7 @@ impl Auth {
             sessions_lock = sessions_arc.lock().await;
         }
         sessions_lock.remove(hash_auth(id.to_string(), String::new()).0.as_str());
-        let _save = Auth::save_tokens(&sessions_lock).await;
+        let _save = Auth::save_tokens(&sessions_lock);
     }
 
     pub async fn start_login(manager: Arc<Mutex<Self>>, service: Service) -> String {
@@ -229,7 +228,7 @@ impl Auth {
             } else {
                 sessions_lock.insert(hashed.0, vec![(expires, hashed.1)]);
             }
-            let _write = Auth::save_tokens(&sessions_lock).await;
+            let _write = Auth::save_tokens(&sessions_lock);
         }
         (user_existed, Some((id, token)))
     }
@@ -486,8 +485,8 @@ mod tests {
         let mut map: HashMap<String, Vec<(u128, String)>> = HashMap::new();
         map.insert(USER_ID.to_string(), tokens.clone());
         assert_eq!(map.get(USER_ID), Some(&tokens));
-        let _save = Auth::save_tokens(&map).await;
-        let loaded = Auth::load_tokens().await;
+        let _save = Auth::save_tokens(&map);
+        let loaded = Auth::load_tokens();
         assert_eq!(loaded.get(USER_ID), Some(&tokens));
     }
 

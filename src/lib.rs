@@ -2,9 +2,12 @@
 #![feature(str_split_once)]
 #![feature(in_band_lifetimes)]
 
-use std::{sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use auth::Auth;
 use futures::lock::Mutex;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -56,6 +59,7 @@ pub const NAME_ALLOWED_CHARS: &str =
 
 lazy_static! {
     static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));
+    pub static ref CONFIG: config::Config = config::load_config();
 }
 
 pub async fn start(bind_address: &str) -> std::io::Result<()> {
