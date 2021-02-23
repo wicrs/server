@@ -1,11 +1,8 @@
-use std::str::FromStr;
+use error::{ErrorInternalServerError, ErrorNotFound, ErrorUnauthorized};
+use rayon::prelude::*;
+use std::{collections::HashMap, str::FromStr, todo};
 
-use crate::{
-    auth::{Auth, AuthQuery, Service},
-    is_valid_username,
-    user::User,
-    AUTH, ID,
-};
+use crate::{AUTH, ApiActionError, ID, auth::{Auth, AuthQuery, Service}, channel::Channel, hub::{GUILD_INFO_FOLDER, Hub}, is_valid_username, new_id, permission::HubPermission, user::User};
 
 use actix_web::{
     delete,
@@ -136,7 +133,7 @@ async fn get_user(user: User) -> impl Responder {
 
 #[get("/v2/user/{id}")]
 async fn get_user_by_id(_user: User, id: Path<String>) -> Result<impl Responder> {
-    if let Ok(other) = User::load(id.0.as_str()).await {
+    if let Ok(other) = User::load(id.as_str()).await {
         Ok(Json(other.to_generic()))
     } else {
         Err(error::ErrorNotFound("User not found."))
@@ -160,17 +157,13 @@ async fn get_account(user: User, account_id: Path<String>) -> Result<impl Respon
 async fn get_user_account(
     _user: User,
     user_id: Path<String>,
-    account_id: Path<String>,
+    account_id: Path<ID>,
 ) -> Result<impl Responder> {
-    if let Ok(other) = User::load(user_id.0.as_str()).await {
-        if let Ok(id) = ID::from_str(&account_id) {
-            if let Some(account) = other.accounts.get(&id) {
-                Ok(Json(account.clone()))
-            } else {
-                Err(error::ErrorNotFound("No account with that ID."))
-            }
+    if let Ok(other) = User::load(user_id.as_str()).await {
+        if let Some(account) = other.accounts.get(&account_id) {
+            Ok(Json(account.clone()))
         } else {
-            Err(error::ErrorBadRequest("Malformed request."))
+            Err(error::ErrorNotFound("No account with that ID."))
         }
     } else {
         Err(error::ErrorNotFound("User not found."))
@@ -188,9 +181,9 @@ async fn create_account(
     name: Path<String>,
     query: Query<IsBotAccount>,
 ) -> Result<impl Responder> {
-    if is_valid_username(&name.0) {
+    if is_valid_username(&name) {
         if let Ok(new_account) = user
-            .create_new_account(name.0, query.0.bot.unwrap_or(false))
+            .create_new_account(name.0, query.bot.unwrap_or(false))
             .await
         {
             Ok(Json(new_account))
@@ -205,21 +198,17 @@ async fn create_account(
 }
 
 #[delete("/v2/user/account/{id}/delete")]
-async fn delete_account(mut user: User, id: Path<String>) -> Result<impl Responder> {
-    if let Ok(id) = ID::from_str(&id) {
-        if let Some(_removed) = user.accounts.remove(&id) {
-            if let Ok(()) = user.save().await {
-                Ok("Account has been removed.")
-            } else {
-                Err(error::ErrorInternalServerError(
-                    "Unable to remove the account.",
-                ))
-            }
+async fn delete_account(mut user: User, id: Path<ID>) -> Result<impl Responder> {
+    if let Some(_removed) = user.accounts.remove(&id) {
+        if let Ok(()) = user.save().await {
+            Ok("Account has been removed.")
         } else {
-            Err(error::ErrorNotFound("No account with that ID."))
+            Err(error::ErrorInternalServerError(
+                "Unable to remove the account.",
+            ))
         }
     } else {
-        Err(error::ErrorBadRequest("Malformed request."))
+        Err(error::ErrorNotFound("No account with that ID."))
     }
 }
 
@@ -231,22 +220,103 @@ struct AccountName {
 #[put("/v2/user/account/{account_id}/rename")]
 async fn rename_account(
     mut user: User,
-    account_id: Path<String>,
+    account_id: Path<ID>,
     query: Query<AccountName>,
 ) -> Result<impl Responder> {
     if is_valid_username(&query.0.name) {
-        if let Ok(id) = ID::from_str(&account_id) {
-            if let Some(account) = user.accounts.get_mut(&id) {
-                let old_name = account.username.clone();
-                account.username = query.0.name;
-                Ok(old_name)
-            } else {
-                Err(error::ErrorNotFound("No account with that ID."))
-            }
+        if let Some(account) = user.accounts.get_mut(&account_id) {
+            let old_name = account.username.clone();
+            account.username = query.0.name;
+            user.save();
+            Ok(old_name)
         } else {
-            Err(error::ErrorBadRequest("Malformed request."))
+            Err(error::ErrorNotFound("No account with that ID."))
         }
     } else {
         Err(error::ErrorBadRequest("Malformed request."))
+    }
+}
+
+#[derive(Deserialize)]
+struct AccountID {
+    account_id: ID,
+}
+
+#[post("/v2/hub/create/{name}")]
+async fn create_hub(
+    mut user: User,
+    name: Path<String>,
+    query: Query<AccountID>,
+) -> Result<impl Responder> {
+    let new_hub = user.create_hub(name.0, new_id(), query.account_id).await;
+    if let Ok(id) = new_hub {
+        Ok(id.to_string())
+    } else {
+        match new_hub {
+            Err(ApiActionError::WriteFileError) => Err(error::ErrorInternalServerError(
+                "Unable to create the new hub.",
+            )),
+            Err(ApiActionError::BadNameCharacters) => {
+                Err(error::ErrorBadRequest("Malformed request."))
+            }
+            _ => Err(error::ErrorInternalServerError(
+                "Something strange happened...",
+            )),
+        }
+    }
+}
+
+#[get("/v2/hub/{hub_id}")]
+async fn get_hub(user: User, hub_id: Path<ID>, query: Query<AccountID>) -> Result<impl Responder> {
+    if let Some(account) = user.accounts.get(&query.account_id) {
+        if account.in_hubs.contains(&hub_id) {
+            if let Ok(mut hub) = Hub::load(&hub_id.to_string()).await {
+                if let Ok(channels_allowed) = hub.channels(query.account_id) {
+                    let mut sending = hub.clone();
+                    sending.channels = channels_allowed
+                        .into_par_iter()
+                        .map(|channel| (channel.id, channel))
+                        .collect::<HashMap<ID, Channel>>();
+                    Ok(Json(sending))
+                } else {
+                    Err(error::ErrorNotFound("Account not found."))
+                }
+            } else {
+                Err(error::ErrorInternalServerError("Failed to load hub data."))
+            }
+        } else {
+            Err(error::ErrorNotFound("Hub not found."))
+        }
+    } else {
+        Err(error::ErrorNotFound("Account not found."))
+    }
+}
+
+#[delete("/v2/hub/{hub_id}")]
+async fn delete_hub(user: User, hub_id: Path<ID>, query: Query<AccountID>) -> Result<impl Responder> {
+    if let Some(account) = user.accounts.get(&query.account_id) {
+        if account.in_hubs.contains(&hub_id) {
+            if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+                if let Some(member) = hub.members.get(&query.account_id) {
+                    if member.has_permission(HubPermission::All, &hub) {
+                        if let Ok(_remove) = tokio::fs::remove_file(GUILD_INFO_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json").await {
+                            Ok("Successfully deleted the hub.")
+                        } else {
+                            Err(error::ErrorInternalServerError("Failed to delete hub data."))
+                        }
+                    } else {
+                        Err(error::ErrorUnauthorized("You do not have permission to delete this hub."))
+                    }
+                } else {
+                    Err(error::ErrorInternalServerError("Failed to delete hub data."))
+                }
+            } else {
+                Err(error::ErrorNotFound("Account not found."))
+            }
+        } else {
+            Err(error::ErrorNotFound("Hub not found."))
+        }
+    } else {
+        Err(error::ErrorNotFound("Account not found."))
     }
 }

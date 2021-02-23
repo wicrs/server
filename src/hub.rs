@@ -12,7 +12,7 @@ use crate::{
     ApiActionError, JsonLoadError, JsonSaveError, ID,
 };
 
-static GUILD_INFO_FOLDER: &str = "data/hubs/info";
+pub static GUILD_INFO_FOLDER: &str = "data/hubs/info";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {

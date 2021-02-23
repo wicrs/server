@@ -165,11 +165,15 @@ impl User {
             return Err(ApiActionError::BadNameCharacters);
         }
         if let Some(account) = self.accounts.get_mut(&owner) {
-            let new_hub = Hub::new(name, id, account);
-            if let Ok(_) = new_hub.save().await {
-                account.in_hubs.push(new_hub.id.clone());
-                if let Ok(_) = self.save().await {
-                    Ok(new_hub.id)
+            if Hub::load(&id.to_string()).await.is_err() {
+                let new_hub = Hub::new(name, id, account);
+                if let Ok(_) = new_hub.save().await {
+                    account.in_hubs.push(new_hub.id.clone());
+                    if let Ok(_) = self.save().await {
+                        Ok(new_hub.id)
+                    } else {
+                        Err(ApiActionError::WriteFileError)
+                    }
                 } else {
                     Err(ApiActionError::WriteFileError)
                 }
