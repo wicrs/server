@@ -1,8 +1,15 @@
-use error::{ErrorInternalServerError, ErrorNotFound, ErrorUnauthorized};
 use rayon::prelude::*;
-use std::{collections::HashMap, str::FromStr, todo};
+use std::{collections::HashMap, str::FromStr};
 
-use crate::{AUTH, ApiActionError, ID, auth::{Auth, AuthQuery, Service}, channel::Channel, hub::{GUILD_INFO_FOLDER, Hub}, is_valid_username, new_id, permission::HubPermission, user::User};
+use crate::{
+    auth::{Auth, AuthQuery, Service},
+    channel::Channel,
+    hub::{Hub, GUILD_INFO_FOLDER},
+    is_valid_username, new_id,
+    permission::HubPermission,
+    user::User,
+    ApiActionError, AUTH, ID,
+};
 
 use actix_web::{
     delete,
@@ -27,6 +34,13 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(get_user_by_id)
             .service(get_account)
             .service(get_user_account)
+            .service(delete_account)
+            .service(create_account)
+            .service(rename_account)
+            .service(create_hub)
+            .service(get_hub)
+            .service(rename_hub)
+            .service(delete_hub)
     })
     .bind(bind_address)?
     .run()
@@ -213,7 +227,7 @@ async fn delete_account(mut user: User, id: Path<ID>) -> Result<impl Responder> 
 }
 
 #[derive(Deserialize)]
-struct AccountName {
+struct Name {
     name: String,
 }
 
@@ -221,14 +235,19 @@ struct AccountName {
 async fn rename_account(
     mut user: User,
     account_id: Path<ID>,
-    query: Query<AccountName>,
+    query: Query<Name>,
 ) -> Result<impl Responder> {
     if is_valid_username(&query.0.name) {
         if let Some(account) = user.accounts.get_mut(&account_id) {
             let old_name = account.username.clone();
             account.username = query.0.name;
-            user.save();
-            Ok(old_name)
+            if let Ok(_save) = user.save().await {
+                Ok(old_name)
+            } else {
+                Err(error::ErrorInternalServerError(
+                    "Unable to rename the account.",
+                ))
+            }
         } else {
             Err(error::ErrorNotFound("No account with that ID."))
         }
@@ -293,22 +312,73 @@ async fn get_hub(user: User, hub_id: Path<ID>, query: Query<AccountID>) -> Resul
 }
 
 #[delete("/v2/hub/{hub_id}")]
-async fn delete_hub(user: User, hub_id: Path<ID>, query: Query<AccountID>) -> Result<impl Responder> {
+async fn delete_hub(
+    user: User,
+    hub_id: Path<ID>,
+    query: Query<AccountID>,
+) -> Result<impl Responder> {
     if let Some(account) = user.accounts.get(&query.account_id) {
         if account.in_hubs.contains(&hub_id) {
             if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
                 if let Some(member) = hub.members.get(&query.account_id) {
                     if member.has_permission(HubPermission::All, &hub) {
-                        if let Ok(_remove) = tokio::fs::remove_file(GUILD_INFO_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json").await {
+                        if let Ok(_remove) = tokio::fs::remove_file(
+                            GUILD_INFO_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json",
+                        )
+                        .await
+                        {
                             Ok("Successfully deleted the hub.")
                         } else {
-                            Err(error::ErrorInternalServerError("Failed to delete hub data."))
+                            Err(error::ErrorInternalServerError(
+                                "Failed to delete hub data.",
+                            ))
                         }
                     } else {
-                        Err(error::ErrorUnauthorized("You do not have permission to delete this hub."))
+                        Err(error::ErrorUnauthorized(
+                            "You do not have permission to delete this hub.",
+                        ))
                     }
                 } else {
-                    Err(error::ErrorInternalServerError("Failed to delete hub data."))
+                    Err(error::ErrorInternalServerError("Failed to load hub data."))
+                }
+            } else {
+                Err(error::ErrorNotFound("Account not found."))
+            }
+        } else {
+            Err(error::ErrorNotFound("Hub not found."))
+        }
+    } else {
+        Err(error::ErrorNotFound("Account not found."))
+    }
+}
+
+#[derive(Deserialize)]
+struct NameID {
+    name: String,
+    account_id: ID,
+}
+
+#[delete("/v2/hub/rename/{hub_id}")]
+async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<NameID>) -> Result<impl Responder> {
+    if let Some(account) = user.accounts.get(&query.account_id) {
+        if account.in_hubs.contains(&hub_id) {
+            if let Ok(mut hub) = Hub::load(&hub_id.to_string()).await {
+                if let Some(member) = hub.members.get(&query.account_id) {
+                    if member.has_permission(HubPermission::Administrate, &hub) {
+                        let old_name = hub.name;
+                        hub.name = query.name.clone();
+                        if let Ok(_save) = hub.save().await {
+                            Ok(old_name)
+                        } else {
+                            Err(error::ErrorInternalServerError("Failed rename hub."))
+                        }
+                    } else {
+                        Err(error::ErrorUnauthorized(
+                            "You do not have permission to rename this hub.",
+                        ))
+                    }
+                } else {
+                    Err(error::ErrorInternalServerError("Failed to load hub data."))
                 }
             } else {
                 Err(error::ErrorNotFound("Account not found."))
