@@ -1,132 +1,73 @@
-use std::collections::HashMap;
-
-use rayon::prelude::*;
+use std::io::Read;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-use crate::{
-    get_system_millis, hub::Hub, is_valid_username, new_id, ApiActionError, JsonLoadError,
-    JsonSaveError, ID, NAME_ALLOWED_CHARS,
+use sha3::{
+    digest::{ExtendableOutput, Update},
+    Digest, Sha3_256, Shake128,
 };
 
-static ACCOUNT_FOLDER: &str = "data/users/";
+use crate::{
+    auth::Service, get_system_millis, hub::Hub, is_valid_username, ApiActionError,
+    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+};
 
-/// An Account, a "subidenty" for a user, exists so that a user can have multiple accounts without signing up multiple times, if
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Account {
-    pub id: ID,
-    pub username: String,
-    pub created: u128,
-    pub parent_id: String,
-    pub is_bot: bool,
-    pub in_hubs: Vec<ID>,
-}
-
-/// A version of an Account, uses a hashed version of the list of hubs the user is a member of, the is_bot variable indicates whether or not the account is dedicated to automation/chatbot.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GenericAccount {
-    pub id: ID,
-    pub username: String,
-    pub created: u128,
-    pub parent_id: String,
-    pub is_bot: bool,
-    pub hubs_hashed: Vec<String>,
-}
-
-impl Account {
-    /// Create a new account, while checking that the username only contains allowed characters, if it doesnt an error is returned.
-    pub fn new(id: ID, username: String, parent_id: String, is_bot: bool) -> Result<Self, ()> {
-        if is_valid_username(&username) {
-            Ok(Self {
-                id,
-                username,
-                parent_id,
-                created: get_system_millis(),
-                is_bot,
-                in_hubs: Vec::new(),
-            })
-        } else {
-            Err(())
-        }
-    }
-
-    /// Hashes the IDs of hubs the account is a member of and outputs a GenericAccount
-    pub fn to_generic(&self) -> GenericAccount {
-        let mut hasher = Sha256::new();
-        let mut hubs_hashed = Vec::new();
-        for hub in self.in_hubs.clone() {
-            hasher.update(hub.to_string());
-            hubs_hashed.push(format!("{:x}", hasher.finalize_reset()));
-        }
-        GenericAccount {
-            id: self.id.clone(),
-            created: self.created.clone(),
-            username: self.username.clone(),
-            parent_id: self.parent_id.clone(),
-            is_bot: self.is_bot.clone(),
-            hubs_hashed,
-        }
-    }
-}
+static USER_FOLDER: &str = "data/users/";
 
 /// Represents a user, keeps track of which accounts it owns and their metadata.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct User {
-    pub id: String,
+    pub id: ID,
+    pub username: String,
     pub email: String,
     pub created: u128,
-    pub service: String,
-    pub accounts: HashMap<ID, Account>,
+    pub service: Service,
+    pub in_hubs: Vec<ID>,
 }
 
 /// Represents the publicly available information on a user, (excludes their email address and the service they signed up with) also only includes the generic version of accounts.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GenericUser {
-    id: String,
-    created: u128,
-    users: HashMap<ID, GenericAccount>,
+    pub id: ID,
+    pub username: String,
+    pub created: u128,
+    pub hubs_hashed: Vec<String>,
 }
 
 impl User {
     /// Creates a new user and generates an ID by hashing the service used and the ID of the user according to that service.
-    pub fn new(id: String, email: String, service: String) -> Self {
+    pub fn new(id: String, email: String, service: Service) -> Self {
         Self {
             id: get_id(&id, &service),
+            username: String::new(),
             email,
             service,
-            accounts: HashMap::new(),
             created: get_system_millis(),
+            in_hubs: Vec::new(),
         }
-    }
-
-    /// Converts a HashMap of Accounts into a a HashMap of Generic Accounts.
-    pub fn accounts_generic(users: &HashMap<ID, Account>) -> HashMap<ID, GenericAccount> {
-        users
-            .iter()
-            .map(|e| (e.0.clone(), e.1.to_generic()))
-            .collect()
     }
 
     /// Converts the standard user into a GenericUser.
     pub fn to_generic(&self) -> GenericUser {
+        let mut hasher = Sha3_256::new();
+        let mut hubs_hashed = Vec::new();
+        for hub in self.in_hubs.clone() {
+            sha3::digest::Update::update(&mut hasher, hub.to_string());
+            hubs_hashed.push(format!("{:x}", hasher.finalize_reset()));
+        }
         GenericUser {
             id: self.id.clone(),
             created: self.created.clone(),
-            users: Self::accounts_generic(&self.accounts),
+            username: self.username.clone(),
+            hubs_hashed,
         }
     }
 
-    pub async fn create_new_account(
-        &mut self,
-        username: String,
-        bot: bool,
-    ) -> Result<Account, ApiActionError> {
-        let uuid = new_id();
-        if let Ok(user) = Account::new(uuid.clone(), username, self.id.clone(), bot) {
-            self.accounts.insert(uuid, user.clone());
-            if let Ok(_) = self.save().await {
-                Ok(user)
+    pub async fn change_username(&mut self, new_name: String) -> Result<String, ApiActionError> {
+        if is_valid_username(&new_name) {
+            let old_name = self.username.clone();
+            self.username = new_name;
+            if let Ok(_save) = self.save().await {
+                Ok(old_name)
             } else {
                 Err(ApiActionError::WriteFileError)
             }
@@ -137,45 +78,31 @@ impl User {
 
     pub async fn send_hub_message(
         &self,
-        account: ID,
         hub: ID,
         channel: ID,
         message: String,
     ) -> Result<ID, ApiActionError> {
-        if let Some(account) = self.accounts.get(&account) {
-            if account.in_hubs.contains(&hub) {
-                if let Ok(mut hub) = Hub::load(&hub.to_string()).await {
-                    hub.send_message(account.id, channel, message).await
-                } else {
-                    Err(ApiActionError::HubNotFound)
-                }
+        if self.in_hubs.contains(&hub) {
+            if let Ok(mut hub) = Hub::load(&hub.to_string()).await {
+                hub.send_message(self.id, channel, message).await
             } else {
-                Err(ApiActionError::NotInHub)
+                Err(ApiActionError::HubNotFound)
             }
         } else {
-            Err(ApiActionError::UserNotFound)
+            Err(ApiActionError::NotInHub)
         }
     }
 
-    pub async fn create_hub(
-        &mut self,
-        name: String,
-        id: ID,
-        owner: ID,
-    ) -> Result<ID, ApiActionError> {
+    pub async fn create_hub(&mut self, name: String, id: ID) -> Result<ID, ApiActionError> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
-        if let Some(account) = self.accounts.get_mut(&owner) {
-            if Hub::load(&id.to_string()).await.is_err() {
-                let new_hub = Hub::new(name, id, account);
-                if let Ok(_) = new_hub.save().await {
-                    account.in_hubs.push(new_hub.id.clone());
-                    if let Ok(_) = self.save().await {
-                        Ok(new_hub.id)
-                    } else {
-                        Err(ApiActionError::WriteFileError)
-                    }
+        if Hub::load(&id.to_string()).await.is_err() {
+            let new_hub = Hub::new(name, id, &self);
+            if let Ok(_) = new_hub.save().await {
+                self.in_hubs.push(new_hub.id.clone());
+                if let Ok(_) = self.save().await {
+                    Ok(new_hub.id)
                 } else {
                     Err(ApiActionError::WriteFileError)
                 }
@@ -183,21 +110,21 @@ impl User {
                 Err(ApiActionError::WriteFileError)
             }
         } else {
-            Err(ApiActionError::UserNotFound)
+            Err(ApiActionError::WriteFileError)
         }
     }
 
-    pub async fn is_in_hub(&self, hub: ID) -> bool  {
-        self.accounts.par_iter().any(|(_i, a)| a.in_hubs.contains(&hub))
+    pub async fn is_in_hub(&self, hub: ID) -> bool {
+        self.in_hubs.contains(&hub)
     }
 
     pub async fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = tokio::fs::create_dir_all(ACCOUNT_FOLDER).await {
+        if let Err(_) = tokio::fs::create_dir_all(USER_FOLDER).await {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = std::fs::write(
-                ACCOUNT_FOLDER.to_owned() + &self.id.to_string() + ".json",
+                USER_FOLDER.to_owned() + &self.id.to_string() + ".json",
                 json,
             ) {
                 Ok(result)
@@ -209,8 +136,9 @@ impl User {
         }
     }
 
-    pub async fn load(id: &str) -> Result<Self, JsonLoadError> {
-        if let Ok(json) = tokio::fs::read_to_string(ACCOUNT_FOLDER.to_owned() + id + ".json").await
+    pub async fn load(id: &ID) -> Result<Self, JsonLoadError> {
+        if let Ok(json) =
+            tokio::fs::read_to_string(USER_FOLDER.to_owned() + &id.to_string() + ".json").await
         {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
@@ -222,26 +150,25 @@ impl User {
         }
     }
 
-    pub async fn load_get_id(id: &str, service: &str) -> Result<Self, JsonLoadError> {
+    pub async fn load_get_id(id: &str, service: &Service) -> Result<Self, JsonLoadError> {
         Self::load(&get_id(id, service)).await
     }
 }
 
-pub fn get_id(id: &str, service: &str) -> String {
-    let mut hasher = Sha256::new();
+pub fn get_id(id: &str, service: &Service) -> ID {
+    let mut hasher = Shake128::default();
     hasher.update(id);
-    hasher.update(service);
-    format!("{:x}", hasher.finalize())
+    hasher.update(service.to_string());
+    let mut bytes = [0; 16];
+    hasher.finalize_xof().read_exact(&mut bytes).expect("Failed to read the user ID hash");
+    ID::from_bytes(bytes)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use crate::hub::Hub;
 
-    use super::{get_id, GenericUser, User, ID};
-    use super::{Account, GenericAccount};
+    use super::{get_id, GenericUser, Service, User, ID};
 
     static USER_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
     static SERVICE_USER_ID: &str = "testid";
@@ -249,8 +176,10 @@ mod tests {
 
     #[test]
     fn id_gen() {
-        assert_eq!(get_id(SERVICE_USER_ID, "github"), USER_ID.to_string());
-        assert_ne!(get_id(SERVICE_USER_ID, "other"), USER_ID.to_string());
+        assert_eq!(
+            get_id(SERVICE_USER_ID, &Service::GitHub).to_string(),
+            USER_ID.to_string()
+        );
     }
 
     #[test]
@@ -258,115 +187,29 @@ mod tests {
         let user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
-            "github".to_string(),
+            Service::GitHub,
         );
-        assert_eq!(user.id, USER_ID.to_string());
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn create_new_user() {
-        let mut user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            "github".to_string(),
-        );
-        assert!(user.accounts.is_empty());
-        let account = user
-            .create_new_account("user".to_string(), false)
-            .await
-            .expect("Failed to add a new user to the test account.");
-        assert_eq!(user.accounts.get(&account.id), Some(&account));
-    }
-
-    fn account_generic_pair(n: u128) -> (ID, Account, GenericAccount) {
-        let id = ID::from_u128(n);
-        let account = Account {
-            id: id.clone(),
-            username: "test".to_string(),
-            created: n,
-            is_bot: false,
-            in_hubs: Vec::new(),
-            parent_id: USER_ID.to_string(),
-        };
-        let generic = GenericAccount {
-            id: id.clone(),
-            username: "test".to_string(),
-            created: n,
-            is_bot: false,
-            hubs_hashed: Vec::new(),
-            parent_id: USER_ID.to_string(),
-        };
-        (id, account, generic)
+        assert_eq!(user.id.to_string(), USER_ID.to_string());
     }
 
     #[test]
-    fn account_to_generic() {
+    fn user_to_generic() {
         let uuid = ID::from_u128(0);
-        let account = Account::new(
-            uuid.clone(),
-            "Test_with-chars. And".to_string(),
-            USER_ID.to_string(),
-            false,
-        )
-        .expect("Valid username was marked as invalid.");
-        let generic = GenericAccount {
+        let account = User {
+            id: uuid,
+            username: "Test_with-chars. And".to_string(),
+            created: 0,
+            service: Service::GitHub,
+            in_hubs: Vec::new(),
+            email: "test".to_string(),
+        };
+        let generic = GenericUser {
             id: uuid,
             username: "Test_with-chars. And".to_string(),
             created: account.created,
-            is_bot: false,
-            parent_id: USER_ID.to_string(),
             hubs_hashed: Vec::new(),
         };
         assert_eq!(account.to_generic(), generic);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn user_to_generic() {
-        let mut user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            "github".to_string(),
-        );
-        let account_0 = user
-            .create_new_account("user".to_string(), false)
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let account_1 = user
-            .create_new_account("user".to_string(), false)
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let account_2 = user
-            .create_new_account("user".to_string(), false)
-            .await
-            .expect("Failed to add a new user to the test account.");
-        let mut map: HashMap<ID, GenericAccount> = HashMap::new();
-        map.insert(account_0.id.clone(), account_0.to_generic().clone());
-        map.insert(account_1.id.clone(), account_1.to_generic().clone());
-        map.insert(account_2.id.clone(), account_2.to_generic().clone());
-        let generic = GenericUser {
-            id: USER_ID.to_string(),
-            created: user.created,
-            users: map,
-        };
-        assert_eq!(user.to_generic(), generic);
-    }
-
-    #[test]
-    fn vec_to_generic() {
-        let mut map_account: HashMap<ID, Account> = HashMap::new();
-        let mut map_generic: HashMap<ID, GenericAccount> = HashMap::new();
-        let set_0 = account_generic_pair(0);
-        let set_1 = account_generic_pair(1);
-        let set_2 = account_generic_pair(2);
-        map_account.insert(set_0.0, set_0.1);
-        map_account.insert(set_1.0, set_1.1);
-        map_account.insert(set_2.0, set_2.1);
-        map_generic.insert(set_0.0, set_0.2);
-        map_generic.insert(set_1.0, set_1.2);
-        map_generic.insert(set_2.0, set_2.2);
-        assert_eq!(User::accounts_generic(&map_account), map_generic);
     }
 
     #[tokio::test]
@@ -375,9 +218,9 @@ mod tests {
         let user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
-            "service".to_string(),
+            Service::GitHub,
         );
-        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id);
+        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id.to_string());
         let _save = user.save().await;
         let loaded = User::load(&user.id)
             .await
@@ -391,17 +234,13 @@ mod tests {
         let mut user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
-            "github".to_string(),
+            Service::GitHub,
         );
-        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id);
-        let account = user
-            .create_new_account("test".to_string(), false)
-            .await
-            .expect("Failed to create account for test user.");
+        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id.to_string());
         let id = ID::from_u128(0);
         let _delete = std::fs::remove_file("data/hubs/info/".to_string() + &id.to_string());
         let hub = user
-            .create_hub("test_hub".to_string(), id.clone(), account.id)
+            .create_hub("test_hub".to_string(), id.clone())
             .await
             .expect("Failed to create test hub.");
         assert!(std::path::Path::new(
@@ -413,18 +252,14 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn send_hub_message() {
-        let mut account = User::new(
+        let mut user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
-            "github".to_string(),
+            Service::GitHub,
         );
-        let user = account
-            .create_new_account("test".to_string(), false)
-            .await
-            .expect("Failed to create account for test user.");
         let id = ID::from_u128(0);
-        let hub_id = account
-            .create_hub("test_hub".to_string(), id.clone(), user.id)
+        let hub_id = user
+            .create_hub("test_hub".to_string(), id.clone())
             .await
             .expect("Failed to create test hub.");
         let mut hub = Hub::load(&hub_id.to_string())
@@ -435,8 +270,7 @@ mod tests {
             .await
             .expect("Failed to create test channel.");
         hub.save().await.expect("Failed to save test hub.");
-        account
-            .send_hub_message(user.id, hub_id, channel.clone(), "test".to_string())
+        user.send_hub_message(hub_id, channel.clone(), "test".to_string())
             .await
             .expect("Failed to send message.");
         let channel = hub

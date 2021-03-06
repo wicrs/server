@@ -8,7 +8,7 @@ use crate::{
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
-    user::Account,
+    user::User,
     ApiActionError, JsonLoadError, JsonSaveError, ID,
 };
 
@@ -26,7 +26,7 @@ pub struct HubMember {
 }
 
 impl HubMember {
-    pub fn new(user: &Account, hub: ID) -> Self {
+    pub fn new(user: &User, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
             account: user.id.clone(),
@@ -262,7 +262,7 @@ pub struct Hub {
 }
 
 impl Hub {
-    pub fn new(name: String, id: ID, creator: &Account) -> Self {
+    pub fn new(name: String, id: ID, creator: &User) -> Self {
         let creator_id = creator.id.clone();
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
@@ -455,7 +455,7 @@ impl Hub {
         }
     }
 
-    pub fn user_join(&mut self, user: &Account) -> Result<HubMember, ()> {
+    pub fn user_join(&mut self, user: &User) -> Result<HubMember, ()> {
         let mut member = HubMember::new(user, self.id.clone());
         for (id, rank) in self.ranks.iter_mut() {
             if id == &self.default_rank {
@@ -487,21 +487,20 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use crate::{
+        auth::Service,
         permission::{ChannelPermission, HubPermission, PermissionSetting},
-        user::Account,
+        user::User,
         ID,
     };
 
     use super::{Hub, HubMember, PermissionGroup};
 
-    fn get_user_for_test(id: u128) -> Account {
-        Account::new(
-            ID::from_u128(id),
-            "test_user".to_string(),
-            "testid".to_string(),
-            false,
+    fn get_user_for_test(id: u128) -> User {
+        User::new(
+            ID::from_u128(id).to_string(),
+            "test_user@example.com".to_string(),
+            Service::GitHub,
         )
-        .expect("Failed to create a testing user.")
     }
 
     fn get_hub_for_test() -> Hub {
