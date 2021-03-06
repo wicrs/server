@@ -42,6 +42,8 @@ pub enum JsonSaveError {
 
 #[derive(Debug)]
 pub enum ApiActionError {
+    Muted,
+    Banned,
     HubNotFound,
     ChannelNotFound,
     NoPermission,

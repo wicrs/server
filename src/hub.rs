@@ -252,6 +252,7 @@ pub struct Hub {
     pub channels: HashMap<ID, Channel>,
     pub members: HashMap<ID, HubMember>,
     pub bans: HashSet<ID>,
+    pub mutes: HashSet<ID>,
     pub owner: ID,
     pub ranks: HashMap<ID, PermissionGroup>,
     pub default_rank: ID,
@@ -278,6 +279,7 @@ impl Hub {
             default_rank: new_id(),
             owner: creator_id,
             bans: HashSet::new(),
+            mutes: HashSet::new(),
             channels: HashMap::new(),
             members,
             created: get_system_millis(),
@@ -388,30 +390,34 @@ impl Hub {
         channel: ID,
         message: String,
     ) -> Result<ID, ApiActionError> {
-        if let Some(member) = self.members.get(&account) {
-            if member.clone().has_channel_permission(
-                &channel,
-                &ChannelPermission::SendMessage,
-                self,
-            ) {
-                if let Some(channel) = self.channels.get_mut(&channel) {
-                    let id = new_id();
-                    let message = Message {
-                        id: id.clone(),
-                        sender: member.account.clone(),
-                        created: get_system_millis(),
-                        content: message,
-                    };
-                    channel.add_message(message).await?;
-                    Ok(id)
+        if !self.mutes.contains(&account) {
+            if let Some(member) = self.members.get(&account) {
+                if member.clone().has_channel_permission(
+                    &channel,
+                    &ChannelPermission::SendMessage,
+                    self,
+                ) {
+                    if let Some(channel) = self.channels.get_mut(&channel) {
+                        let id = new_id();
+                        let message = Message {
+                            id: id.clone(),
+                            sender: member.account.clone(),
+                            created: get_system_millis(),
+                            content: message,
+                        };
+                        channel.add_message(message).await?;
+                        Ok(id)
+                    } else {
+                        Err(ApiActionError::ChannelNotFound)
+                    }
                 } else {
-                    Err(ApiActionError::ChannelNotFound)
+                    Err(ApiActionError::NoPermission)
                 }
             } else {
-                Err(ApiActionError::NoPermission)
+                Err(ApiActionError::NotInHub)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiActionError::Muted)
         }
     }
 

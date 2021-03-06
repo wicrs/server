@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use rayon::prelude::*;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -183,6 +185,10 @@ impl User {
         } else {
             Err(ApiActionError::UserNotFound)
         }
+    }
+
+    pub async fn is_in_hub(&self, hub: ID) -> bool  {
+        self.accounts.par_iter().any(|(_i, a)| a.in_hubs.contains(&hub))
     }
 
     pub async fn save(&self) -> Result<(), JsonSaveError> {

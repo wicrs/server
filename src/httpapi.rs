@@ -41,6 +41,8 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(get_hub)
             .service(rename_hub)
             .service(delete_hub)
+            .service(hub_member_is_muted)
+            .service(is_banned_from_hub)
     })
     .bind(bind_address)?
     .run()
@@ -358,7 +360,7 @@ struct NameID {
     account_id: ID,
 }
 
-#[delete("/v2/hub/rename/{hub_id}")]
+#[put("/v2/hub/rename/{hub_id}")]
 async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<NameID>) -> Result<impl Responder> {
     if let Some(account) = user.accounts.get(&query.account_id) {
         if account.in_hubs.contains(&hub_id) {
@@ -388,5 +390,39 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<NameID>) -> Resul
         }
     } else {
         Err(error::ErrorNotFound("Account not found."))
+    }
+}
+
+#[get("/v2/hub/{hub_id}/is_banned/{account_id}")]
+async fn is_banned_from_hub(
+    _user: User,
+    hub_id: Path<String>,
+    account_id: Path<ID>,
+) -> Result<impl Responder> {
+    if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+        if hub.bans.contains(&account_id.0) {
+            Ok("true")
+        } else {
+            Ok("false")
+        }
+    } else {
+        Err(error::ErrorNotFound("Hub not found."))
+    }
+}
+
+#[get("/v2/hub/{hub_id}/is_muted/{account_id}")]
+async fn hub_member_is_muted(
+    _user: User,
+    hub_id: Path<String>,
+    account_id: Path<ID>,
+) -> Result<impl Responder> {
+    if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+        if hub.mutes.contains(&account_id.0) {
+            Ok("true")
+        } else {
+            Ok("false")
+        }
+    } else {
+        Err(error::ErrorNotFound("Hub not found."))
     }
 }
