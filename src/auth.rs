@@ -12,9 +12,9 @@ use crate::{get_system_millis, user::User, USER_AGENT_STRING, ID};
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
-type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>;
-type LoginSession = (u128, BasicClient);
-type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
+type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>; // HashMap<Hashed User ID, Vec<(Token Expiry Date, Hashed Token)>>
+type LoginSession = (u128, BasicClient); // (Login Start Time, Client)
+type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>; // HashMap<Login Secret, <LoginSession>>
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TokenQuery {
@@ -397,7 +397,7 @@ impl GitHub {
     }
 }
 
-fn hash_auth(id: ID, token: String) -> (String, String) {
+fn hash_auth(id: ID, token: String) -> (String, String) { // (Hashed ID, Hashed Token)
     let mut hasher = Sha3_256::new();
     hasher.update(id.as_bytes());
     let id_hash = format!("{:x}", hasher.finalize_reset());
