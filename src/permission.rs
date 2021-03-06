@@ -16,17 +16,15 @@ pub enum HubPermission {
     Administrate,
     CreateChannel,
     DeleteChannel,
-    CreateCategory,
-    DeleteCategory,
     ArrangeChannels,
     SendMessage,
     ReadMessage,
-    MuteUser,
+    Mute,
+    Unmute,
     Invite,
     Kick,
     Ban,
-    Mute,
-    AddBot,
+    Unban,
 }
 
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
@@ -37,7 +35,6 @@ pub enum ChannelPermission {
     ReadMessage,
     ViewChannel,
     Configure,
-    MuteUser,
     All,
 }
 
@@ -48,7 +45,6 @@ impl ChannelPermission {
             ChannelPermission::ReadMessage => HubPermission::ReadMessage,
             ChannelPermission::ViewChannel => HubPermission::ViewChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
-            ChannelPermission::MuteUser => HubPermission::MuteUser,
 	    ChannelPermission::All => HubPermission::All,
 	}
     }
