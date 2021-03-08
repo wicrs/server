@@ -1,11 +1,17 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum PermissionSetting {
     TRUE,
     FALSE,
     NONE,
+}
+
+impl Display for PermissionSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string())
+    }
 }
 
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug)]
@@ -25,6 +31,12 @@ pub enum HubPermission {
     Kick,
     Ban,
     Unban,
+}
+
+impl Display for HubPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string())
+    }
 }
 
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
@@ -47,6 +59,12 @@ impl ChannelPermission {
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
 	    ChannelPermission::All => HubPermission::All,
 	}
+    }
+}
+
+impl Display for ChannelPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string())
     }
 }
 

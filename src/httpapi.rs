@@ -215,9 +215,7 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                         ))
                     }
                 } else {
-                    Err(error::ErrorUnauthorized(
-                        "You do not have permission to delete this hub.",
-                    ))
+                    Err(error::ErrorUnauthorized(HubPermission::All))
                 }
             } else {
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
@@ -249,9 +247,7 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
                         Err(error::ErrorInternalServerError("Failed rename hub."))
                     }
                 } else {
-                    Err(error::ErrorUnauthorized(
-                        "You do not have permission to rename this hub.",
-                    ))
+                    Err(error::ErrorUnauthorized(HubPermission::Administrate))
                 }
             } else {
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
