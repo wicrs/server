@@ -215,7 +215,7 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                         ))
                     }
                 } else {
-                    Err(error::ErrorUnauthorized(HubPermission::All))
+                    Err(error::ErrorForbidden(HubPermission::All))
                 }
             } else {
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
@@ -247,7 +247,7 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
                         Err(error::ErrorInternalServerError("Failed rename hub."))
                     }
                 } else {
-                    Err(error::ErrorUnauthorized(HubPermission::Administrate))
+                    Err(error::ErrorForbidden(HubPermission::Administrate))
                 }
             } else {
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
