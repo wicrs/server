@@ -40,7 +40,7 @@ pub enum JsonSaveError {
     Directory,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ApiActionError {
     Muted,
     Banned,
@@ -52,6 +52,7 @@ pub enum ApiActionError {
     OpenFileError,
     UserNotFound,
     BadAuth,
+    GroupNotFound,
     BadNameCharacters,
 }
 

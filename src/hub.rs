@@ -12,11 +12,11 @@ use crate::{
     ApiActionError, JsonLoadError, JsonSaveError, ID,
 };
 
-pub static GUILD_INFO_FOLDER: &str = "data/hubs/info";
+pub static HUB_DATA_FOLDER: &str = "data/hubs/info";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
-    pub account: ID,
+    pub user: ID,
     pub joined: u128,
     pub hub: ID,
     pub nickname: String,
@@ -29,7 +29,7 @@ impl HubMember {
     pub fn new(user: &User, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
-            account: user.id.clone(),
+            user: user.id.clone(),
             hub,
             ranks: Vec::new(),
             joined: get_system_millis(),
@@ -51,8 +51,8 @@ impl HubMember {
         if !self.ranks.contains(&rank.id) {
             self.ranks.push(rank.id.clone());
         }
-        if !rank.members.contains(&self.account) {
-            rank.members.push(self.account.clone());
+        if !rank.members.contains(&self.user) {
+            rank.members.push(self.user.clone());
         }
     }
 
@@ -84,7 +84,7 @@ impl HubMember {
 
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
         println!("{:?}", self.hub_permissions);
-        if hub.owner == self.account {
+        if hub.owner == self.user {
             return true;
         }
         if self.has_all_permissions() {
@@ -119,7 +119,7 @@ impl HubMember {
         permission: &ChannelPermission,
         hub: &Hub,
     ) -> bool {
-        if hub.owner == self.account {
+        if hub.owner == self.user {
             return true;
         }
         if self.has_all_permissions() {
@@ -386,12 +386,12 @@ impl Hub {
 
     pub async fn send_message(
         &mut self,
-        account: ID,
+        user: ID,
         channel: ID,
         message: String,
     ) -> Result<ID, ApiActionError> {
-        if !self.mutes.contains(&account) {
-            if let Some(member) = self.members.get(&account) {
+        if let Some(member) = self.members.get(&user) {
+            if !self.mutes.contains(&user) {
                 if member.clone().has_channel_permission(
                     &channel,
                     &ChannelPermission::SendMessage,
@@ -401,7 +401,7 @@ impl Hub {
                         let id = new_id();
                         let message = Message {
                             id: id.clone(),
-                            sender: member.account.clone(),
+                            sender: member.user.clone(),
                             created: get_system_millis(),
                             content: message,
                         };
@@ -414,20 +414,20 @@ impl Hub {
                     Err(ApiActionError::NoPermission)
                 }
             } else {
-                Err(ApiActionError::NotInHub)
+                Err(ApiActionError::Muted)
             }
         } else {
-            Err(ApiActionError::Muted)
+            Err(ApiActionError::NotInHub)
         }
     }
 
     pub async fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = tokio::fs::create_dir_all(GUILD_INFO_FOLDER).await {
+        if let Err(_) = tokio::fs::create_dir_all(HUB_DATA_FOLDER).await {
             return Err(JsonSaveError::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = tokio::fs::write(
-                GUILD_INFO_FOLDER.to_owned() + "/" + &self.id.to_string() + ".json",
+                HUB_DATA_FOLDER.to_owned() + "/" + &self.id.to_string() + ".json",
                 json,
             )
             .await
@@ -441,9 +441,11 @@ impl Hub {
         }
     }
 
-    pub async fn load(id: &str) -> Result<Self, JsonLoadError> {
-        if let Ok(json) =
-            tokio::fs::read_to_string(GUILD_INFO_FOLDER.to_owned() + "/" + id + ".json").await
+    pub async fn load(id: ID) -> Result<Self, JsonLoadError> {
+        if let Ok(json) = tokio::fs::read_to_string(
+            HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json",
+        )
+        .await
         {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
@@ -457,14 +459,13 @@ impl Hub {
 
     pub fn user_join(&mut self, user: &User) -> Result<HubMember, ()> {
         let mut member = HubMember::new(user, self.id.clone());
-        for (id, rank) in self.ranks.iter_mut() {
-            if id == &self.default_rank {
-                rank.add_member(&mut member);
-                break;
-            }
+        if let Some(rank) = self.ranks.get_mut(&self.default_rank) {
+            rank.add_member(&mut member);
+            self.members.insert(member.user.clone(), member.clone());
+            Ok(member)
+        } else {
+            Err(())
         }
-        self.members.insert(member.account.clone(), member.clone());
-        Ok(member)
     }
 
     pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
@@ -625,7 +626,7 @@ mod tests {
             {
                 let member_in_hub = hub
                     .members
-                    .get_mut(&member.account)
+                    .get_mut(&member.user)
                     .expect("Failed to get hub member.");
                 member_in_hub.set_permission(HubPermission::CreateChannel, PermissionSetting::TRUE);
                 member = member_in_hub.clone();
@@ -634,22 +635,22 @@ mod tests {
             assert!(member.has_permission(HubPermission::CreateChannel, &hub));
         }
         let channel_0 = hub
-            .new_channel(member.account.clone(), "test0".to_string())
+            .new_channel(member.user.clone(), "test0".to_string())
             .await
             .expect("Failed to create test channel.");
         let _channel_1 = hub
-            .new_channel(member.account.clone(), "test1".to_string())
+            .new_channel(member.user.clone(), "test1".to_string())
             .await
             .expect("Failed to create test channel.");
         assert!(hub
-            .channels(member.account.clone())
+            .channels(member.user.clone())
             .expect("Failed to get hub channels.")
             .is_empty());
 
         {
             let member_in_hub = hub
                 .members
-                .get_mut(&member.account)
+                .get_mut(&member.user)
                 .expect("Failed to get hub member.");
             member_in_hub.set_channel_permission(
                 channel_0.clone(),
@@ -658,7 +659,7 @@ mod tests {
             );
         }
         let get = hub
-            .channels(member.account.clone())
+            .channels(member.user.clone())
             .expect("Failed to get hub channels.");
         assert_eq!(get.len(), 1);
         assert_eq!(get[0].id, channel_0.clone());
@@ -671,14 +672,12 @@ mod tests {
             ID::from_u128(1234),
             &get_user_for_test(1),
         );
-        let id_str = hub.id.to_string();
-        let id_str = id_str.as_str();
         let _remove = tokio::fs::remove_file(
             "data/hubs/info/".to_string() + &ID::from_u128(1234).to_string() + ".json",
         )
         .await;
         hub.save().await.expect("Failed to save hub info.");
-        let load = Hub::load(id_str).await.expect("Failed to load hub info.");
+        let load = Hub::load(hub.id).await.expect("Failed to load hub info.");
         assert_eq!(hub, load);
     }
 }

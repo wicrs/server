@@ -6,10 +6,7 @@ use sha3::{
     Digest, Sha3_256, Shake128,
 };
 
-use crate::{
-    auth::Service, get_system_millis, hub::Hub, is_valid_username, ApiActionError,
-    JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
-};
+use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, auth::Service, get_system_millis, hub::{Hub, HubMember}, is_valid_username};
 
 static USER_FOLDER: &str = "data/users/";
 
@@ -83,7 +80,7 @@ impl User {
         message: String,
     ) -> Result<ID, ApiActionError> {
         if self.in_hubs.contains(&hub) {
-            if let Ok(mut hub) = Hub::load(&hub.to_string()).await {
+            if let Ok(mut hub) = Hub::load(hub).await {
                 hub.send_message(self.id, channel, message).await
             } else {
                 Err(ApiActionError::HubNotFound)
@@ -93,11 +90,36 @@ impl User {
         }
     }
 
+    pub async fn join_hub(&mut self, hub_id: ID) ->  Result<HubMember, ApiActionError> {
+        if let Ok(mut hub) = Hub::load(hub_id).await {
+            if !hub.bans.contains(&self.id) {
+                if let Ok(member) = hub.user_join(&self) {
+                    if let Ok(()) = hub.save().await  {
+                        self.in_hubs.push(hub_id);
+                        if let Ok(()) = self.save().await {
+                            Ok(member)
+                        } else {
+                            Err(ApiActionError::WriteFileError)
+                        }
+                    } else {
+                        Err(ApiActionError::WriteFileError)
+                    }
+                } else {
+                    Err(ApiActionError::GroupNotFound)
+                }
+            } else {
+                Err(ApiActionError::Banned)
+            }
+        } else {
+            Err(ApiActionError::HubNotFound)
+        }
+    }
+
     pub async fn create_hub(&mut self, name: String, id: ID) -> Result<ID, ApiActionError> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
             return Err(ApiActionError::BadNameCharacters);
         }
-        if Hub::load(&id.to_string()).await.is_err() {
+        if Hub::load(id).await.is_err() {
             let new_hub = Hub::new(name, id, &self);
             if let Ok(_) = new_hub.save().await {
                 self.in_hubs.push(new_hub.id.clone());
@@ -262,7 +284,7 @@ mod tests {
             .create_hub("test_hub".to_string(), id.clone())
             .await
             .expect("Failed to create test hub.");
-        let mut hub = Hub::load(&hub_id.to_string())
+        let mut hub = Hub::load(hub_id)
             .await
             .expect("Failed to load test hub.");
         let channel = hub

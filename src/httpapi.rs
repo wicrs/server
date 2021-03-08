@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::{
     auth::{Auth, AuthQuery, Service},
     channel::Channel,
-    hub::{Hub, GUILD_INFO_FOLDER},
+    hub::{Hub, HUB_DATA_FOLDER},
     new_id,
     permission::HubPermission,
     user::User,
@@ -178,7 +178,7 @@ async fn create_hub(mut user: User, name: Path<String>) -> Result<impl Responder
 #[get("/v2/hub/{hub_id}")]
 async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     if user.in_hubs.contains(&hub_id) {
-        if let Ok(mut hub) = Hub::load(&hub_id.to_string()).await {
+        if let Ok(mut hub) = Hub::load(*hub_id).await {
             if let Ok(channels_allowed) = hub.channels(user.id) {
                 let mut sending = hub.clone();
                 sending.channels = channels_allowed
@@ -200,11 +200,11 @@ async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
 #[delete("/v2/hub/{hub_id}")]
 async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     if user.in_hubs.contains(&hub_id) {
-        if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+        if let Ok(hub) = Hub::load(*hub_id).await {
             if let Some(member) = hub.members.get(&user.id) {
                 if member.has_permission(HubPermission::All, &hub) {
                     if let Ok(_remove) = tokio::fs::remove_file(
-                        GUILD_INFO_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json",
+                        HUB_DATA_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json",
                     )
                     .await
                     {
@@ -238,7 +238,7 @@ struct Name {
 #[put("/v2/hub/rename/{hub_id}")]
 async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<impl Responder> {
     if user.in_hubs.contains(&hub_id) {
-        if let Ok(mut hub) = Hub::load(&hub_id.to_string()).await {
+        if let Ok(mut hub) = Hub::load(*hub_id).await {
             if let Some(member) = hub.members.get(&user.id) {
                 if member.has_permission(HubPermission::Administrate, &hub) {
                     let old_name = hub.name;
@@ -267,10 +267,10 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
 #[get("/v2/hub/{hub_id}/is_banned/{user_id}")]
 async fn is_banned_from_hub(
     _user: User,
-    hub_id: Path<String>,
+    hub_id: Path<ID>,
     user_id: Path<ID>,
 ) -> Result<impl Responder> {
-    if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+    if let Ok(hub) = Hub::load(*hub_id).await {
         if hub.bans.contains(&user_id.0) {
             Ok("true")
         } else {
@@ -284,10 +284,10 @@ async fn is_banned_from_hub(
 #[get("/v2/hub/{hub_id}/is_muted/{user_id}")]
 async fn hub_member_is_muted(
     _user: User,
-    hub_id: Path<String>,
+    hub_id: Path<ID>,
     user_id: Path<ID>,
 ) -> Result<impl Responder> {
-    if let Ok(hub) = Hub::load(&hub_id.to_string()).await {
+    if let Ok(hub) = Hub::load(*hub_id).await {
         if hub.mutes.contains(&user_id.0) {
             Ok("true")
         } else {
