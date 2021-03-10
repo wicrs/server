@@ -41,6 +41,11 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(get_hub_member)
             .service(join_hub)
             .service(leave_hub)
+            .service(kick_user)
+            .service(ban_user)
+            .service(unban_user)
+            .service(mute_user)
+            .service(unmute_user)
     })
     .bind(bind_address)?
     .run()
@@ -330,4 +335,107 @@ async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     } else {
         Err(error::ErrorNotFound("Hub not found."))
     }
+}
+
+async fn hub_user_op(
+    user: User,
+    hub_id: ID,
+    user_id: ID,
+    op: HubPermission,
+) -> Option<Result<impl Responder>> {
+    let not_found_error = Err(error::ErrorNotFound("Hub not found."));
+    Some(if user.in_hubs.contains(&hub_id) {
+        if let Ok(mut hub) = Hub::load(hub_id).await {
+            if let Some(member) = hub.members.get(&user.id) {
+                if member.has_permission(op.clone(), &hub) {
+                    match op {
+                        HubPermission::Kick => {
+                            if let Ok(()) = hub.kick_user(user_id).await {
+                                Ok("User kicked.")
+                            } else {
+                                Err(error::ErrorInternalServerError("Unable to kick user."))
+                            }
+                        }
+                        HubPermission::Ban => {
+                            if let Ok(()) = hub.ban_user(user_id).await {
+                                Ok("User banned.")
+                            } else {
+                                Err(error::ErrorInternalServerError("Unable to ban user."))
+                            }
+                        }
+                        HubPermission::Unban => {
+                            hub.bans.remove(&user_id);
+                            if let Ok(()) = hub.save().await {
+                                Ok("User unbanned.")
+                            } else {
+                                Err(error::ErrorInternalServerError("Unable to unban user."))
+                            }
+                        }
+                        HubPermission::Mute => {
+                            hub.mutes.insert(user_id);
+                            if let Ok(()) = hub.save().await {
+                                Ok("User muted.")
+                            } else {
+                                Err(error::ErrorInternalServerError("Unable to mute user."))
+                            }
+                        }
+                        HubPermission::Unmute => {
+                            hub.mutes.remove(&user_id);
+                            if let Ok(()) = hub.save().await {
+                                Ok("User unmuted.")
+                            } else {
+                                Err(error::ErrorInternalServerError("Unable to unmute user."))
+                            }
+                        }
+                        _ => return None,
+                    }
+                } else {
+                    Err(error::ErrorForbidden(
+                        "You do not have permission to do that.",
+                    ))
+                }
+            } else {
+                not_found_error
+            }
+        } else {
+            not_found_error
+        }
+    } else {
+        not_found_error
+    })
+}
+
+#[post("/v2/hub/{hub_id}/{user_id}/kick")]
+async fn kick_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Kick)
+        .await
+        .unwrap()
+}
+
+#[post("/v2/hub/{hub_id}/{user_id}/ban")]
+async fn ban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Ban)
+        .await
+        .unwrap()
+}
+
+#[post("/v2/hub/{hub_id}/{user_id}/unban")]
+async fn unban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unban)
+        .await
+        .unwrap()
+}
+
+#[post("/v2/hub/{hub_id}/{user_id}/mute")]
+async fn mute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Mute)
+        .await
+        .unwrap()
+}
+
+#[post("/v2/hub/{hub_id}/{user_id}/unmute")]
+async fn unmute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unmute)
+        .await
+        .unwrap()
 }

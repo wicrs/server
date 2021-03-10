@@ -42,6 +42,7 @@ pub enum JsonSaveError {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ApiActionError {
+    MemberNotFound,
     Muted,
     Banned,
     HubNotFound,

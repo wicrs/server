@@ -471,26 +471,59 @@ impl Hub {
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<HubMember, ()> {
+    pub fn user_join(&mut self, user: &User) -> Result<HubMember, ApiActionError> {
         let mut member = HubMember::new(user, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
             self.members.insert(member.user.clone(), member.clone());
             Ok(member)
         } else {
-            Err(())
+            Err(ApiActionError::GroupNotFound)
         }
     }
 
-    pub fn user_leave(&mut self, user: &User) -> Result<(), ()> {
-        let mut member = HubMember::new(user, self.id.clone());
-        if let Some(group) = self.groups.get_mut(&self.default_group) {
-            member.leave_group(group);
-            self.members.remove(&user.id);
-            Ok(())
+    pub fn user_leave(&mut self, user: &User) -> Result<(), ApiActionError> {
+        if let Some(member) = self.members.get_mut(&user.id) {
+            if let Some(group) = self.groups.get_mut(&self.default_group) {
+                member.leave_group(group);
+                self.members.remove(&user.id);
+                Ok(())
+            } else {
+                Err(ApiActionError::GroupNotFound)
+            }
         } else {
-            Err(())
+            Err(ApiActionError::NotInHub)
         }
+    }
+
+    pub async fn kick_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
+        if self.members.contains_key(&user_id) {
+            if let Ok(mut user) = User::load(&user_id).await {
+                self.user_leave(&user)?;
+                if let Some(index)  = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
+                    user.in_hubs.remove(index);
+                }
+                if let Ok(()) = user.save().await {
+                    self.members.remove(&user_id);
+                    if let Err(_) = self.save().await {
+                        Err(ApiActionError::WriteFileError)
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Err(ApiActionError::WriteFileError)
+                }
+            } else {
+                Err(ApiActionError::OpenFileError)
+            }
+        } else {
+            Err(ApiActionError::NotInHub)
+        }
+    }
+
+    pub async fn ban_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
+        self.bans.insert(user_id.clone());
+        self.kick_user(user_id).await
     }
 
     pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
