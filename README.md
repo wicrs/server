@@ -8,7 +8,7 @@ A server for handling chat rooms and messaging groups written in rust.
 ## Build
 
 Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions.
-Then clone the git repo and build:
+Then clone the git repo, then to build:
 
 ```bash
 git clone https://github.com/wicrs/server.git wicrs_server
@@ -32,14 +32,17 @@ Here is an example of what the contents of `config.json` should be:
             "client_secret": "$GITHUB_CLIENT_SECRET"
         }
     },
-    "listen": [0, 0, 0, 0],
-    "port": 24816
+    "address": "127.0.0.1:8080"
 }
 ```
 
 Make sure to replace `$GITHUB_CLIENT_ID` with the client ID and `$GITHUB_CLIENT_SECRET` with the client secret you got when you created the GitHub OAuth application.
-`listen` should be set to the local IP address youw ant the server to listen on, for localhost use `[127, 0, 0, 1]`.
+`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`.
 You can also set the GitHub client ID and secret with environement variables (which will be used instead of any configuration values) the variables are `$GITHUB_CLIENT_ID` and `$GITHUB_CLIENT_SECRET`.
+
+Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
+
+Once this is done run the server by executing `cargo run` or `cargo run --release` if you are in the project git directory. If you are not in the project's git directory you will need to either put the executable in the desired run directory (where you have the `config.json` file) and run `./wicrs_server`. Otherwise you need to have it in your path in which case you just need to run `wicrs_server` in your chosen run directory.
 
 ## Developing and Contributing
 
