@@ -309,7 +309,7 @@ async fn get_hub_member(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Resu
             if let Some(member) = hub.members.get(&user_id) {
                 Ok(Json(member.clone()))
             } else {
-                Err(error::ErrorNotFound("Member not found."))
+                Err(error::ErrorNotFound("Hub not found."))
             }
         } else {
             Err(error::ErrorNotFound("Hub not found."))
