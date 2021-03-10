@@ -1,12 +1,18 @@
 use std::io::Read;
 
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use serde::{Deserialize, Serialize};
 use sha3::{
     digest::{ExtendableOutput, Update},
     Digest, Sha3_256, Shake128,
 };
 
-use crate::{ApiActionError, ID, JsonLoadError, JsonSaveError, NAME_ALLOWED_CHARS, auth::Service, get_system_millis, hub::{Hub, HubMember}, is_valid_username};
+use crate::{
+    auth::Service,
+    get_system_millis,
+    hub::{Hub, HubMember},
+    is_valid_username, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+};
 
 static USER_FOLDER: &str = "data/users/";
 
@@ -90,11 +96,11 @@ impl User {
         }
     }
 
-    pub async fn join_hub(&mut self, hub_id: ID) ->  Result<HubMember, ApiActionError> {
+    pub async fn join_hub(&mut self, hub_id: ID) -> Result<HubMember, ApiActionError> {
         if let Ok(mut hub) = Hub::load(hub_id).await {
             if !hub.bans.contains(&self.id) {
                 if let Ok(member) = hub.user_join(&self) {
-                    if let Ok(()) = hub.save().await  {
+                    if let Ok(()) = hub.save().await {
                         self.in_hubs.push(hub_id);
                         if let Ok(()) = self.save().await {
                             Ok(member)
@@ -112,6 +118,31 @@ impl User {
             }
         } else {
             Err(ApiActionError::HubNotFound)
+        }
+    }
+
+    pub async fn leave_hub(&mut self, hub_id: ID) -> Result<(), ApiActionError> {
+        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == &hub_id) {
+            if let Ok(mut hub) = Hub::load(hub_id).await {
+                if let Ok(()) = hub.user_leave(&self) {
+                    if let Ok(()) = hub.save().await {
+                        self.in_hubs.remove(index);
+                        if let Ok(()) = self.save().await {
+                            Ok(())
+                        } else {
+                            Err(ApiActionError::WriteFileError)
+                        }
+                    } else {
+                        Err(ApiActionError::WriteFileError)
+                    }
+                } else {
+                    Err(ApiActionError::GroupNotFound)
+                }
+            } else {
+                Err(ApiActionError::HubNotFound)
+            }
+        } else {
+            Err(ApiActionError::NotInHub)
         }
     }
 
@@ -182,7 +213,10 @@ pub fn get_id(id: &str, service: &Service) -> ID {
     hasher.update(id);
     hasher.update(service.to_string());
     let mut bytes = [0; 16];
-    hasher.finalize_xof().read_exact(&mut bytes).expect("Failed to read the user ID hash");
+    hasher
+        .finalize_xof()
+        .read_exact(&mut bytes)
+        .expect("Failed to read the user ID hash");
     ID::from_bytes(bytes)
 }
 
@@ -284,9 +318,7 @@ mod tests {
             .create_hub("test_hub".to_string(), id.clone())
             .await
             .expect("Failed to create test hub.");
-        let mut hub = Hub::load(hub_id)
-            .await
-            .expect("Failed to load test hub.");
+        let mut hub = Hub::load(hub_id).await.expect("Failed to load test hub.");
         let channel = hub
             .new_channel(user.id, "test_channel".to_string())
             .await

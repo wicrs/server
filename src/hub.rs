@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -20,7 +21,7 @@ pub struct HubMember {
     pub joined: u128,
     pub hub: ID,
     pub nickname: String,
-    pub ranks: Vec<ID>,
+    pub groups: Vec<ID>,
     pub hub_permissions: HubPermissions,
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
@@ -31,7 +32,7 @@ impl HubMember {
             nickname: user.username.clone(),
             user: user.id.clone(),
             hub,
-            ranks: Vec::new(),
+            groups: Vec::new(),
             joined: get_system_millis(),
             hub_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
@@ -47,12 +48,21 @@ impl HubMember {
         }
     }
 
-    pub fn give_rank(&mut self, rank: &mut PermissionGroup) {
-        if !self.ranks.contains(&rank.id) {
-            self.ranks.push(rank.id.clone());
+    pub fn join_group(&mut self, group: &mut PermissionGroup) {
+        if !self.groups.contains(&group.id) {
+            self.groups.push(group.id.clone());
         }
-        if !rank.members.contains(&self.user) {
-            rank.members.push(self.user.clone());
+        if !group.members.contains(&self.user) {
+            group.members.push(self.user.clone());
+        }
+    }
+
+    pub fn leave_group(&mut self, group: &mut PermissionGroup) {
+        if let Some(index) = self.groups.par_iter().position_any(|id| id == &group.id) {
+            self.groups.remove(index);
+        }
+        if let Some(index) = group.members.par_iter().position_any(|id| id == &self.user) {
+            group.members.remove(index);
         }
     }
 
@@ -102,9 +112,9 @@ impl HubMember {
                 PermissionSetting::NONE => {}
             };
         } else {
-            for rank in self.ranks.iter() {
-                if let Some(rank) = hub.ranks.get(&rank) {
-                    if rank.has_permission(&permission) {
+            for group in self.groups.iter() {
+                if let Some(group) = hub.groups.get(&group) {
+                    if group.has_permission(&permission) {
                         return true;
                     }
                 }
@@ -147,9 +157,9 @@ impl HubMember {
                 };
             }
         } else {
-            for rank in self.ranks.iter() {
-                if let Some(rank) = hub.ranks.get(&rank) {
-                    if rank.has_channel_permission(channel, permission) {
+            for group in self.groups.iter() {
+                if let Some(group) = hub.groups.get(&group) {
+                    if group.has_channel_permission(channel, permission) {
                         return true;
                     }
                 }
@@ -182,7 +192,11 @@ impl PermissionGroup {
     }
 
     pub fn add_member(&mut self, user: &mut HubMember) {
-        user.give_rank(self)
+        user.join_group(self)
+    }
+
+    pub fn remove_member(&mut self, user: &mut HubMember) {
+        user.leave_group(self)
     }
 
     pub fn set_permission(&mut self, permission: HubPermission, value: PermissionSetting) {
@@ -254,8 +268,8 @@ pub struct Hub {
     pub bans: HashSet<ID>,
     pub mutes: HashSet<ID>,
     pub owner: ID,
-    pub ranks: HashMap<ID, PermissionGroup>,
-    pub default_rank: ID,
+    pub groups: HashMap<ID, PermissionGroup>,
+    pub default_group: ID,
     pub name: String,
     pub id: ID,
     pub created: u128,
@@ -267,16 +281,16 @@ impl Hub {
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
         let mut members = HashMap::new();
-        let mut ranks = HashMap::new();
-        owner.give_rank(&mut everyone);
+        let mut groups = HashMap::new();
+        owner.join_group(&mut everyone);
         owner.set_permission(HubPermission::All, PermissionSetting::TRUE);
         members.insert(creator_id.clone(), owner);
-        ranks.insert(everyone.id.clone(), everyone);
+        groups.insert(everyone.id.clone(), everyone.clone());
         Self {
             name,
             id,
-            ranks,
-            default_rank: new_id(),
+            groups,
+            default_group: everyone.id.clone(),
             owner: creator_id,
             bans: HashSet::new(),
             mutes: HashSet::new(),
@@ -459,10 +473,21 @@ impl Hub {
 
     pub fn user_join(&mut self, user: &User) -> Result<HubMember, ()> {
         let mut member = HubMember::new(user, self.id.clone());
-        if let Some(rank) = self.ranks.get_mut(&self.default_rank) {
-            rank.add_member(&mut member);
+        if let Some(group) = self.groups.get_mut(&self.default_group) {
+            group.add_member(&mut member);
             self.members.insert(member.user.clone(), member.clone());
             Ok(member)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn user_leave(&mut self, user: &User) -> Result<(), ()> {
+        let mut member = HubMember::new(user, self.id.clone());
+        if let Some(group) = self.groups.get_mut(&self.default_group) {
+            member.leave_group(group);
+            self.members.remove(&user.id);
+            Ok(())
         } else {
             Err(())
         }
@@ -575,42 +600,42 @@ mod tests {
     }
 
     #[test]
-    fn rank_permissions() {
+    fn group_permissions() {
         let mut hub = get_hub_for_test();
         let mut member = hub
             .user_join(&get_user_for_test(2))
             .expect("Test user could not join test hub.");
-        let rank = PermissionGroup::new("test_rank".to_string(), ID::from_u128(0));
-        hub.ranks.insert(rank.id.clone(), rank.clone());
-        member.give_rank(
-            hub.ranks
-                .get_mut(&rank.id)
-                .expect("Failed to get test rank."),
+        let group = PermissionGroup::new("test_group".to_string(), ID::from_u128(0));
+        hub.groups.insert(group.id.clone(), group.clone());
+        member.join_group(
+            hub.groups
+                .get_mut(&group.id)
+                .expect("Failed to get test group."),
         );
         assert!(!member.has_permission(HubPermission::All, &hub));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.ranks
-            .get_mut(&rank.id)
-            .expect("Failed to get test rank.")
+        hub.groups
+            .get_mut(&group.id)
+            .expect("Failed to get test group.")
             .set_permission(HubPermission::SendMessage, PermissionSetting::FALSE);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.ranks
-            .get_mut(&rank.id)
-            .expect("Failed to get test rank.")
+        hub.groups
+            .get_mut(&group.id)
+            .expect("Failed to get test group.")
             .set_permission(HubPermission::SendMessage, PermissionSetting::NONE);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.ranks
-            .get_mut(&rank.id)
-            .expect("Failed to get test rank.")
+        hub.groups
+            .get_mut(&group.id)
+            .expect("Failed to get test group.")
             .set_permission(HubPermission::SendMessage, PermissionSetting::TRUE);
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.ranks
-            .get_mut(&rank.id)
-            .expect("Failed to get test rank.")
+        hub.groups
+            .get_mut(&group.id)
+            .expect("Failed to get test group.")
             .set_permission(HubPermission::All, PermissionSetting::TRUE);
         assert!(member.has_permission(HubPermission::ReadMessage, &hub));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));

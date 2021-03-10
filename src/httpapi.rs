@@ -38,6 +38,9 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(delete_hub)
             .service(hub_member_is_muted)
             .service(is_banned_from_hub)
+            .service(get_hub_member)
+            .service(join_hub)
+            .service(leave_hub)
     })
     .bind(bind_address)?
     .run()
@@ -187,7 +190,7 @@ async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                     .collect::<HashMap<ID, Channel>>();
                 Ok(Json(sending))
             } else {
-                Err(error::ErrorNotFound("Account not found."))
+                Err(error::ErrorInternalServerError("User not in hub."))
             }
         } else {
             Err(error::ErrorInternalServerError("Failed to load hub data."))
@@ -221,7 +224,7 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
             }
         } else {
-            Err(error::ErrorNotFound("Account not found."))
+            Err(error::ErrorNotFound("Hub not found."))
         }
     } else {
         Err(error::ErrorNotFound("Hub not found."))
@@ -253,7 +256,7 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
                 Err(error::ErrorInternalServerError("Failed to load hub data."))
             }
         } else {
-            Err(error::ErrorNotFound("Account not found."))
+            Err(error::ErrorNotFound("Hub not found."))
         }
     } else {
         Err(error::ErrorNotFound("Hub not found."))
@@ -273,7 +276,7 @@ async fn is_banned_from_hub(
             Ok("false")
         }
     } else {
-        Err(error::ErrorNotFound("Hub not found."))
+        Ok("false")
     }
 }
 
@@ -289,6 +292,41 @@ async fn hub_member_is_muted(
         } else {
             Ok("false")
         }
+    } else {
+        Ok("false")
+    }
+}
+
+#[get("/v2/hub/{hub_id}/{user_id}")]
+async fn get_hub_member(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+    if user.in_hubs.contains(&hub_id.0) {
+        if let Ok(hub) = Hub::load(*hub_id).await {
+            if let Some(member) = hub.members.get(&user_id) {
+                Ok(Json(member.clone()))
+            } else {
+                Err(error::ErrorNotFound("Member not found."))
+            }
+        } else {
+            Err(error::ErrorNotFound("Hub not found."))
+        }
+    } else {
+        Err(error::ErrorNotFound("Hub not found."))
+    }
+}
+
+#[post("/v2/hub/join/{hub_id}")]
+async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+    if let Ok(member) = user.join_hub(hub_id.0).await {
+        Ok(Json(member))
+    } else {
+        Err(error::ErrorNotFound("Hub not found."))
+    }
+}
+
+#[post("/v2/hub/leave/{hub_id}")]
+async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+    if let Ok(()) = user.leave_hub(hub_id.0).await {
+        Ok("")
     } else {
         Err(error::ErrorNotFound("Hub not found."))
     }
