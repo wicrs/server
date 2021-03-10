@@ -407,7 +407,7 @@ fn hash_auth(id: ID, token: String) -> (String, String) { // (Hashed ID, Hashed 
 
 #[cfg(test)]
 mod tests {
-    use rweb::Buf;
+    use actix_web::web::Buf;
 
     use crate::get_system_millis;
 
