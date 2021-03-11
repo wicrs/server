@@ -53,6 +53,12 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     .await
 }
 
+macro_rules! not_found {
+    ($item:expr) => {
+        Err(error::ErrorNotFound(format!("{} not found.", $item)))
+    };
+}
+
 impl FromRequest for User {
     type Error = actix_web::Error;
 
@@ -62,7 +68,6 @@ impl FromRequest for User {
 
     fn from_request(request: &HttpRequest, _payload: &mut Payload) -> Self::Future {
         let result = futures::executor::block_on(async {
-            let bad_request_error = err(error::ErrorBadRequest("Malformed request."));
             if let Some(header) = request.headers().get_all("Authorization").next() {
                 if let Ok(header_str) = header.to_str() {
                     if let Some(encoded) = header_str.trim().strip_prefix("Basic") {
@@ -71,7 +76,7 @@ impl FromRequest for User {
                             let _tostring = decoded.as_slice().read_to_string(&mut result).await;
                             if let Some(split) = result.split_once(':') {
                                 if let Ok(id) = ID::parse_str(split.0) {
-                                    if Auth::is_authenticated(
+                                    return if Auth::is_authenticated(
                                         crate::AUTH.clone(),
                                         id,
                                         split.1.to_string(),
@@ -81,29 +86,18 @@ impl FromRequest for User {
                                         if let Ok(user) = Self::load(&id).await {
                                             ok(user)
                                         } else {
-                                            err(error::ErrorNotFound("No user with that ID."))
+                                            err(error::ErrorNotFound("User not found."))
                                         }
                                     } else {
                                         err(error::ErrorUnauthorized("Invalid ID:token pair."))
-                                    }
-                                } else {
-                                    bad_request_error
+                                    };
                                 }
-                            } else {
-                                bad_request_error
                             }
-                        } else {
-                            bad_request_error
                         }
-                    } else {
-                        bad_request_error
                     }
-                } else {
-                    bad_request_error
                 }
-            } else {
-                bad_request_error
             }
+            err(error::ErrorBadRequest("Malformed request."))
         });
         result
     }
@@ -118,12 +112,6 @@ impl FromRequest for User {
     {
         f(Self::Config::default())
     }
-}
-
-macro_rules! not_found_error {
-    ($item:expr) => {
-        Err(error::ErrorNotFound(format!("{} not found.", $item)))
-    };
 }
 
 #[get("/")]
@@ -166,7 +154,7 @@ async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<impl Responder> {
     if let Ok(other) = User::load(&id).await {
         Ok(Json(other.to_generic()))
     } else {
-        not_found_error!("User")
+        not_found!("User")
     }
 }
 
@@ -200,16 +188,11 @@ async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                     .into_par_iter()
                     .map(|channel| (channel.id, channel))
                     .collect::<HashMap<ID, Channel>>();
-                Ok(Json(sending))
-            } else {
-                not_found_error!("Hub")
+                return Ok(Json(sending));
             }
-        } else {
-            not_found_error!("Hub")
         }
-    } else {
-        not_found_error!("Hub")
     }
+    not_found!("Hub")
 }
 
 #[delete("/v2/hub/{hub_id}")]
@@ -217,7 +200,7 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     if user.in_hubs.contains(&hub_id) {
         if let Ok(hub) = Hub::load(*hub_id).await {
             if let Some(member) = hub.members.get(&user.id) {
-                if member.has_permission(HubPermission::All, &hub) {
+                return if member.has_permission(HubPermission::All, &hub) {
                     if let Ok(_remove) = tokio::fs::remove_file(
                         HUB_DATA_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json",
                     )
@@ -231,16 +214,11 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
                     }
                 } else {
                     Err(error::ErrorForbidden(HubPermission::All))
-                }
-            } else {
-                not_found_error!("Hub")
+                };
             }
-        } else {
-            not_found_error!("Hub")
         }
-    } else {
-        not_found_error!("Hub")
     }
+    not_found!("Hub")
 }
 
 #[derive(Deserialize)]
@@ -253,7 +231,7 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
     if user.in_hubs.contains(&hub_id) {
         if let Ok(mut hub) = Hub::load(*hub_id).await {
             if let Some(member) = hub.members.get(&user.id) {
-                if member.has_permission(HubPermission::Administrate, &hub) {
+                return if member.has_permission(HubPermission::Administrate, &hub) {
                     let old_name = hub.name;
                     hub.name = query.name.clone();
                     if let Ok(_save) = hub.save().await {
@@ -263,16 +241,11 @@ async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<
                     }
                 } else {
                     Err(error::ErrorForbidden(HubPermission::Administrate))
-                }
-            } else {
-                not_found_error!("Hub")
+                };
             }
-        } else {
-            not_found_error!("Hub")
         }
-    } else {
-        not_found_error!("Hub")
     }
+    not_found!("Hub")
 }
 
 #[get("/v2/hub/{hub_id}/is_banned/{user_id}")]
@@ -283,13 +256,10 @@ async fn is_banned_from_hub(
 ) -> Result<impl Responder> {
     if let Ok(hub) = Hub::load(*hub_id).await {
         if hub.bans.contains(&user_id.0) {
-            Ok("true")
-        } else {
-            Ok("false")
+            return Ok("true");
         }
-    } else {
-        Ok("false")
     }
+    Ok("false")
 }
 
 #[get("/v2/hub/{hub_id}/is_muted/{user_id}")]
@@ -300,13 +270,10 @@ async fn hub_member_is_muted(
 ) -> Result<impl Responder> {
     if let Ok(hub) = Hub::load(*hub_id).await {
         if hub.mutes.contains(&user_id.0) {
-            Ok("true")
-        } else {
-            Ok("false")
+            return Ok("true");
         }
-    } else {
-        Ok("false")
     }
+    Ok("false")
 }
 
 #[get("/v2/hub/{hub_id}/{user_id}")]
@@ -314,16 +281,11 @@ async fn get_hub_member(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Resu
     if user.in_hubs.contains(&hub_id.0) {
         if let Ok(hub) = Hub::load(*hub_id).await {
             if let Some(member) = hub.members.get(&user_id) {
-                Ok(Json(member.clone()))
-            } else {
-                not_found_error!("Hub")
+                return Ok(Json(member.clone()));
             }
-        } else {
-            not_found_error!("Hub")
         }
-    } else {
-        not_found_error!("Hub")
     }
+    not_found!("Hub")
 }
 
 #[post("/v2/hub/join/{hub_id}")]
@@ -331,7 +293,7 @@ async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     if let Ok(member) = user.join_hub(hub_id.0).await {
         Ok(Json(member))
     } else {
-        not_found_error!("Hub")
+        not_found!("Hub")
     }
 }
 
@@ -340,7 +302,7 @@ async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     if let Ok(()) = user.leave_hub(hub_id.0).await {
         Ok("")
     } else {
-        not_found_error!("Hub")
+        not_found!("Hub")
     }
 }
 
@@ -349,12 +311,11 @@ async fn hub_user_op(
     hub_id: ID,
     user_id: ID,
     op: HubPermission,
-) -> Option<Result<impl Responder>> {
-    let not_found_error = not_found_error!("Hub");
-    Some(if user.in_hubs.contains(&hub_id) {
+) -> Result<impl Responder> {
+    if user.in_hubs.contains(&hub_id) {
         if let Ok(mut hub) = Hub::load(hub_id).await {
             if let Some(member) = hub.members.get(&user.id) {
-                if member.has_permission(op.clone(), &hub) {
+                return if member.has_permission(op.clone(), &hub) {
                     match op {
                         HubPermission::Kick => {
                             if let Ok(()) = hub.kick_user(user_id).await {
@@ -394,79 +355,70 @@ async fn hub_user_op(
                                 Err(error::ErrorInternalServerError("Unable to unmute user."))
                             }
                         }
-                        _ => return None,
+                        _ => Err(error::ErrorInternalServerError(
+                            "Something strange happened...",
+                        )),
                     }
                 } else {
                     Err(error::ErrorForbidden(op))
-                }
-            } else {
-                not_found_error
+                };
             }
-        } else {
-            not_found_error
         }
-    } else {
-        not_found_error
-    })
+    }
+    not_found!("Hub")
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/kick")]
 async fn kick_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Kick)
-        .await
-        .unwrap()
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Kick).await
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/ban")]
 async fn ban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Ban)
-        .await
-        .unwrap()
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Ban).await
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unban")]
 async fn unban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unban)
-        .await
-        .unwrap()
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unban).await
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/mute")]
 async fn mute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Mute)
-        .await
-        .unwrap()
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Mute).await
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unmute")]
 async fn unmute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unmute)
-        .await
-        .unwrap()
+    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unmute).await
 }
 
 #[post("/v2/channel/create/{hub_id}/{name}")]
-async fn create_channel(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<impl Responder> {
-    let not_found_error = not_found_error!("Hub");
+async fn create_channel(
+    user: User,
+    hub_id: Path<ID>,
+    name: Path<String>,
+) -> Result<impl Responder> {
     if user.in_hubs.contains(&hub_id.0) {
         if let Ok(mut hub) = Hub::load(hub_id.0).await {
             let channel_id = hub.new_channel(user.id.clone(), name.0).await;
-            if let Err(err) = channel_id {
+            return if let Err(err) = channel_id {
                 match err {
-                    ApiActionError::NoPermission => Err(error::ErrorForbidden(HubPermission::CreateChannel)),
-                    ApiActionError::BadNameCharacters => Err(error::ErrorBadRequest("Malformed request.")),
-                    ApiActionError::NotInHub => not_found_error,
+                    ApiActionError::NoPermission => {
+                        Err(error::ErrorForbidden(HubPermission::CreateChannel))
+                    }
+                    ApiActionError::BadNameCharacters => {
+                        Err(error::ErrorBadRequest("Malformed request."))
+                    }
+                    ApiActionError::NotInHub => not_found!("Hub"),
                     _ => Err(error::ErrorInternalServerError(
                         "Something strange happened...",
                     )),
                 }
             } else {
                 Ok(channel_id.unwrap().to_string())
-            }
-        } else {
-            not_found_error
+            };
         }
-    } else {
-        not_found_error
     }
+    not_found!("Hub")
 }
