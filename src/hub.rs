@@ -10,7 +10,7 @@ use crate::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
     user::User,
-    ApiActionError, JsonLoadError, JsonSaveError, ID,
+    Error, ID,
 };
 
 pub static HUB_DATA_FOLDER: &str = "data/hubs/info";
@@ -300,7 +300,7 @@ impl Hub {
         }
     }
 
-    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID, ApiActionError> {
+    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID, Error> {
         if is_valid_username(&name) {
             if let Some(member) = self.members.get(&member_id) {
                 if member
@@ -316,19 +316,19 @@ impl Hub {
                         if let Ok(_) = self.save().await {
                             Ok(id)
                         } else {
-                            Err(ApiActionError::WriteFileError)
+                            Err(Error::WriteFile)
                         }
                     } else {
-                        Err(ApiActionError::WriteFileError)
+                        Err(Error::WriteFile)
                     }
                 } else {
-                    Err(ApiActionError::NoPermission)
+                    Err(Error::NoPermission)
                 }
             } else {
-                Err(ApiActionError::NotInHub)
+                Err(Error::NotInHub)
             }
         } else {
-            Err(ApiActionError::BadNameCharacters)
+            Err(Error::BadNameCharacters)
         }
     }
 
@@ -337,7 +337,7 @@ impl Hub {
         user: ID,
         channel: ID,
         name: String,
-    ) -> Result<String, ApiActionError> {
+    ) -> Result<String, Error> {
         if is_valid_username(&name) {
             if let Some(user) = self.members.get(&user) {
                 if user.clone().has_channel_permission(
@@ -351,23 +351,23 @@ impl Hub {
                         if let Ok(_) = self.save().await {
                             Ok(old_name)
                         } else {
-                            Err(ApiActionError::WriteFileError)
+                            Err(Error::WriteFile)
                         }
                     } else {
-                        Err(ApiActionError::ChannelNotFound)
+                        Err(Error::ChannelNotFound)
                     }
                 } else {
-                    Err(ApiActionError::NoPermission)
+                    Err(Error::NoPermission)
                 }
             } else {
-                Err(ApiActionError::NotInHub)
+                Err(Error::NotInHub)
             }
         } else {
-            Err(ApiActionError::BadNameCharacters)
+            Err(Error::BadNameCharacters)
         }
     }
 
-    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<(), ApiActionError> {
+    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<(), Error> {
         if let Some(user) = self.members.get(&user) {
             if user
                 .clone()
@@ -382,19 +382,19 @@ impl Hub {
                         if let Ok(_) = self.save().await {
                             Ok(())
                         } else {
-                            Err(ApiActionError::WriteFileError)
+                            Err(Error::WriteFile)
                         }
                     } else {
-                        Err(ApiActionError::ChannelNotFound)
+                        Err(Error::ChannelNotFound)
                     }
                 } else {
-                    Err(ApiActionError::NoPermission)
+                    Err(Error::NoPermission)
                 }
             } else {
-                Err(ApiActionError::NoPermission)
+                Err(Error::NoPermission)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
@@ -403,7 +403,7 @@ impl Hub {
         user: ID,
         channel: ID,
         message: String,
-    ) -> Result<ID, ApiActionError> {
+    ) -> Result<ID, Error> {
         if let Some(member) = self.members.get(&user) {
             if !self.mutes.contains(&user) {
                 if member.clone().has_channel_permission(
@@ -422,22 +422,22 @@ impl Hub {
                         channel.add_message(message).await?;
                         Ok(id)
                     } else {
-                        Err(ApiActionError::ChannelNotFound)
+                        Err(Error::ChannelNotFound)
                     }
                 } else {
-                    Err(ApiActionError::NoPermission)
+                    Err(Error::NoPermission)
                 }
             } else {
-                Err(ApiActionError::Muted)
+                Err(Error::Muted)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn save(&self) -> Result<(), JsonSaveError> {
+    pub async fn save(&self) -> Result<(), Error> {
         if let Err(_) = tokio::fs::create_dir_all(HUB_DATA_FOLDER).await {
-            return Err(JsonSaveError::Directory);
+            return Err(Error::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = tokio::fs::write(
@@ -448,14 +448,14 @@ impl Hub {
             {
                 Ok(result)
             } else {
-                Err(JsonSaveError::WriteFile)
+                Err(Error::WriteFile)
             }
         } else {
-            Err(JsonSaveError::Serialize)
+            Err(Error::Serialize)
         }
     }
 
-    pub async fn load(id: ID) -> Result<Self, JsonLoadError> {
+    pub async fn load(id: ID) -> Result<Self, Error> {
         if let Ok(json) = tokio::fs::read_to_string(
             HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json",
         )
@@ -464,39 +464,39 @@ impl Hub {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
-                Err(JsonLoadError::Deserialize)
+                Err(Error::Deserialize)
             }
         } else {
-            Err(JsonLoadError::ReadFile)
+            Err(Error::ReadFile)
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<HubMember, ApiActionError> {
+    pub fn user_join(&mut self, user: &User) -> Result<HubMember, Error> {
         let mut member = HubMember::new(user, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
             self.members.insert(member.user.clone(), member.clone());
             Ok(member)
         } else {
-            Err(ApiActionError::GroupNotFound)
+            Err(Error::GroupNotFound)
         }
     }
 
-    pub fn user_leave(&mut self, user: &User) -> Result<(), ApiActionError> {
+    pub fn user_leave(&mut self, user: &User) -> Result<(), Error> {
         if let Some(member) = self.members.get_mut(&user.id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
                 self.members.remove(&user.id);
                 Ok(())
             } else {
-                Err(ApiActionError::GroupNotFound)
+                Err(Error::GroupNotFound)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn kick_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
+    pub async fn kick_user(&mut self, user_id: ID) -> Result<(), Error> {
         if self.members.contains_key(&user_id) {
             if let Ok(mut user) = User::load(&user_id).await {
                 self.user_leave(&user)?;
@@ -506,27 +506,27 @@ impl Hub {
                 if let Ok(()) = user.save().await {
                     self.members.remove(&user_id);
                     if let Err(_) = self.save().await {
-                        Err(ApiActionError::WriteFileError)
+                        Err(Error::WriteFile)
                     } else {
                         Ok(())
                     }
                 } else {
-                    Err(ApiActionError::WriteFileError)
+                    Err(Error::WriteFile)
                 }
             } else {
-                Err(ApiActionError::OpenFileError)
+                Err(Error::ReadFile)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn ban_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
+    pub async fn ban_user(&mut self, user_id: ID) -> Result<(), Error> {
         self.bans.insert(user_id.clone());
         self.kick_user(user_id).await
     }
 
-    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
+    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, Error> {
         let hub_im = self.clone();
         if let Some(user) = self.members.get_mut(&user) {
             let mut result = Vec::new();
@@ -538,7 +538,7 @@ impl Hub {
             }
             Ok(result)
         } else {
-            Err(ApiActionError::UserNotFound)
+            Err(Error::UserNotFound)
         }
     }
 }

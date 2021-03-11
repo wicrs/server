@@ -11,7 +11,7 @@ use crate::{
     auth::Service,
     get_system_millis,
     hub::{Hub, HubMember},
-    is_valid_username, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    is_valid_username, Error, ID, NAME_ALLOWED_CHARS,
 };
 
 static USER_FOLDER: &str = "data/users/";
@@ -65,17 +65,17 @@ impl User {
         }
     }
 
-    pub async fn change_username(&mut self, new_name: String) -> Result<String, ApiActionError> {
+    pub async fn change_username(&mut self, new_name: String) -> Result<String, Error> {
         if is_valid_username(&new_name) {
             let old_name = self.username.clone();
             self.username = new_name;
             if let Ok(_save) = self.save().await {
                 Ok(old_name)
             } else {
-                Err(ApiActionError::WriteFileError)
+                Err(Error::WriteFile)
             }
         } else {
-            Err(ApiActionError::BadNameCharacters)
+            Err(Error::BadNameCharacters)
         }
     }
 
@@ -84,19 +84,19 @@ impl User {
         hub: ID,
         channel: ID,
         message: String,
-    ) -> Result<ID, ApiActionError> {
+    ) -> Result<ID, Error> {
         if self.in_hubs.contains(&hub) {
             if let Ok(mut hub) = Hub::load(hub).await {
                 hub.send_message(self.id, channel, message).await
             } else {
-                Err(ApiActionError::HubNotFound)
+                Err(Error::HubNotFound)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn join_hub(&mut self, hub_id: ID) -> Result<HubMember, ApiActionError> {
+    pub async fn join_hub(&mut self, hub_id: ID) -> Result<HubMember, Error> {
         if let Ok(mut hub) = Hub::load(hub_id).await {
             if !hub.bans.contains(&self.id) {
                 if let Ok(member) = hub.user_join(&self) {
@@ -105,23 +105,23 @@ impl User {
                         if let Ok(()) = self.save().await {
                             Ok(member)
                         } else {
-                            Err(ApiActionError::WriteFileError)
+                            Err(Error::WriteFile)
                         }
                     } else {
-                        Err(ApiActionError::WriteFileError)
+                        Err(Error::WriteFile)
                     }
                 } else {
-                    Err(ApiActionError::GroupNotFound)
+                    Err(Error::GroupNotFound)
                 }
             } else {
-                Err(ApiActionError::Banned)
+                Err(Error::Banned)
             }
         } else {
-            Err(ApiActionError::HubNotFound)
+            Err(Error::HubNotFound)
         }
     }
 
-    pub async fn leave_hub(&mut self, hub_id: ID) -> Result<(), ApiActionError> {
+    pub async fn leave_hub(&mut self, hub_id: ID) -> Result<(), Error> {
         if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == &hub_id) {
             if let Ok(mut hub) = Hub::load(hub_id).await {
                 if let Ok(()) = hub.user_leave(&self) {
@@ -130,25 +130,25 @@ impl User {
                         if let Ok(()) = self.save().await {
                             Ok(())
                         } else {
-                            Err(ApiActionError::WriteFileError)
+                            Err(Error::WriteFile)
                         }
                     } else {
-                        Err(ApiActionError::WriteFileError)
+                        Err(Error::WriteFile)
                     }
                 } else {
-                    Err(ApiActionError::GroupNotFound)
+                    Err(Error::GroupNotFound)
                 }
             } else {
-                Err(ApiActionError::HubNotFound)
+                Err(Error::HubNotFound)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn create_hub(&mut self, name: String, id: ID) -> Result<ID, ApiActionError> {
+    pub async fn create_hub(&mut self, name: String, id: ID) -> Result<ID, Error> {
         if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
-            return Err(ApiActionError::BadNameCharacters);
+            return Err(Error::BadNameCharacters);
         }
         if Hub::load(id).await.is_err() {
             let new_hub = Hub::new(name, id, &self);
@@ -157,13 +157,13 @@ impl User {
                 if let Ok(_) = self.save().await {
                     Ok(new_hub.id)
                 } else {
-                    Err(ApiActionError::WriteFileError)
+                    Err(Error::WriteFile)
                 }
             } else {
-                Err(ApiActionError::WriteFileError)
+                Err(Error::WriteFile)
             }
         } else {
-            Err(ApiActionError::WriteFileError)
+            Err(Error::HubNotFound)
         }
     }
 
@@ -171,9 +171,9 @@ impl User {
         self.in_hubs.contains(&hub)
     }
 
-    pub async fn save(&self) -> Result<(), JsonSaveError> {
+    pub async fn save(&self) -> Result<(), Error> {
         if let Err(_) = tokio::fs::create_dir_all(USER_FOLDER).await {
-            return Err(JsonSaveError::Directory);
+            return Err(Error::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = std::fs::write(
@@ -182,28 +182,28 @@ impl User {
             ) {
                 Ok(result)
             } else {
-                Err(JsonSaveError::WriteFile)
+                Err(Error::WriteFile)
             }
         } else {
-            Err(JsonSaveError::Serialize)
+            Err(Error::Serialize)
         }
     }
 
-    pub async fn load(id: &ID) -> Result<Self, JsonLoadError> {
+    pub async fn load(id: &ID) -> Result<Self, Error> {
         if let Ok(json) =
             tokio::fs::read_to_string(USER_FOLDER.to_owned() + &id.to_string() + ".json").await
         {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
-                Err(JsonLoadError::Deserialize)
+                Err(Error::Deserialize)
             }
         } else {
-            Err(JsonLoadError::ReadFile)
+            Err(Error::ReadFile)
         }
     }
 
-    pub async fn load_get_id(id: &str, service: &Service) -> Result<Self, JsonLoadError> {
+    pub async fn load_get_id(id: &str, service: &Service) -> Result<Self, Error> {
         Self::load(&get_id(id, service)).await
     }
 }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, ApiActionError, ID};
+use crate::{get_system_millis, Error, ID};
 
 static HUB_DATA_FOLDER: &str = "data/hubs/data";
 
@@ -47,7 +47,7 @@ impl Channel {
         tokio::fs::create_dir_all(self.get_folder()).await
     }
 
-    pub async fn add_message(&mut self, message: Message) -> Result<(), ApiActionError> {
+    pub async fn add_message(&mut self, message: Message) -> Result<(), Error> {
         let message_string = &message.to_string();
         if let Ok(mut file) = OpenOptions::new()
             .write(true)
@@ -63,10 +63,10 @@ impl Channel {
                 self.messages.push(message);
                 Ok(())
             } else {
-                Err(ApiActionError::WriteFileError)
+                Err(Error::WriteFile)
             }
         } else {
-            Err(ApiActionError::OpenFileError)
+            Err(Error::ReadFile)
         }
     }
 

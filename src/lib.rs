@@ -4,10 +4,7 @@
 
 use auth::Auth;
 use futures::lock::Mutex;
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fmt::Display, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -17,6 +14,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate serial_test;
 
+pub mod api;
 pub mod auth;
 pub mod channel;
 pub mod config;
@@ -27,34 +25,30 @@ pub mod user;
 
 use uuid::Uuid;
 
-#[derive(Eq, PartialEq, Debug)]
-pub enum JsonLoadError {
-    ReadFile,
-    Deserialize,
-}
-
-#[derive(Eq, PartialEq, Debug)]
-pub enum JsonSaveError {
-    WriteFile,
-    Serialize,
-    Directory,
-}
-
 #[derive(Debug, PartialEq, Eq)]
-pub enum ApiActionError {
-    MemberNotFound,
+pub enum Error {
     Muted,
     Banned,
     HubNotFound,
     ChannelNotFound,
     NoPermission,
     NotInHub,
-    WriteFileError,
-    OpenFileError,
+    WriteFile,
+    Deserialize,
+    Directory,
+    ReadFile,
+    Serialize,
     UserNotFound,
+    MemberNotFound,
     BadAuth,
     GroupNotFound,
     BadNameCharacters,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_string().as_str())
+    }
 }
 
 pub static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));

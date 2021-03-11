@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use reqwest::StatusCode;
 use std::collections::HashMap;
 
 use crate::{
@@ -8,16 +9,11 @@ use crate::{
     new_id,
     permission::HubPermission,
     user::User,
-    ApiActionError, AUTH, ID,
+    Error, AUTH, ID,
+    api::*,
 };
 
-use actix_web::{
-    delete,
-    dev::Payload,
-    error, get, post, put,
-    web::{Json, Path, Query},
-    App, FromRequest, HttpRequest, HttpResponse, HttpServer, Responder, Result,
-};
+use actix_web::{App, FromRequest, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError, Result, delete, dev::Payload, error, get, post, put, web::{Json, Path, Query}};
 use futures::{
     future::{err, ok, Ready},
     AsyncReadExt,
@@ -165,10 +161,10 @@ async fn create_hub(mut user: User, name: Path<String>) -> Result<impl Responder
         Ok(id.to_string())
     } else {
         match new_hub {
-            Err(ApiActionError::WriteFileError) => Err(error::ErrorInternalServerError(
+            Err(Error::WriteFile) => Err(error::ErrorInternalServerError(
                 "Unable to create the new hub.",
             )),
-            Err(ApiActionError::BadNameCharacters) => {
+            Err(Error::BadNameCharacters) => {
                 Err(error::ErrorBadRequest("Malformed request."))
             }
             _ => Err(error::ErrorInternalServerError(
@@ -404,13 +400,13 @@ async fn create_channel(
             let channel_id = hub.new_channel(user.id.clone(), name.0).await;
             return if let Err(err) = channel_id {
                 match err {
-                    ApiActionError::NoPermission => {
+                    Error::NoPermission => {
                         Err(error::ErrorForbidden(HubPermission::CreateChannel))
                     }
-                    ApiActionError::BadNameCharacters => {
+                    Error::BadNameCharacters => {
                         Err(error::ErrorBadRequest("Malformed request."))
                     }
-                    ApiActionError::NotInHub => not_found!("Hub"),
+                    Error::NotInHub => not_found!("Hub"),
                     _ => Err(error::ErrorInternalServerError(
                         "Something strange happened...",
                     )),
