@@ -18,7 +18,7 @@ cargo build # to build the release version run cargo build --release
 
 ## Setup
 
-First you need to create a GitHub OAuth application by following the instructions [here](https://docs.github.com/en/free-pro-team@latest/developers/apps/creating-an-oauth-app), make sure to set the callback URL to `$HOSTNAME:$PORT/api/v1/auth/github`, replace `$PORT` with the port you choose in the config and replace `$HOSTNAME` with the address you will navigate to when accessing the WICRS API.
+First you need to create a GitHub OAuth application by following the instructions [here](https://docs.github.com/en/free-pro-team@latest/developers/apps/creating-an-oauth-app), make sure to set the callback URL to `$HOSTNAME:$PORT/api/v2/auth/github`, replace `$PORT` with the port you choose in the config and replace `$HOSTNAME` with the address you will navigate to when accessing the WICRS API.
 
 To run the server you first need to create a config file named `config.json` in the server's working directory, which should be reserved for the server.
 Here is an example of what the contents of `config.json` should be:
