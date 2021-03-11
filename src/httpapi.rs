@@ -70,7 +70,7 @@ impl FromRequest for User {
                         if let Ok(decoded) = base64::decode(encoded.trim()) {
                             let _tostring = decoded.as_slice().read_to_string(&mut result).await;
                             if let Some(split) = result.split_once(':') {
-                                if let Ok(id) = serde_json::from_str::<ID>(split.0) {
+                                if let Ok(id) = ID::parse_str(split.0) {
                                     if Auth::is_authenticated(
                                         crate::AUTH.clone(),
                                         id,
