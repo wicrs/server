@@ -8,11 +8,9 @@ use crate::{
 };
 
 use actix_web::{
-    delete,
-    dev::Payload,
-    error, get, post, put,
+    delete, error, get, post, put,
     web::{Json, Path, Query},
-    App, FromRequest, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
+    App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
 };
 use futures::{
     future::{err, ok, Ready},
@@ -72,7 +70,7 @@ impl FromRequest for User {
 
     type Config = ();
 
-    fn from_request(request: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+    fn from_request(request: &HttpRequest, _payload: &mut actix_web::dev::Payload) -> Self::Future {
         let result = futures::executor::block_on(async {
             if let Some(header) = request.headers().get_all("Authorization").next() {
                 if let Ok(header_str) = header.to_str() {
@@ -122,7 +120,7 @@ impl FromRequest for User {
 
 macro_rules! no_content {
     ($op:expr) => {
-        $op.and_then(|_| Ok(HttpResponse::NoContent()))
+        $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
     };
 }
 
@@ -139,7 +137,7 @@ macro_rules! json_response {
 }
 
 #[get("/")]
-async fn index() -> impl Responder {
+async fn index() -> &'static str {
     "WICRS is up and running!"
 }
 
@@ -151,109 +149,124 @@ async fn login_start(service: Path<Service>) -> HttpResponse {
 }
 
 #[get("/v2/auth/{service}")]
-async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result<impl Responder> {
+async fn login_finish(
+    service: Path<Service>,
+    query: Query<AuthQuery>,
+) -> Result<Json<crate::auth::IDToken>> {
     json_response!(api::complete_login(service.0, query.0).await)
 }
 
 #[post("/v2/invalidate_tokens")]
-async fn invalidate_tokens(user: User) -> impl Responder {
+async fn invalidate_tokens(user: User) -> HttpResponse {
     api::invalidate_tokens(&user).await;
-    HttpResponse::NoContent()
+    HttpResponse::NoContent().finish()
 }
 
 #[get("/v2/user")]
-async fn get_user(user: User) -> impl Responder {
+async fn get_user(user: User) -> Json<User> {
     Json(user)
 }
 
 #[get("/v2/user/{id}")]
-async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<impl Responder> {
+async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<Json<crate::user::GenericUser>> {
     json_response!(api::get_user_stripped(id.0).await)
 }
 
+#[put("/v2/user/change_username/{name}")]
+async fn rename_user(mut user: User, name: Path<String>) -> Result<String> {
+    api::change_username(&mut user, name.0).await
+}
+
 #[post("/v2/hub/create/{name}")]
-async fn create_hub(mut user: User, name: Path<String>) -> Result<impl Responder> {
+async fn create_hub(mut user: User, name: Path<String>) -> Result<String> {
     string_response!(api::create_hub(name.0, &mut user).await)
 }
 
 #[get("/v2/hub/{hub_id}")]
-async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+async fn get_hub(user: User, hub_id: Path<ID>) -> Result<Json<crate::hub::Hub>> {
     json_response!(api::get_hub(&user, hub_id.0).await)
 }
 
 #[delete("/v2/hub/{hub_id}")]
-async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::delete_hub(&user, hub_id.0).await)
 }
 
 #[put("/v2/hub/rename/{hub_id}/{name}")]
-async fn rename_hub(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<impl Responder> {
+async fn rename_hub(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<String> {
     api::rename_hub(&user, hub_id.0, name.0).await
 }
 
 #[get("/v2/hub/{hub_id}/is_banned/{user_id}")]
-async fn is_banned_from_hub(
-    user: User,
-    hub_id: Path<ID>,
-    user_id: Path<ID>,
-) -> Result<impl Responder> {
+async fn is_banned_from_hub(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<String> {
     string_response!(api::user_banned(&user, hub_id.0, user_id.0).await)
 }
 
 #[get("/v2/hub/{hub_id}/is_muted/{user_id}")]
-async fn hub_member_is_muted(
-    user: User,
-    hub_id: Path<ID>,
-    user_id: Path<ID>,
-) -> Result<impl Responder> {
+async fn hub_member_is_muted(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<String> {
     string_response!(api::user_muted(&user, hub_id.0, user_id.0).await)
 }
 
 #[get("/v2/hub/{hub_id}/{user_id}")]
-async fn get_hub_member(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn get_hub_member(
+    user: User,
+    hub_id: Path<ID>,
+    user_id: Path<ID>,
+) -> Result<Json<crate::hub::HubMember>> {
     json_response!(api::get_hub_member(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/join/{hub_id}")]
-async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::join_hub(&mut user, hub_id.0).await)
 }
 
 #[post("/v2/hub/leave/{hub_id}")]
-async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
+async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::leave_hub(&mut user, hub_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/kick")]
-async fn kick_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn kick_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::kick_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/ban")]
-async fn ban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn ban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::ban_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unban")]
-async fn unban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn unban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::unban_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/mute")]
-async fn mute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn mute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::mute_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unmute")]
-async fn unmute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
+async fn unmute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<HttpResponse> {
     no_content!(api::unmute_user(&user, hub_id.0, user_id.0).await)
 }
 
+#[put("/v2/member/change_nickname/{hub_id}/{name}")]
+async fn change_nickname(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<String> {
+    api::change_nickname(&user, hub_id.0, name.0).await
+}
+
 #[post("/v2/channel/create/{hub_id}/{name}")]
-async fn create_channel(
+async fn create_channel(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<String> {
+    string_response!(api::create_channel(&user, hub_id.0, name.0).await)
+}
+
+#[put("/v2/channel/rename/{hub_id}/{channel_id}/{name}")]
+async fn rename_channel(
     user: User,
     hub_id: Path<ID>,
+    channel_id: Path<ID>,
     name: Path<String>,
-) -> Result<impl Responder> {
-    string_response!(api::create_channel(&user, hub_id.0, name.0).await)
+) -> Result<String> {
+    api::rename_channel(&user, hub_id.0, channel_id.0, name.0).await
 }

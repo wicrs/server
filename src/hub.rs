@@ -323,6 +323,32 @@ impl Hub {
         }
     }
 
+    pub fn get_channel(&self, member_id: &ID, channel_id: &ID) -> Result<&Channel> {
+        let member = self.get_member(member_id)?;
+        if member.has_channel_permission(channel_id, &ChannelPermission::ViewChannel, self) {
+            if let Some(channel) = self.channels.get(channel_id) {
+                Ok(channel)
+            } else {
+                Err(Error::ChannelNotFound)
+            }
+        } else {
+            Err(Error::ChannelNotFound)
+        }
+    }
+
+    pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: &ID) -> Result<&mut Channel> {
+        let member = self.get_member(member_id)?;
+        if member.has_channel_permission(channel_id, &ChannelPermission::ViewChannel, self) {
+            if let Some(channel) = self.channels.get_mut(channel_id) {
+                Ok(channel)
+            } else {
+                Err(Error::ChannelNotFound)
+            }
+        } else {
+            Err(Error::ChannelNotFound)
+        }
+    }
+
     pub fn get_member(&self, member_id: &ID) -> Result<HubMember> {
         if let Some(member) = self.members.get(member_id) {
             Ok(member.clone())
@@ -433,12 +459,7 @@ impl Hub {
             return Err(Error::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = tokio::fs::write(
-                self.get_info_path(),
-                json,
-            )
-            .await
-            {
+            if let Ok(result) = tokio::fs::write(self.get_info_path(), json).await {
                 Ok(result)
             } else {
                 Err(Error::WriteFile)

@@ -27,6 +27,14 @@ pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
     }
 }
 
+pub async fn change_username(user: &mut User, new_name: String) -> Result<String> {
+    is_valid_username(&new_name)?;
+    let old_name = user.username.clone();
+    user.username = new_name;
+    user.save().await?;
+    Ok(old_name)
+}
+
 pub async fn create_hub(name: String, owner: &mut User) -> Result<ID> {
     is_valid_username(&name)?;
     let mut id = new_id();
@@ -66,6 +74,7 @@ pub async fn delete_hub(user: &User, hub_id: ID) -> Result<()> {
 }
 
 pub async fn rename_hub(user: &User, hub_id: ID, new_name: String) -> Result<String> {
+    is_valid_username(&new_name)?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
@@ -77,6 +86,17 @@ pub async fn rename_hub(user: &User, hub_id: ID, new_name: String) -> Result<Str
     } else {
         Err(Error::NoPermission)
     }
+}
+
+pub async fn change_nickname(user: &User, hub_id: ID, new_name: String) -> Result<String> {
+    is_valid_username(&new_name)?;
+    user.in_hub(&hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    let member = hub.get_member_mut(&user.id)?;
+    let old_name = member.nickname.clone();
+    member.nickname = new_name;
+    hub.save().await?;
+    Ok(old_name)
 }
 
 pub async fn user_banned(user: &User, hub_id: ID, user_id: ID) -> Result<bool> {
@@ -152,9 +172,26 @@ pub async fn unmute_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
 }
 
 pub async fn create_channel(user: &User, hub_id: ID, name: String) -> Result<ID> {
+    is_valid_username(&name)?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let channel_id = hub.new_channel(user.id.clone(), name).await?;
     hub.save().await?;
     Ok(channel_id)
+}
+
+pub async fn rename_channel(
+    user: &User,
+    hub_id: ID,
+    channel_id: ID,
+    new_name: String,
+) -> Result<String> {
+    is_valid_username(&new_name)?;
+    user.in_hub(&hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    let channel = hub.get_channel_mut(&user.id, &channel_id)?;
+    let old_name = channel.name.clone();
+    channel.name = new_name;
+    hub.save().await?;
+    Ok(old_name)
 }
