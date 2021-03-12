@@ -1,10 +1,23 @@
 use crate::{
+    auth::{Auth, AuthQuery, IDToken, Service},
     hub::{Hub, HubMember},
     is_valid_username, new_id,
     permission::HubPermission,
     user::{GenericUser, User},
-    Error, Result, ID,
+    Error, Result, AUTH, ID,
 };
+
+pub async fn start_login(service: Service) -> String {
+    Auth::start_login(AUTH.clone(), service).await
+}
+
+pub async fn complete_login(service: Service, query: AuthQuery) -> Result<IDToken> {
+    Auth::handle_oauth(AUTH.clone(), service, query).await
+}
+
+pub async fn invalidate_tokens(user: &User) {
+    Auth::invalidate_tokens(AUTH.clone(), user.id).await
+}
 
 pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
     if let Ok(other) = User::load(&id).await {

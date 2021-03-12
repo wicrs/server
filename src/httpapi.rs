@@ -4,7 +4,7 @@ use crate::{
     api,
     auth::{Auth, AuthQuery, Service},
     user::User,
-    Error, Result, AUTH, ID,
+    Error, Result, ID,
 };
 
 use actix_web::{
@@ -146,22 +146,20 @@ async fn index() -> impl Responder {
 
 #[get("/v2/login/{service}")]
 async fn login_start(service: Path<Service>) -> HttpResponse {
-    let uri = Auth::start_login(AUTH.clone(), service.0).await;
-    HttpResponse::Found().header("Location", uri).finish()
+    HttpResponse::Found()
+        .header("Location", api::start_login(service.0).await)
+        .finish()
 }
 
 #[get("/v2/auth/{service}")]
-async fn login_finish(
-    service: Path<Service>,
-    query: Query<AuthQuery>,
-) -> Result<impl Responder> {
-    json_response!(Auth::handle_oauth(AUTH.clone(), service.0, query.0).await)
+async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result<impl Responder> {
+    json_response!(api::complete_login(service.0, query.0).await)
 }
 
 #[post("/v2/invalidate_tokens")]
 async fn invalidate_tokens(user: User) -> impl Responder {
-    Auth::invalidate_tokens(AUTH.clone(), user.id).await;
-    "All authentication tokens for your account have been invalidated."
+    api::invalidate_tokens(&user).await;
+    HttpResponse::NoContent()
 }
 
 #[get("/v2/user")]
