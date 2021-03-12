@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, Error, ID};
-
-static HUB_DATA_FOLDER: &str = "data/hubs/data";
+use crate::{get_system_millis, Error, ID, hub::HUB_DATA_FOLDER};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -40,7 +38,7 @@ impl Channel {
     }
 
     pub fn get_folder(&self) -> String {
-        format!("{}/{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
+        format!("{}{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
     }
 
     pub async fn create_dir(&self) -> tokio::io::Result<()> {

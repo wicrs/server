@@ -13,7 +13,8 @@ use crate::{
     Error, Result, ID,
 };
 
-pub static HUB_DATA_FOLDER: &str = "data/hubs/info";
+pub static HUB_INFO_FOLDER: &str = "data/hubs/info/";
+pub static HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
@@ -326,6 +327,22 @@ impl Hub {
         }
     }
 
+    pub fn get_member(&self, member_id: &ID) -> Result<HubMember> {
+        if let Some(member) = self.members.get(member_id) {
+            Ok(member.clone())
+        } else {
+            Err(Error::MemberNotFound)
+        }
+    }
+
+    pub fn get_member_mut(&mut self, member_id: &ID) -> Result<&mut HubMember> {
+        if let Some(member) = self.members.get_mut(member_id) {
+            Ok(member)
+        } else {
+            Err(Error::MemberNotFound)
+        }
+    }
+
     pub async fn rename_channel(&mut self, user: ID, channel: ID, name: String) -> Result<String> {
         is_valid_username(&name)?;
         if let Some(user) = self.members.get(&user) {
@@ -416,12 +433,12 @@ impl Hub {
     }
 
     pub async fn save(&self) -> Result<()> {
-        if let Err(_) = tokio::fs::create_dir_all(HUB_DATA_FOLDER).await {
+        if let Err(_) = tokio::fs::create_dir_all(HUB_INFO_FOLDER).await {
             return Err(Error::Directory);
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = tokio::fs::write(
-                HUB_DATA_FOLDER.to_owned() + "/" + &self.id.to_string() + ".json",
+                self.get_info_path(),
                 json,
             )
             .await
@@ -435,8 +452,16 @@ impl Hub {
         }
     }
 
+    pub fn get_info_path(&self) -> String {
+        HUB_INFO_FOLDER.to_owned() + &self.id.to_string() + ".json"
+    }
+
+    pub fn get_data_path(&self) -> String {
+        HUB_INFO_FOLDER.to_owned() + &self.id.to_string() + "/"
+    }
+
     pub async fn load(id: ID) -> Result<Self> {
-        let filename = HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json";
+        let filename = HUB_INFO_FOLDER.to_owned() + &id.to_string() + ".json";
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(Error::HubNotFound);

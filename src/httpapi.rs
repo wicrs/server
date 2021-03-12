@@ -2,10 +2,11 @@ use std::fmt::Write;
 
 use crate::{
     auth::{Auth, AuthQuery, Service},
-    hub::{Hub, HUB_DATA_FOLDER},
+    hub::Hub,
     permission::HubPermission,
     user::User,
     Error, Result, AUTH, ID,
+    api,
 };
 
 use actix_web::{
@@ -162,47 +163,30 @@ async fn get_user(user: User) -> impl Responder {
 
 #[get("/v2/user/{id}")]
 async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<impl Responder> {
-    crate::api::get_user_stripped(id.0)
+    api::get_user_stripped(id.0)
         .await
         .and_then(|u| Ok(Json(u)))
 }
 
 #[post("/v2/hub/create/{name}")]
 async fn create_hub(mut user: User, name: Path<String>) -> Result<impl Responder> {
-    crate::api::create_hub(name.0, &mut user)
+    api::create_hub(name.0, &mut user)
         .await
         .and_then(|i| Ok(i.to_string()))
 }
 
 #[get("/v2/hub/{hub_id}")]
 async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    crate::api::get_hub(&user, hub_id.0)
+    api::get_hub(&user, hub_id.0)
         .await
         .and_then(|h| Ok(Json(h)))
 }
 
 #[delete("/v2/hub/{hub_id}")]
 async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    if user.in_hubs.contains(&hub_id) {
-        if let Ok(hub) = Hub::load(*hub_id).await {
-            if let Some(member) = hub.members.get(&user.id) {
-                return if member.has_permission(HubPermission::All, &hub) {
-                    if let Ok(_remove) = tokio::fs::remove_file(
-                        HUB_DATA_FOLDER.to_owned() + "/" + &hub_id.to_string() + ".json",
-                    )
-                    .await
-                    {
-                        Ok("Successfully deleted the hub.")
-                    } else {
-                        Err(Error::DeleteFailed)
-                    }
-                } else {
-                    Err(Error::NoPermission)
-                };
-            }
-        }
-    }
-    Err(Error::HubNotFound)
+    api::delete_hub(user, hub_id.0)
+        .await
+        .and_then(|_| Ok(HttpResponse::NoContent()))
 }
 
 #[derive(Deserialize)]
