@@ -18,7 +18,6 @@ use futures::{
     future::{err, ok, Ready},
     AsyncReadExt,
 };
-use serde::Deserialize;
 
 pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
@@ -187,14 +186,9 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
     no_content!(api::delete_hub(&user, hub_id.0).await)
 }
 
-#[derive(Deserialize)]
-struct Name {
-    name: String,
-}
-
-#[put("/v2/hub/rename/{hub_id}")]
-async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<impl Responder> {
-    api::rename_hub(&user, hub_id.0, query.0.name).await
+#[put("/v2/hub/rename/{hub_id}/{name}")]
+async fn rename_hub(user: User, hub_id: Path<ID>, name: Path<String>) -> Result<impl Responder> {
+    api::rename_hub(&user, hub_id.0, name.0).await
 }
 
 #[get("/v2/hub/{hub_id}/is_banned/{user_id}")]
