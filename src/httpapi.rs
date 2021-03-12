@@ -1,12 +1,10 @@
 use std::fmt::Write;
 
 use crate::{
+    api,
     auth::{Auth, AuthQuery, Service},
-    hub::Hub,
-    permission::HubPermission,
     user::User,
     Error, Result, AUTH, ID,
-    api,
 };
 
 use actix_web::{
@@ -123,6 +121,24 @@ impl FromRequest for User {
     }
 }
 
+macro_rules! no_content {
+    ($op:expr) => {
+        $op.and_then(|_| Ok(HttpResponse::NoContent()))
+    };
+}
+
+macro_rules! string_response {
+    ($op:expr) => {
+        $op.and_then(|t| Ok(t.to_string()))
+    };
+}
+
+macro_rules! json_response {
+    ($op:expr) => {
+        $op.and_then(|t| Ok(Json(t)))
+    };
+}
+
 #[get("/")]
 async fn index() -> impl Responder {
     "WICRS is up and running!"
@@ -138,16 +154,8 @@ async fn login_start(service: Path<Service>) -> HttpResponse {
 async fn login_finish(
     service: Path<Service>,
     query: Query<AuthQuery>,
-) -> actix_web::Result<impl Responder> {
-    let result = Auth::handle_oauth(AUTH.clone(), service.0, query.0).await;
-    if let Some((id, token)) = result.1 {
-        Ok(Json(serde_json::json!({
-            "id": id,
-            "token": token
-        })))
-    } else {
-        Err(error::ErrorBadRequest("Invalid OAuth session."))
-    }
+) -> Result<impl Responder> {
+    json_response!(Auth::handle_oauth(AUTH.clone(), service.0, query.0).await)
 }
 
 #[post("/v2/invalidate_tokens")]
@@ -163,30 +171,22 @@ async fn get_user(user: User) -> impl Responder {
 
 #[get("/v2/user/{id}")]
 async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<impl Responder> {
-    api::get_user_stripped(id.0)
-        .await
-        .and_then(|u| Ok(Json(u)))
+    json_response!(api::get_user_stripped(id.0).await)
 }
 
 #[post("/v2/hub/create/{name}")]
 async fn create_hub(mut user: User, name: Path<String>) -> Result<impl Responder> {
-    api::create_hub(name.0, &mut user)
-        .await
-        .and_then(|i| Ok(i.to_string()))
+    string_response!(api::create_hub(name.0, &mut user).await)
 }
 
 #[get("/v2/hub/{hub_id}")]
 async fn get_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    api::get_hub(&user, hub_id.0)
-        .await
-        .and_then(|h| Ok(Json(h)))
+    json_response!(api::get_hub(&user, hub_id.0).await)
 }
 
 #[delete("/v2/hub/{hub_id}")]
 async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    api::delete_hub(user, hub_id.0)
-        .await
-        .and_then(|_| Ok(HttpResponse::NoContent()))
+    no_content!(api::delete_hub(&user, hub_id.0).await)
 }
 
 #[derive(Deserialize)]
@@ -196,145 +196,65 @@ struct Name {
 
 #[put("/v2/hub/rename/{hub_id}")]
 async fn rename_hub(user: User, hub_id: Path<ID>, query: Query<Name>) -> Result<impl Responder> {
-    if user.in_hubs.contains(&hub_id) {
-        if let Ok(mut hub) = Hub::load(*hub_id).await {
-            if let Some(member) = hub.members.get(&user.id) {
-                return if member.has_permission(HubPermission::Administrate, &hub) {
-                    let old_name = hub.name;
-                    hub.name = query.name.clone();
-                    hub.save().await?;
-                    Ok(old_name)
-                } else {
-                    Err(Error::NoPermission)
-                };
-            }
-        }
-    }
-    Err(Error::HubNotFound)
+    api::rename_hub(&user, hub_id.0, query.0.name).await
 }
 
 #[get("/v2/hub/{hub_id}/is_banned/{user_id}")]
 async fn is_banned_from_hub(
-    _user: User,
+    user: User,
     hub_id: Path<ID>,
     user_id: Path<ID>,
 ) -> Result<impl Responder> {
-    if let Ok(hub) = Hub::load(*hub_id).await {
-        if hub.bans.contains(&user_id.0) {
-            return Ok("true");
-        }
-    }
-    Ok("false")
+    string_response!(api::user_banned(&user, hub_id.0, user_id.0).await)
 }
 
 #[get("/v2/hub/{hub_id}/is_muted/{user_id}")]
 async fn hub_member_is_muted(
-    _user: User,
+    user: User,
     hub_id: Path<ID>,
     user_id: Path<ID>,
 ) -> Result<impl Responder> {
-    if let Ok(hub) = Hub::load(*hub_id).await {
-        if hub.mutes.contains(&user_id.0) {
-            return Ok("true");
-        }
-    }
-    Ok("false")
+    string_response!(api::user_muted(&user, hub_id.0, user_id.0).await)
 }
 
 #[get("/v2/hub/{hub_id}/{user_id}")]
 async fn get_hub_member(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    if user.in_hubs.contains(&hub_id.0) {
-        if let Ok(hub) = Hub::load(*hub_id).await {
-            if let Some(member) = hub.members.get(&user_id) {
-                return Ok(Json(member.clone()));
-            }
-        }
-    }
-    Err(Error::HubNotFound)
+    json_response!(api::get_hub_member(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/join/{hub_id}")]
 async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    if let Ok(member) = user.join_hub(hub_id.0).await {
-        Ok(Json(member))
-    } else {
-        Err(Error::HubNotFound)
-    }
+    no_content!(api::join_hub(&mut user, hub_id.0).await)
 }
 
 #[post("/v2/hub/leave/{hub_id}")]
 async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<impl Responder> {
-    if let Ok(()) = user.leave_hub(hub_id.0).await {
-        Ok("")
-    } else {
-        Err(Error::HubNotFound)
-    }
-}
-
-async fn hub_user_op(
-    user: User,
-    hub_id: ID,
-    user_id: ID,
-    op: HubPermission,
-) -> Result<impl Responder> {
-    if user.in_hubs.contains(&hub_id) {
-        if let Ok(mut hub) = Hub::load(hub_id).await {
-            if let Some(member) = hub.members.get(&user.id) {
-                return if member.has_permission(op.clone(), &hub) {
-                    match op {
-                        HubPermission::Kick => hub
-                            .kick_user(user_id)
-                            .await
-                            .and_then(|_| Ok("User kicked.")),
-                        HubPermission::Ban => {
-                            hub.ban_user(user_id).await.and_then(|_| Ok("User banned."))
-                        }
-                        HubPermission::Unban => {
-                            hub.bans.remove(&user_id);
-                            hub.save().await.and_then(|_| Ok("User unbanned."))
-                        }
-                        HubPermission::Mute => {
-                            hub.mutes.insert(user_id);
-                            hub.save().await.and_then(|_| Ok("User muted."))
-                        }
-                        HubPermission::Unmute => {
-                            hub.mutes.remove(&user_id);
-                            hub.save().await.and_then(|_| Ok("User unmuted."))
-                        }
-                        _ => Err(Error::UnexpectedServerArg),
-                    }
-                } else {
-                    Err(Error::NoPermission)
-                };
-            }
-        }
-    }
-    Err(Error::HubNotFound)
+    no_content!(api::leave_hub(&mut user, hub_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/kick")]
 async fn kick_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Kick).await
+    no_content!(api::kick_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/ban")]
 async fn ban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Ban).await
+    no_content!(api::ban_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unban")]
 async fn unban_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unban).await
+    no_content!(api::unban_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/mute")]
 async fn mute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Mute).await
+    no_content!(api::mute_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/hub/{hub_id}/{user_id}/unmute")]
 async fn unmute_user(user: User, hub_id: Path<ID>, user_id: Path<ID>) -> Result<impl Responder> {
-    hub_user_op(user, hub_id.0, user_id.0, HubPermission::Unmute).await
+    no_content!(api::unmute_user(&user, hub_id.0, user_id.0).await)
 }
 
 #[post("/v2/channel/create/{hub_id}/{name}")]
@@ -343,13 +263,5 @@ async fn create_channel(
     hub_id: Path<ID>,
     name: Path<String>,
 ) -> Result<impl Responder> {
-    if user.in_hubs.contains(&hub_id.0) {
-        if let Ok(mut hub) = Hub::load(hub_id.0).await {
-            return hub
-                .new_channel(user.id.clone(), name.0)
-                .await
-                .and_then(|channel_id| Ok(channel_id.to_string()));
-        }
-    }
-    Err(Error::HubNotFound)
+    string_response!(api::create_channel(&user, hub_id.0, name.0).await)
 }

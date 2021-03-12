@@ -10,7 +10,7 @@ use sha3::{
 use crate::{
     auth::Service,
     get_system_millis,
-    hub::{Hub, HubMember},
+    hub::Hub,
     is_valid_username, Error, Result, ID,
 };
 
@@ -69,11 +69,7 @@ impl User {
         is_valid_username(&new_name)?;
         let old_name = self.username.clone();
         self.username = new_name;
-        if let Ok(_save) = self.save().await {
-            Ok(old_name)
-        } else {
-            Err(Error::WriteFile)
-        }
+        Ok(old_name)
     }
 
     pub async fn send_hub_message(&self, hub: ID, channel: ID, message: String) -> Result<ID> {
@@ -88,17 +84,13 @@ impl User {
         }
     }
 
-    pub async fn join_hub(&mut self, hub_id: ID) -> Result<HubMember> {
+    pub async fn join_hub(&mut self, hub_id: ID) -> Result<()> {
         if let Ok(mut hub) = Hub::load(hub_id).await {
             if !hub.bans.contains(&self.id) {
-                if let Ok(member) = hub.user_join(&self) {
+                if let Ok(_) = hub.user_join(&self) {
                     if let Ok(()) = hub.save().await {
                         self.in_hubs.push(hub_id);
-                        if let Ok(()) = self.save().await {
-                            Ok(member)
-                        } else {
-                            Err(Error::WriteFile)
-                        }
+                        Ok(())
                     } else {
                         Err(Error::WriteFile)
                     }
@@ -127,11 +119,7 @@ impl User {
                 if let Ok(()) = hub.user_leave(&self) {
                     if let Ok(()) = hub.save().await {
                         self.in_hubs.remove(index);
-                        if let Ok(()) = self.save().await {
-                            Ok(())
-                        } else {
-                            Err(Error::WriteFile)
-                        }
+                        Ok(())
                     } else {
                         Err(Error::WriteFile)
                     }

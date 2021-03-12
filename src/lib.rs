@@ -50,6 +50,7 @@ pub enum Error {
     InvalidName,
     DeleteFailed,
     UnexpectedServerArg,
+    AuthError(String, StatusCode),
 }
 
 impl Error {
@@ -65,7 +66,7 @@ impl Error {
             }
             Self::GroupNotFound => "Group not found.",
             Self::HubNotFound => "Hub not found.",
-            Self::MemberNotFound => "Member not found.",
+            Self::MemberNotFound => "Hub member not found.",
             Self::Muted => "You are muted.",
             Self::NoPermission => "You do not have permission to do that.",
             Self::NotInHub => "You are not in that hub.",
@@ -75,6 +76,7 @@ impl Error {
             Self::WriteFile => "Server was unable to store the data. Try again later.",
             Self::DeleteFailed => "Server was unable to delete the data.",
             Self::UnexpectedServerArg => "Something strange happened...",
+            Self::AuthError(message, _) => message.as_str(),
         }
     }
 
@@ -98,6 +100,7 @@ impl Error {
             Self::WriteFile => StatusCode::INTERNAL_SERVER_ERROR,
             Self::DeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             Self::UnexpectedServerArg => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::AuthError(_, code) => code.clone(),
         }
     }
 }

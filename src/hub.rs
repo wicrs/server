@@ -311,11 +311,7 @@ impl Hub {
                 }
                 if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
                     self.channels.insert(id.clone(), channel);
-                    if let Ok(_) = self.save().await {
-                        Ok(id)
-                    } else {
-                        Err(Error::WriteFile)
-                    }
+                    Ok(id)
                 } else {
                     Err(Error::WriteFile)
                 }
@@ -511,11 +507,7 @@ impl Hub {
                 }
                 if let Ok(()) = user.save().await {
                     self.members.remove(&user_id);
-                    if let Err(_) = self.save().await {
-                        Err(Error::WriteFile)
-                    } else {
-                        Ok(())
-                    }
+                    Ok(())
                 } else {
                     Err(Error::WriteFile)
                 }
@@ -523,13 +515,25 @@ impl Hub {
                 Err(Error::ReadFile)
             }
         } else {
-            Err(Error::NotInHub)
+            Ok(())
         }
     }
 
     pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
         self.bans.insert(user_id.clone());
         self.kick_user(user_id).await
+    }
+
+    pub fn unban_user(&mut self, user_id: ID) {
+        self.bans.remove(&user_id);
+    }
+
+    pub fn mute_user(&mut self, user_id: ID) {
+        self.mutes.insert(user_id);
+    }
+
+    pub fn unmute_user(&mut self, user_id: ID) {
+        self.mutes.remove(&user_id);
     }
 
     pub fn channels(&self, user: ID) -> Result<HashMap<ID, Channel>> {

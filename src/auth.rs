@@ -1,13 +1,16 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use base64::URL_SAFE_NO_PAD;
-use reqwest::header::{AUTHORIZATION, USER_AGENT};
+use futures::lock::Mutex;
+use reqwest::{
+    header::{AUTHORIZATION, USER_AGENT},
+    StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use futures::lock::Mutex;
 use sha3::{Digest, Sha3_256};
 
-use crate::{ID, USER_AGENT_STRING, get_system_millis, user::User};
+use crate::{get_system_millis, user::User, Error, Result, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -29,7 +32,7 @@ pub enum Service {
 impl ToString for Service {
     fn to_string(&self) -> String {
         match self {
-            &Self::GitHub => String::from("GitHub")
+            &Self::GitHub => String::from("GitHub"),
         }
     }
 }
@@ -44,7 +47,7 @@ pub struct AuthQuery {
 impl FromStr for Service {
     type Err = ();
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "github" => Ok(Self::GitHub),
             _ => Err(()),
@@ -55,6 +58,12 @@ impl FromStr for Service {
 pub struct Auth {
     github: Arc<Mutex<GitHub>>,
     sessions: SessionMap,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct IDToken {
+    id: ID,
+    token: String,
 }
 
 impl Auth {
@@ -70,7 +79,7 @@ impl Auth {
                 github_conf.client_id,
                 github_conf.client_secret,
             ))),
-            sessions: Arc::new(Mutex::new(Auth::load_tokens()))
+            sessions: Arc::new(Mutex::new(Auth::load_tokens())),
         }
     }
 
@@ -102,7 +111,7 @@ impl Auth {
 
     fn save_tokens(
         sessions: &HashMap<String, Vec<(u128, String)>>,
-    ) -> Result<(), std::io::Error> {
+    ) -> std::result::Result<(), std::io::Error> {
         std::fs::write(
             "data/sessions.json",
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
@@ -178,7 +187,7 @@ impl Auth {
         manager: Arc<Mutex<Self>>,
         service: Service,
         query: AuthQuery,
-    ) -> (String, Option<(ID, String)>) {
+    ) -> Result<IDToken> {
         let expires = query.expires.unwrap_or(get_system_millis() + 604800000);
         match service {
             Service::GitHub => {
@@ -189,9 +198,13 @@ impl Auth {
                     service_arc = lock.github.clone();
                     service_lock = service_arc.lock().await;
                 }
-                service_lock
+                let result = service_lock
                     .handle_oauth(manager, query.state, query.code, expires)
-                    .await
+                    .await?;
+                Ok(IDToken {
+                    id: result.0,
+                    token: result.1,
+                })
             }
         }
     }
@@ -271,7 +284,7 @@ impl GitHub {
         }
     }
 
-    async fn get_id(&self, token: &String) -> Result<String, AuthGetError> {
+    async fn get_id(&self, token: &String) -> std::result::Result<String, AuthGetError> {
         let user_request = self
             .client
             .get("https://api.github.com/user")
@@ -290,7 +303,7 @@ impl GitHub {
         }
     }
 
-    async fn get_email(&self, token: &String) -> Result<String, AuthGetError> {
+    async fn get_email(&self, token: &String) -> std::result::Result<String, AuthGetError> {
         let email_request = self
             .client
             .get("https://api.github.com/user/emails")
@@ -348,54 +361,54 @@ impl GitHub {
         state: String,
         code: String,
         expires: u128,
-    ) -> (String, Option<(ID, String)>) {
+    ) -> Result<(ID, String)> {
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());
             if let Ok(token) = client.1.exchange_code(code).request(http_client) {
                 let token = token.access_token().secret();
                 if let Ok(id) = self.get_id(&token).await {
                     if let Ok(email) = self.get_email(&token).await {
-                        let auth =
-                            Auth::finalize_login(manager, Service::GitHub, &id, expires, email).await;
-                        if let Some(info) = auth.1 {
-                            if auth.0 {
-                                return (
-                                    String::from(format!(
-                                    "Signed in using GitHub to ID {}.\nYour access token is: {}",
-                                    info.0, info.1
-                                )),
-                                    Some((info.0, info.1)),
-                                );
-                            } else {
-                                return (String::from(format!("Signed up using GitHub, your ID is {}.\nYour access token is: {}", info.0, info.1)), Some((info.0, info.1)));
-                            }
-                        }
-                        if auth.0 {
-                            return (String::from("Sign in failed."), None);
+                        if let Some(info) =
+                            Auth::finalize_login(manager, Service::GitHub, &id, expires, email)
+                                .await
+                                .1
+                        {
+                            Ok((info.0, info.1))
                         } else {
-                            return (String::from("Sign up failed."), None);
+                            Err(Error::AuthError(
+                                "Sign in failed.".to_string(),
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                            ))
                         }
+                    } else {
+                        Err(Error::AuthError(
+                            "Failed to get the primary email of your GitHub account.".to_string(),
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        ))
                     }
-                    return (
-                        String::from("Failed to get the primary email of your GitHub account."),
-                        None,
-                    );
+                } else {
+                    Err(Error::AuthError(
+                        "Failed to get the ID of your GitHub account.".to_string(),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    ))
                 }
-                return (
-                    String::from("Failed to get the ID of your GitHub account."),
-                    None,
-                );
+            } else {
+                Err(Error::AuthError(
+                    "Failed to get an access token from the code.".to_string(),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ))
             }
-            return (
-                String::from("Failed to get an access token from the code."),
-                None,
-            );
+        } else {
+            Err(Error::AuthError(
+                "Invalid session.".to_string(),
+                StatusCode::BAD_REQUEST,
+            ))
         }
-        return (String::from("Invalid session."), None);
     }
 }
 
-fn hash_auth(id: ID, token: String) -> (String, String) { // (Hashed ID, Hashed Token)
+fn hash_auth(id: ID, token: String) -> (String, String) {
+    // (Hashed ID, Hashed Token)
     let mut hasher = Sha3_256::new();
     hasher.update(id.as_bytes());
     let id_hash = format!("{:x}", hasher.finalize_reset());
