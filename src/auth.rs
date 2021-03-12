@@ -7,7 +7,7 @@ use serde_json::Value;
 use futures::lock::Mutex;
 use sha3::{Digest, Sha3_256};
 
-use crate::{Error, ID, USER_AGENT_STRING, get_system_millis, user::User};
+use crate::{ID, USER_AGENT_STRING, get_system_millis, user::User};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -309,10 +309,8 @@ impl GitHub {
                         }
                     }
                 }
-                Err(AuthGetError::BadJson)
-            } else {
-                Err(AuthGetError::BadJson)
             }
+            Err(AuthGetError::BadJson)
         } else {
             Err(AuthGetError::NoResponse)
         }

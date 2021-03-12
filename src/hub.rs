@@ -10,7 +10,7 @@ use crate::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
     user::User,
-    Error, ID,
+    Error, Result, ID,
 };
 
 pub static HUB_DATA_FOLDER: &str = "data/hubs/info";
@@ -39,13 +39,10 @@ impl HubMember {
         }
     }
 
-    pub fn set_nickname(&mut self, nickname: String) -> Result<(), ()> {
-        if is_valid_username(&nickname) {
-            self.nickname = nickname;
-            Ok(())
-        } else {
-            Err(())
-        }
+    pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
+        is_valid_username(&nickname)?;
+        self.nickname = nickname;
+        Ok(())
     }
 
     pub fn join_group(&mut self, group: &mut PermissionGroup) {
@@ -300,74 +297,62 @@ impl Hub {
         }
     }
 
-    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID, Error> {
-        if is_valid_username(&name) {
-            if let Some(member) = self.members.get(&member_id) {
-                if member
-                    .clone()
-                    .has_permission(HubPermission::CreateChannel, self)
-                {
-                    let mut id = new_id();
-                    while self.channels.contains_key(&id) {
-                        id = new_id();
-                    }
-                    if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
-                        self.channels.insert(id.clone(), channel);
-                        if let Ok(_) = self.save().await {
-                            Ok(id)
-                        } else {
-                            Err(Error::WriteFile)
-                        }
+    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID> {
+        is_valid_username(&name)?;
+        if let Some(member) = self.members.get(&member_id) {
+            if member
+                .clone()
+                .has_permission(HubPermission::CreateChannel, self)
+            {
+                let mut id = new_id();
+                while self.channels.contains_key(&id) {
+                    id = new_id();
+                }
+                if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
+                    self.channels.insert(id.clone(), channel);
+                    if let Ok(_) = self.save().await {
+                        Ok(id)
                     } else {
                         Err(Error::WriteFile)
                     }
                 } else {
-                    Err(Error::NoPermission)
+                    Err(Error::WriteFile)
                 }
             } else {
-                Err(Error::NotInHub)
+                Err(Error::NoPermission)
             }
         } else {
-            Err(Error::BadNameCharacters)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn rename_channel(
-        &mut self,
-        user: ID,
-        channel: ID,
-        name: String,
-    ) -> Result<String, Error> {
-        if is_valid_username(&name) {
-            if let Some(user) = self.members.get(&user) {
-                if user.clone().has_channel_permission(
-                    &channel,
-                    &ChannelPermission::ViewChannel,
-                    self,
-                ) {
-                    if let Some(channel) = self.channels.get_mut(&channel) {
-                        let old_name = channel.name.clone();
-                        channel.name = name;
-                        if let Ok(_) = self.save().await {
-                            Ok(old_name)
-                        } else {
-                            Err(Error::WriteFile)
-                        }
+    pub async fn rename_channel(&mut self, user: ID, channel: ID, name: String) -> Result<String> {
+        is_valid_username(&name)?;
+        if let Some(user) = self.members.get(&user) {
+            if user
+                .clone()
+                .has_channel_permission(&channel, &ChannelPermission::ViewChannel, self)
+            {
+                if let Some(channel) = self.channels.get_mut(&channel) {
+                    let old_name = channel.name.clone();
+                    channel.name = name;
+                    if let Ok(_) = self.save().await {
+                        Ok(old_name)
                     } else {
-                        Err(Error::ChannelNotFound)
+                        Err(Error::WriteFile)
                     }
                 } else {
-                    Err(Error::NoPermission)
+                    Err(Error::ChannelNotFound)
                 }
             } else {
-                Err(Error::NotInHub)
+                Err(Error::NoPermission)
             }
         } else {
-            Err(Error::BadNameCharacters)
+            Err(Error::NotInHub)
         }
     }
 
-    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<(), Error> {
+    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<()> {
         if let Some(user) = self.members.get(&user) {
             if user
                 .clone()
@@ -398,12 +383,7 @@ impl Hub {
         }
     }
 
-    pub async fn send_message(
-        &mut self,
-        user: ID,
-        channel: ID,
-        message: String,
-    ) -> Result<ID, Error> {
+    pub async fn send_message(&mut self, user: ID, channel: ID, message: String) -> Result<ID> {
         if let Some(member) = self.members.get(&user) {
             if !self.mutes.contains(&user) {
                 if member.clone().has_channel_permission(
@@ -435,7 +415,7 @@ impl Hub {
         }
     }
 
-    pub async fn save(&self) -> Result<(), Error> {
+    pub async fn save(&self) -> Result<()> {
         if let Err(_) = tokio::fs::create_dir_all(HUB_DATA_FOLDER).await {
             return Err(Error::Directory);
         }
@@ -455,12 +435,13 @@ impl Hub {
         }
     }
 
-    pub async fn load(id: ID) -> Result<Self, Error> {
-        if let Ok(json) = tokio::fs::read_to_string(
-            HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json",
-        )
-        .await
-        {
+    pub async fn load(id: ID) -> Result<Self> {
+        let filename = HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json";
+        let path = std::path::Path::new(&filename);
+        if !path.exists() {
+            return Err(Error::HubNotFound);
+        }
+        if let Ok(json) = tokio::fs::read_to_string(path).await {
             if let Ok(result) = serde_json::from_str(&json) {
                 Ok(result)
             } else {
@@ -471,7 +452,7 @@ impl Hub {
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<HubMember, Error> {
+    pub fn user_join(&mut self, user: &User) -> Result<HubMember> {
         let mut member = HubMember::new(user, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
@@ -482,7 +463,7 @@ impl Hub {
         }
     }
 
-    pub fn user_leave(&mut self, user: &User) -> Result<(), Error> {
+    pub fn user_leave(&mut self, user: &User) -> Result<()> {
         if let Some(member) = self.members.get_mut(&user.id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
@@ -496,11 +477,11 @@ impl Hub {
         }
     }
 
-    pub async fn kick_user(&mut self, user_id: ID) -> Result<(), Error> {
+    pub async fn kick_user(&mut self, user_id: ID) -> Result<()> {
         if self.members.contains_key(&user_id) {
             if let Ok(mut user) = User::load(&user_id).await {
                 self.user_leave(&user)?;
-                if let Some(index)  = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
+                if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
                     user.in_hubs.remove(index);
                 }
                 if let Ok(()) = user.save().await {
@@ -521,25 +502,31 @@ impl Hub {
         }
     }
 
-    pub async fn ban_user(&mut self, user_id: ID) -> Result<(), Error> {
+    pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
         self.bans.insert(user_id.clone());
         self.kick_user(user_id).await
     }
 
-    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, Error> {
+    pub fn channels(&self, user: ID) -> Result<HashMap<ID, Channel>> {
         let hub_im = self.clone();
-        if let Some(user) = self.members.get_mut(&user) {
-            let mut result = Vec::new();
+        if let Some(user) = self.members.get(&user) {
+            let mut result = HashMap::new();
             for channel in self.channels.clone() {
                 if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &hub_im)
                 {
-                    result.push(channel.1.clone());
+                    result.insert(channel.0.clone(), channel.1.clone());
                 }
             }
             Ok(result)
         } else {
-            Err(Error::UserNotFound)
+            Err(Error::MemberNotFound)
         }
+    }
+
+    pub fn strip(&self, user: ID) -> Result<Self> {
+        let mut hub = self.clone();
+        hub.channels = self.channels(user)?;
+        Ok(hub)
     }
 }
 
@@ -720,7 +707,7 @@ mod tests {
             .channels(member.user.clone())
             .expect("Failed to get hub channels.");
         assert_eq!(get.len(), 1);
-        assert_eq!(get[0].id, channel_0.clone());
+        assert_eq!(get.get(&channel_0).unwrap().id, channel_0.clone());
     }
 
     #[tokio::test]
