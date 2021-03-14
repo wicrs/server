@@ -38,7 +38,7 @@ pub async fn change_username(user: &mut User, new_name: String) -> Result<String
 pub async fn create_hub(name: String, owner: &mut User) -> Result<ID> {
     is_valid_username(&name)?;
     let mut id = new_id();
-    while Hub::load(id).await.is_ok() {
+    while Hub::load(&id).await.is_ok() {
         id = new_id();
     }
     let new_hub = Hub::new(name, id.clone(), &owner);
@@ -48,13 +48,13 @@ pub async fn create_hub(name: String, owner: &mut User) -> Result<ID> {
     Ok(id)
 }
 
-pub async fn get_hub(user: &User, hub_id: ID) -> Result<Hub> {
+pub async fn get_hub(user: &User, hub_id: &ID) -> Result<Hub> {
     user.in_hub(&hub_id)?;
     let hub = Hub::load(hub_id).await?;
-    hub.strip(user.id)
+    hub.strip(&user.id)
 }
 
-pub async fn delete_hub(user: &User, hub_id: ID) -> Result<()> {
+pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     user.in_hub(&hub_id)?;
     let hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
@@ -73,7 +73,7 @@ pub async fn delete_hub(user: &User, hub_id: ID) -> Result<()> {
     }
 }
 
-pub async fn rename_hub(user: &User, hub_id: ID, new_name: String) -> Result<String> {
+pub async fn rename_hub(user: &User, hub_id: &ID, new_name: String) -> Result<String> {
     is_valid_username(&new_name)?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
@@ -88,7 +88,7 @@ pub async fn rename_hub(user: &User, hub_id: ID, new_name: String) -> Result<Str
     }
 }
 
-pub async fn change_nickname(user: &User, hub_id: ID, new_name: String) -> Result<String> {
+pub async fn change_nickname(user: &User, hub_id: &ID, new_name: String) -> Result<String> {
     is_valid_username(&new_name)?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
@@ -99,41 +99,41 @@ pub async fn change_nickname(user: &User, hub_id: ID, new_name: String) -> Resul
     Ok(old_name)
 }
 
-pub async fn user_banned(user: &User, hub_id: ID, user_id: ID) -> Result<bool> {
-    user.in_hub(&hub_id)?;
+pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
+    user.in_hub(hub_id)?;
     let hub = Hub::load(hub_id).await?;
-    Ok(hub.bans.contains(&user_id))
+    Ok(hub.bans.contains(user_id))
 }
 
-pub async fn user_muted(user: &User, hub_id: ID, user_id: ID) -> Result<bool> {
-    user.in_hub(&hub_id)?;
+pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
+    user.in_hub(hub_id)?;
     let hub = Hub::load(hub_id).await?;
-    Ok(hub.mutes.contains(&user_id))
+    Ok(hub.mutes.contains(user_id))
 }
 
-pub async fn get_hub_member(user: &User, hub_id: ID, user_id: ID) -> Result<HubMember> {
-    user.in_hub(&hub_id)?;
+pub async fn get_hub_member(user: &User, hub_id: &ID, user_id: &ID) -> Result<HubMember> {
+    user.in_hub(hub_id)?;
     let hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
-    if user.id == user_id {
+    if &user.id == user_id {
         return Ok(member);
     } else {
-        hub.get_member(&user_id)
+        hub.get_member(user_id)
     }
 }
 
-pub async fn join_hub(user: &mut User, hub_id: ID) -> Result<()> {
+pub async fn join_hub(user: &mut User, hub_id: &ID) -> Result<()> {
     user.join_hub(hub_id).await?;
     user.save().await
 }
 
-pub async fn leave_hub(user: &mut User, hub_id: ID) -> Result<()> {
+pub async fn leave_hub(user: &mut User, hub_id: &ID) -> Result<()> {
     user.leave_hub(hub_id).await?;
     user.save().await
 }
 
-async fn hub_user_op(user: &User, hub_id: ID, user_id: ID, op: HubPermission) -> Result<()> {
-    user.in_hub(&hub_id)?;
+async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) -> Result<()> {
+    user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
     if member.has_permission(op.clone(), &hub) {
@@ -151,47 +151,54 @@ async fn hub_user_op(user: &User, hub_id: ID, user_id: ID, op: HubPermission) ->
     }
 }
 
-pub async fn kick_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
+pub async fn kick_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
     hub_user_op(user, hub_id, user_id, HubPermission::Kick).await
 }
 
-pub async fn ban_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
+pub async fn ban_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
     hub_user_op(user, hub_id, user_id, HubPermission::Ban).await
 }
 
-pub async fn unban_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
+pub async fn unban_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
     hub_user_op(user, hub_id, user_id, HubPermission::Unban).await
 }
 
-pub async fn mute_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
+pub async fn mute_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
     hub_user_op(user, hub_id, user_id, HubPermission::Mute).await
 }
 
-pub async fn unmute_user(user: &User, hub_id: ID, user_id: ID) -> Result<()> {
+pub async fn unmute_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
     hub_user_op(user, hub_id, user_id, HubPermission::Unmute).await
 }
 
-pub async fn create_channel(user: &User, hub_id: ID, name: String) -> Result<ID> {
+pub async fn create_channel(user: &User, hub_id: &ID, name: String) -> Result<ID> {
     is_valid_username(&name)?;
-    user.in_hub(&hub_id)?;
+    user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
-    let channel_id = hub.new_channel(user.id.clone(), name).await?;
+    let channel_id = hub.new_channel(&user.id, name).await?;
     hub.save().await?;
     Ok(channel_id)
 }
 
 pub async fn rename_channel(
     user: &User,
-    hub_id: ID,
-    channel_id: ID,
+    hub_id: &ID,
+    channel_id: &ID,
     new_name: String,
 ) -> Result<String> {
     is_valid_username(&new_name)?;
-    user.in_hub(&hub_id)?;
+    user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
-    let channel = hub.get_channel_mut(&user.id, &channel_id)?;
+    let channel = hub.get_channel_mut(&user.id, channel_id)?;
     let old_name = channel.name.clone();
     channel.name = new_name;
     hub.save().await?;
     Ok(old_name)
+}
+
+pub async fn delete_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result<()> {
+    user.in_hub(hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    hub.delete_channel(&user.id, channel_id).await?;
+    hub.save().await
 }

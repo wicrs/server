@@ -72,10 +72,10 @@ impl User {
         Ok(old_name)
     }
 
-    pub async fn send_hub_message(&self, hub: ID, channel: ID, message: String) -> Result<ID> {
-        if self.in_hubs.contains(&hub) {
-            if let Ok(mut hub) = Hub::load(hub).await {
-                hub.send_message(self.id, channel, message).await
+    pub async fn send_hub_message(&self, hub_id: &ID, channel_id: &ID, message: String) -> Result<ID> {
+        if self.in_hubs.contains(hub_id) {
+            if let Ok(mut hub) = Hub::load(hub_id).await {
+                hub.send_message(&self.id, channel_id, message).await
             } else {
                 Err(Error::HubNotFound)
             }
@@ -84,12 +84,12 @@ impl User {
         }
     }
 
-    pub async fn join_hub(&mut self, hub_id: ID) -> Result<()> {
+    pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
         if let Ok(mut hub) = Hub::load(hub_id).await {
             if !hub.bans.contains(&self.id) {
                 if let Ok(_) = hub.user_join(&self) {
                     if let Ok(()) = hub.save().await {
-                        self.in_hubs.push(hub_id);
+                        self.in_hubs.push(hub_id.clone());
                         Ok(())
                     } else {
                         Err(Error::WriteFile)
@@ -113,8 +113,8 @@ impl User {
         }
     }
 
-    pub async fn leave_hub(&mut self, hub_id: ID) -> Result<()> {
-        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == &hub_id) {
+    pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
+        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == hub_id) {
             if let Ok(mut hub) = Hub::load(hub_id).await {
                 if let Ok(()) = hub.user_leave(&self) {
                     if let Ok(()) = hub.save().await {
@@ -261,13 +261,13 @@ mod tests {
         let id = crate::api::create_hub("test".to_string(), &mut user)
             .await
             .expect("Failed to create hub.");
-        let mut hub = Hub::load(id).await.expect("Failed to load test hub.");
+        let mut hub = Hub::load(&id).await.expect("Failed to load test hub.");
         let channel = hub
-            .new_channel(user.id, "test_channel".to_string())
+            .new_channel(&user.id, "test_channel".to_string())
             .await
             .expect("Failed to create test channel.");
         hub.save().await.expect("Failed to save test hub.");
-        user.send_hub_message(id, channel.clone(), "test".to_string())
+        user.send_hub_message(&id, &channel, "test".to_string())
             .await
             .expect("Failed to send message.");
         let channel = hub

@@ -298,28 +298,30 @@ impl Hub {
         }
     }
 
-    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID> {
+    pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
         is_valid_username(&name)?;
-        if let Some(member) = self.members.get(&member_id) {
-            if member
-                .clone()
-                .has_permission(HubPermission::CreateChannel, self)
-            {
-                let mut id = new_id();
-                while self.channels.contains_key(&id) {
-                    id = new_id();
-                }
-                if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
-                    self.channels.insert(id.clone(), channel);
-                    Ok(id)
-                } else {
-                    Err(Error::WriteFile)
-                }
-            } else {
-                Err(Error::NoPermission)
+        let member = self.get_member(member_id)?;
+        if member
+            .clone()
+            .has_permission(HubPermission::CreateChannel, self)
+        {
+            let mut id = new_id();
+            while self.channels.contains_key(&id) {
+                id = new_id();
             }
+            let channel = Channel::new(name, id.clone(), self.id.clone());
+            channel.create_dir().await?;
+            {
+                self.get_member_mut(member_id)?.set_channel_permission(
+                    channel.id.clone(),
+                    ChannelPermission::ViewChannel,
+                    PermissionSetting::TRUE,
+                );
+            }
+            self.channels.insert(id.clone(), channel);
+            Ok(id)
         } else {
-            Err(Error::NotInHub)
+            Err(Error::NoPermission)
         }
     }
 
@@ -365,14 +367,20 @@ impl Hub {
         }
     }
 
-    pub async fn rename_channel(&mut self, user: ID, channel: ID, name: String) -> Result<String> {
+    pub async fn rename_channel(
+        &mut self,
+        user_id: &ID,
+        channel_id: &ID,
+        name: String,
+    ) -> Result<String> {
         is_valid_username(&name)?;
-        if let Some(user) = self.members.get(&user) {
-            if user
-                .clone()
-                .has_channel_permission(&channel, &ChannelPermission::ViewChannel, self)
-            {
-                if let Some(channel) = self.channels.get_mut(&channel) {
+        if let Some(user) = self.members.get(user_id) {
+            if user.clone().has_channel_permission(
+                channel_id,
+                &ChannelPermission::ViewChannel,
+                self,
+            ) {
+                if let Some(channel) = self.channels.get_mut(channel_id) {
                     let old_name = channel.name.clone();
                     channel.name = name;
                     if let Ok(_) = self.save().await {
@@ -391,18 +399,18 @@ impl Hub {
         }
     }
 
-    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<()> {
-        if let Some(user) = self.members.get(&user) {
+    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result<()> {
+        if let Some(user) = self.members.get(user_id) {
             if user
                 .clone()
                 .has_permission(HubPermission::DeleteChannel, self)
             {
                 if user.clone().has_channel_permission(
-                    &channel,
+                    channel_id,
                     &ChannelPermission::ViewChannel,
                     self,
                 ) {
-                    if let Some(_) = self.channels.remove(&channel) {
+                    if let Some(_) = self.channels.remove(channel_id) {
                         if let Ok(_) = self.save().await {
                             Ok(())
                         } else {
@@ -422,15 +430,20 @@ impl Hub {
         }
     }
 
-    pub async fn send_message(&mut self, user: ID, channel: ID, message: String) -> Result<ID> {
-        if let Some(member) = self.members.get(&user) {
-            if !self.mutes.contains(&user) {
+    pub async fn send_message(
+        &mut self,
+        user_id: &ID,
+        channel_id: &ID,
+        message: String,
+    ) -> Result<ID> {
+        if let Some(member) = self.members.get(&user_id) {
+            if !self.mutes.contains(&user_id) {
                 if member.clone().has_channel_permission(
-                    &channel,
+                    &channel_id,
                     &ChannelPermission::SendMessage,
                     self,
                 ) {
-                    if let Some(channel) = self.channels.get_mut(&channel) {
+                    if let Some(channel) = self.channels.get_mut(&channel_id) {
                         let id = new_id();
                         let message = Message {
                             id: id.clone(),
@@ -477,7 +490,7 @@ impl Hub {
         HUB_INFO_FOLDER.to_owned() + &self.id.to_string() + "/"
     }
 
-    pub async fn load(id: ID) -> Result<Self> {
+    pub async fn load(id: &ID) -> Result<Self> {
         let filename = HUB_INFO_FOLDER.to_owned() + &id.to_string() + ".json";
         let path = std::path::Path::new(&filename);
         if !path.exists() {
@@ -519,9 +532,9 @@ impl Hub {
         }
     }
 
-    pub async fn kick_user(&mut self, user_id: ID) -> Result<()> {
-        if self.members.contains_key(&user_id) {
-            if let Ok(mut user) = User::load(&user_id).await {
+    pub async fn kick_user(&mut self, user_id: &ID) -> Result<()> {
+        if self.members.contains_key(user_id) {
+            if let Ok(mut user) = User::load(user_id).await {
                 self.user_leave(&user)?;
                 if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
                     user.in_hubs.remove(index);
@@ -540,26 +553,26 @@ impl Hub {
         }
     }
 
-    pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
+    pub async fn ban_user(&mut self, user_id: &ID) -> Result<()> {
         self.bans.insert(user_id.clone());
         self.kick_user(user_id).await
     }
 
-    pub fn unban_user(&mut self, user_id: ID) {
-        self.bans.remove(&user_id);
+    pub fn unban_user(&mut self, user_id: &ID) {
+        self.bans.remove(user_id);
     }
 
-    pub fn mute_user(&mut self, user_id: ID) {
-        self.mutes.insert(user_id);
+    pub fn mute_user(&mut self, user_id: &ID) {
+        self.mutes.insert(user_id.clone());
     }
 
-    pub fn unmute_user(&mut self, user_id: ID) {
-        self.mutes.remove(&user_id);
+    pub fn unmute_user(&mut self, user_id: &ID) {
+        self.mutes.remove(user_id);
     }
 
-    pub fn channels(&self, user: ID) -> Result<HashMap<ID, Channel>> {
+    pub fn get_channels_for_user(&self, user_id: &ID) -> Result<HashMap<ID, Channel>> {
         let hub_im = self.clone();
-        if let Some(user) = self.members.get(&user) {
+        if let Some(user) = self.members.get(user_id) {
             let mut result = HashMap::new();
             for channel in self.channels.clone() {
                 if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &hub_im)
@@ -573,9 +586,9 @@ impl Hub {
         }
     }
 
-    pub fn strip(&self, user: ID) -> Result<Self> {
+    pub fn strip(&self, user_id: &ID) -> Result<Self> {
         let mut hub = self.clone();
-        hub.channels = self.channels(user)?;
+        hub.channels = self.get_channels_for_user(user_id)?;
         Ok(hub)
     }
 }
@@ -730,15 +743,15 @@ mod tests {
             assert!(member.has_permission(HubPermission::CreateChannel, &hub));
         }
         let channel_0 = hub
-            .new_channel(member.user.clone(), "test0".to_string())
+            .new_channel(&member.user, "test0".to_string())
             .await
             .expect("Failed to create test channel.");
         let _channel_1 = hub
-            .new_channel(member.user.clone(), "test1".to_string())
+            .new_channel(&member.user, "test1".to_string())
             .await
             .expect("Failed to create test channel.");
         assert!(hub
-            .channels(member.user.clone())
+            .get_channels_for_user(&member.user)
             .expect("Failed to get hub channels.")
             .is_empty());
 
@@ -754,7 +767,7 @@ mod tests {
             );
         }
         let get = hub
-            .channels(member.user.clone())
+            .get_channels_for_user(&member.user)
             .expect("Failed to get hub channels.");
         assert_eq!(get.len(), 1);
         assert_eq!(get.get(&channel_0).unwrap().id, channel_0.clone());
@@ -772,7 +785,7 @@ mod tests {
         )
         .await;
         hub.save().await.expect("Failed to save hub info.");
-        let load = Hub::load(hub.id).await.expect("Failed to load hub info.");
+        let load = Hub::load(&hub.id).await.expect("Failed to load hub info.");
         assert_eq!(hub, load);
     }
 }

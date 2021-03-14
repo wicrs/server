@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, Error, ID, hub::HUB_DATA_FOLDER};
+use crate::{get_system_millis, Error, Result, ID, hub::HUB_DATA_FOLDER};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -22,18 +22,13 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub async fn new(name: String, id: ID, server_id: ID) -> Result<Self, ()> {
-        let new = Self {
+    pub fn new(name: String, id: ID, server_id: ID) -> Self {
+        Self {
             name,
             id,
             server_id,
             messages: Vec::new(),
             created: crate::get_system_millis(),
-        };
-        if let Ok(_) = new.create_dir().await {
-            Ok(new)
-        } else {
-            Err(())
         }
     }
 
@@ -41,11 +36,16 @@ impl Channel {
         format!("{}{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
     }
 
-    pub async fn create_dir(&self) -> tokio::io::Result<()> {
-        tokio::fs::create_dir_all(self.get_folder()).await
+    pub async fn create_dir(&self) -> Result<()> {
+        if let Ok(_) = tokio::fs::create_dir_all(self.get_folder()).await {
+            Ok(())
+        } else {
+            Err(Error::Directory)
+        }
+        
     }
 
-    pub async fn add_message(&mut self, message: Message) -> Result<(), Error> {
+    pub async fn add_message(&mut self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
         if let Ok(mut file) = OpenOptions::new()
             .write(true)
@@ -283,7 +283,7 @@ impl ToString for Message {
 impl FromStr for Message {
     type Err = ();
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let mut parts = s.splitn(4, ',');
         if let Some(id_str) = parts.next() {
             if let Ok(id) = uuid_from_num_string(id_str) {
@@ -309,11 +309,11 @@ impl FromStr for Message {
     }
 }
 
-fn uuid_from_num_string(string: &str) -> Result<Uuid, ()> {
+fn uuid_from_num_string(string: &str) -> Result<Uuid> {
     if let Ok(num) = string.parse::<u128>() {
         Ok(Uuid::from_u128(num))
     } else {
-        Err(())
+        Err(Error::Deserialize)
     }
 }
 
@@ -341,9 +341,7 @@ mod tests {
             "test".to_string(),
             Uuid::from_u128(123456789),
             Uuid::from_u128(123456789),
-        )
-        .await
-        .expect("Could not create a channel with ID \"123456789\".");
+        );
         channel
     }
 
