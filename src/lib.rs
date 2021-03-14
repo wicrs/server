@@ -113,7 +113,7 @@ impl Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.to_string().as_str())
+        f.write_fmt(format_args!("{:?}", self))
     }
 }
 
@@ -164,8 +164,9 @@ pub mod prelude {
     pub use crate::hub::{Hub, HubMember, PermissionGroup};
     pub use crate::is_valid_name;
     pub use crate::new_id;
-    pub use crate::permission::{ChannelPermission, HubPermission, PermissionSetting};
-    pub use crate::user::{GenericUser, User};
+    pub use crate::permission::{ChannelPermission, HubPermission, PermissionSetting, HubPermissions, ChannelPermissions};
+    pub use crate::user::{GenericUser, User, get_id};
+    pub use crate::auth::{Service, IDToken};
     pub use crate::Error;
     pub use crate::Result;
     pub use crate::ID;

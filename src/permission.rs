@@ -24,7 +24,7 @@ pub enum HubPermission {
 
 impl Display for HubPermission {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_string())
+        f.write_fmt(format_args!("{:?}", self))
     }
 }
 
@@ -53,7 +53,7 @@ impl ChannelPermission {
 
 impl Display for ChannelPermission {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_string())
+        f.write_fmt(format_args!("{:?}", self))
     }
 }
 
