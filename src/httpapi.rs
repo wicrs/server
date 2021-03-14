@@ -9,7 +9,7 @@ use crate::{
 
 use actix_web::{
     delete, error, get, post, put,
-    web::{Json, Path, Query},
+    web::{Bytes, Json, Path, Query},
     App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
 };
 use futures::{
@@ -283,4 +283,18 @@ async fn delete_channel(
     channel_id: Path<ID>,
 ) -> Result<HttpResponse> {
     no_content!(api::delete_channel(&user, &hub_id.0, &channel_id.0).await)
+}
+
+#[post("/v2/message/send/{hub_id}/{channel_id}")]
+async fn send_message(
+    user: User,
+    hub_id: Path<ID>,
+    channel_id: Path<ID>,
+    message: Bytes,
+) -> Result<String> {
+    if let Ok(message) = String::from_utf8(message.to_vec()) {
+        string_response!(api::send_message(&user, &hub_id.0, &channel_id.0, message).await)
+    } else {
+        Err(Error::InvalidMessage)
+    }
 }

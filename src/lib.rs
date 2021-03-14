@@ -50,7 +50,9 @@ pub enum Error {
     InvalidName,
     DeleteFailed,
     UnexpectedServerArg,
-    AuthError(String, StatusCode),
+    MessageTooBig,
+    InvalidMessage,
+    Other(String, StatusCode),
 }
 
 impl Error {
@@ -76,7 +78,9 @@ impl Error {
             Self::WriteFile => "Server was unable to store the data. Try again later.",
             Self::DeleteFailed => "Server was unable to delete the data.",
             Self::UnexpectedServerArg => "Something strange happened...",
-            Self::AuthError(message, _) => message.as_str(),
+            Self::MessageTooBig => "Message too big.",
+            Self::InvalidMessage => "Messages must be sent as UTF-8 strings.",
+            Self::Other(message, _) => message,
         }
     }
 
@@ -100,7 +104,9 @@ impl Error {
             Self::WriteFile => StatusCode::INTERNAL_SERVER_ERROR,
             Self::DeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             Self::UnexpectedServerArg => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::AuthError(_, code) => code.clone(),
+            Self::MessageTooBig => StatusCode::BAD_REQUEST,
+            Self::InvalidMessage => StatusCode::BAD_REQUEST,
+            Self::Other(_, code) => code.clone(),
         }
     }
 }
@@ -116,6 +122,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 pub const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub static MESSAGE_MAX_SIZE: &usize = &4096;
 
 lazy_static! {
     static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));

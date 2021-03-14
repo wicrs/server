@@ -220,3 +220,12 @@ pub async fn delete_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result
     hub.delete_channel(&user.id, channel_id).await?;
     hub.save().await
 }
+
+pub async fn send_message(user: &User, hub_id: &ID, channel_id: &ID, message: String) -> Result<ID> {
+    user.in_hub(hub_id)?;
+    if &message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
+        user.send_hub_message(hub_id, channel_id, message).await
+    } else {
+        Err(Error::MessageTooBig)
+    }
+}

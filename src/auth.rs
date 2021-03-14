@@ -375,31 +375,31 @@ impl GitHub {
                         {
                             Ok((info.0, info.1))
                         } else {
-                            Err(Error::AuthError(
+                            Err(Error::Other(
                                 "Sign in failed.".to_string(),
                                 StatusCode::INTERNAL_SERVER_ERROR,
                             ))
                         }
                     } else {
-                        Err(Error::AuthError(
+                        Err(Error::Other(
                             "Failed to get the primary email of your GitHub account.".to_string(),
                             StatusCode::INTERNAL_SERVER_ERROR,
                         ))
                     }
                 } else {
-                    Err(Error::AuthError(
+                    Err(Error::Other(
                         "Failed to get the ID of your GitHub account.".to_string(),
                         StatusCode::INTERNAL_SERVER_ERROR,
                     ))
                 }
             } else {
-                Err(Error::AuthError(
+                Err(Error::Other(
                     "Failed to get an access token from the code.".to_string(),
                     StatusCode::INTERNAL_SERVER_ERROR,
                 ))
             }
         } else {
-            Err(Error::AuthError(
+            Err(Error::Other(
                 "Invalid session.".to_string(),
                 StatusCode::BAD_REQUEST,
             ))
