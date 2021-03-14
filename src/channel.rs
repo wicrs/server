@@ -270,7 +270,7 @@ pub struct Message {
 impl ToString for Message {
     fn to_string(&self) -> String {
         format!(
-            "{},{},{},{}",
+            "{:X},{:X},{:X},{}",
             self.id.as_u128(),
             self.sender.as_u128(),
             self.created,
@@ -285,11 +285,11 @@ impl FromStr for Message {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let mut parts = s.splitn(4, ',');
         if let Some(id_str) = parts.next() {
-            if let Ok(id) = uuid_from_num_string(id_str) {
+            if let Ok(id) = Uuid::from_str(id_str) {
                 if let Some(sender_str) = parts.next() {
-                    if let Ok(sender) = uuid_from_num_string(sender_str) {
+                    if let Ok(sender) = Uuid::from_str(sender_str) {
                         if let Some(created_str) = parts.next() {
-                            if let Ok(created) = created_str.parse::<u128>() {
+                            if let Ok(created) = u128::from_str_radix(created_str, 16) {
                                 if let Some(content) = parts.next() {
                                     return Ok(Self {
                                         id,
@@ -305,14 +305,6 @@ impl FromStr for Message {
             }
         }
         return Err(());
-    }
-}
-
-fn uuid_from_num_string(string: &str) -> Result<Uuid> {
-    if let Ok(num) = string.parse::<u128>() {
-        Ok(Uuid::from_u128(num))
-    } else {
-        Err(Error::Deserialize)
     }
 }
 
