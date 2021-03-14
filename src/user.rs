@@ -14,7 +14,7 @@ use crate::{
     check_name_validity, Error, Result, ID,
 };
 
-static USER_FOLDER: &str = "data/users/";
+const USER_FOLDER: &str = "data/users/";
 
 /// Represents a user, keeps track of which accounts it owns and their metadata.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -140,7 +140,7 @@ impl User {
         }
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(result) = std::fs::write(
-                USER_FOLDER.to_owned() + &self.id.to_string() + ".json",
+                format!("{}{}.json", USER_FOLDER, self.id),
                 json,
             ) {
                 Ok(result)
@@ -153,7 +153,7 @@ impl User {
     }
 
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = USER_FOLDER.to_owned() + &id.to_string() + ".json";
+        let filename = format!("{}{}.json", USER_FOLDER, id);
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(Error::HubNotFound);

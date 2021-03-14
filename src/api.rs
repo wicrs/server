@@ -1,8 +1,9 @@
 use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::Channel,
+    check_name_validity, check_permission,
     hub::{Hub, HubMember},
-    check_name_validity, new_id,
+    new_id,
     permission::HubPermission,
     user::{GenericUser, User},
     Error, Result, AUTH, ID,
@@ -21,10 +22,16 @@ pub async fn invalidate_tokens(user: &User) {
 }
 
 pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
-    User::load(&id).await.map(|u| User::to_generic(&u)).map_err(|_| Error::UserNotFound)
+    User::load(&id)
+        .await
+        .map(|u| User::to_generic(&u))
+        .map_err(|_| Error::UserNotFound)
 }
 
-pub async fn change_username<S: Into<String> + Clone>(user: &mut User, new_name: S) -> Result<String> {
+pub async fn change_username<S: Into<String> + Clone>(
+    user: &mut User,
+    new_name: S,
+) -> Result<String> {
     check_name_validity(&new_name.clone().into())?;
     let old_name = user.username.clone();
     user.username = new_name.into();
@@ -73,33 +80,37 @@ pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     user.in_hub(&hub_id)?;
     let hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
-    if member.has_all_permissions() {
-        if let Ok(()) = tokio::fs::remove_file(hub.get_info_path()).await {
-            tokio::fs::remove_dir_all(hub.get_data_path()).await.map_err(|_| Error::DeleteFailed)
-        } else {
-            Err(Error::DeleteFailed)
-        }
+    check_permission!(member, HubPermission::All, hub);
+    if let Ok(()) = tokio::fs::remove_file(hub.get_info_path()).await {
+        tokio::fs::remove_dir_all(hub.get_data_path())
+            .await
+            .map_err(|_| Error::DeleteFailed)
     } else {
-        Err(Error::MissingPermission)
+        Err(Error::DeleteFailed)
     }
 }
 
-pub async fn rename_hub<S: Into<String> + Clone>(user: &User, hub_id: &ID, new_name: S) -> Result<String> {
+pub async fn rename_hub<S: Into<String> + Clone>(
+    user: &User,
+    hub_id: &ID,
+    new_name: S,
+) -> Result<String> {
     check_name_validity(&new_name.clone().into())?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
-    if member.has_permission(HubPermission::Administrate, &hub) {
-        let old_name = hub.name.clone();
-        hub.name = new_name.into();
-        hub.save().await?;
-        Ok(old_name)
-    } else {
-        Err(Error::MissingPermission)
-    }
+    check_permission!(member, HubPermission::Administrate, hub);
+    let old_name = hub.name.clone();
+    hub.name = new_name.into();
+    hub.save().await?;
+    Ok(old_name)
 }
 
-pub async fn change_nickname<S: Into<String> + Clone>(user: &User, hub_id: &ID, new_name: S) -> Result<String> {
+pub async fn change_nickname<S: Into<String> + Clone>(
+    user: &User,
+    hub_id: &ID,
+    new_name: S,
+) -> Result<String> {
     check_name_validity(&new_name.clone().into())?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
@@ -112,12 +123,16 @@ pub async fn change_nickname<S: Into<String> + Clone>(user: &User, hub_id: &ID, 
 
 pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
-    Hub::load(hub_id).await.map(|hub| hub.bans.contains(user_id))
+    Hub::load(hub_id)
+        .await
+        .map(|hub| hub.bans.contains(user_id))
 }
 
 pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
-    Hub::load(hub_id).await.map(|hub| hub.mutes.contains(user_id))
+    Hub::load(hub_id)
+        .await
+        .map(|hub| hub.mutes.contains(user_id))
 }
 
 pub async fn get_hub_member(user: &User, hub_id: &ID, user_id: &ID) -> Result<HubMember> {
@@ -145,19 +160,16 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
-    if member.has_permission(op, &hub) {
-        match op {
-            HubPermission::Kick => hub.kick_user(user_id).await?,
-            HubPermission::Ban => hub.ban_user(user_id.clone()).await?,
-            HubPermission::Unban => hub.unban_user(user_id),
-            HubPermission::Mute => hub.mute_user(user_id.clone()),
-            HubPermission::Unmute => hub.unmute_user(user_id),
-            _ => return Err(Error::UnexpectedServerArg),
-        }
-        hub.save().await
-    } else {
-        Err(Error::MissingPermission)
+    check_permission!(member, op, hub);
+    match op {
+        HubPermission::Kick => hub.kick_user(user_id).await?,
+        HubPermission::Ban => hub.ban_user(user_id.clone()).await?,
+        HubPermission::Unban => hub.unban_user(user_id),
+        HubPermission::Mute => hub.mute_user(user_id.clone()),
+        HubPermission::Unmute => hub.unmute_user(user_id),
+        _ => return Err(Error::UnexpectedServerArg),
     }
+    hub.save().await
 }
 
 macro_rules! action_fns {
@@ -169,15 +181,19 @@ macro_rules! action_fns {
     )*
   }
 }
-action_fns! { 
-(kick_user, Kick), 
-(ban_user, Ban), 
-(unban_user, Unban), 
+action_fns! {
+(kick_user, Kick),
+(ban_user, Ban),
+(unban_user, Unban),
 (mute_user, Mute),
 (unmute_user, Unmute)
 }
 
-pub async fn create_channel<S: Into<String> + Clone>(user: &User, hub_id: &ID, name: S) -> Result<ID> {
+pub async fn create_channel<S: Into<String> + Clone>(
+    user: &User,
+    hub_id: &ID,
+    name: S,
+) -> Result<ID> {
     check_name_validity(&name.clone().into())?;
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;

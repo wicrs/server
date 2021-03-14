@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     channel::{Channel, Message},
-    get_system_millis, check_name_validity, new_id,
+    check_name_validity, check_permission, get_system_millis, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
@@ -13,8 +13,8 @@ use crate::{
     Error, Result, ID,
 };
 
-pub static HUB_INFO_FOLDER: &str = "data/hubs/info/";
-pub static HUB_DATA_FOLDER: &str = "data/hubs/data/";
+pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
+pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
@@ -277,7 +277,7 @@ impl Hub {
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
         let mut members = HashMap::new();
-        let mut groups = HashMap::new(); 
+        let mut groups = HashMap::new();
         owner.join_group(&mut everyone);
         owner.set_permission(HubPermission::All, Some(true));
         members.insert(creator_id.clone(), owner);
@@ -299,38 +299,29 @@ impl Hub {
     pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
         check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
-        if member
-            .clone()
-            .has_permission(HubPermission::CreateChannel, self)
-        {
-            let mut id = new_id();
-            while self.channels.contains_key(&id) {
-                id = new_id();
-            }
-            let channel = Channel::new(name, id.clone(), self.id.clone());
-            channel.create_dir().await?;
-            {
-                self.get_member_mut(member_id)?.set_channel_permission(
-                    channel.id.clone(),
-                    ChannelPermission::ViewChannel,
-                    Some(true),
-                );
-            }
-            self.channels.insert(id.clone(), channel);
-            Ok(id)
-        } else {
-            Err(Error::MissingPermission)
+        check_permission!(member, HubPermission::CreateChannel, self);
+        let mut id = new_id();
+        while self.channels.contains_key(&id) {
+            id = new_id();
         }
+        let channel = Channel::new(name, id.clone(), self.id.clone());
+        channel.create_dir().await?;
+        {
+            self.get_member_mut(member_id)?.set_channel_permission(
+                channel.id.clone(),
+                ChannelPermission::ViewChannel,
+                Some(true),
+            );
+        }
+        self.channels.insert(id.clone(), channel);
+        Ok(id)
     }
 
     pub fn get_channel(&self, member_id: &ID, channel_id: &ID) -> Result<&Channel> {
         let member = self.get_member(member_id)?;
-        if member.has_channel_permission(channel_id, &ChannelPermission::ViewChannel, self) {
-            if let Some(channel) = self.channels.get(channel_id) {
-                Ok(channel)
-            } else {
-                Err(Error::ChannelNotFound)
-            }
+        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        if let Some(channel) = self.channels.get(channel_id) {
+            Ok(channel)
         } else {
             Err(Error::ChannelNotFound)
         }
@@ -338,12 +329,9 @@ impl Hub {
 
     pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: &ID) -> Result<&mut Channel> {
         let member = self.get_member(member_id)?;
-        if member.has_channel_permission(channel_id, &ChannelPermission::ViewChannel, self) {
-            if let Some(channel) = self.channels.get_mut(channel_id) {
-                Ok(channel)
-            } else {
-                Err(Error::ChannelNotFound)
-            }
+        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        if let Some(channel) = self.channels.get_mut(channel_id) {
+            Ok(channel)
         } else {
             Err(Error::ChannelNotFound)
         }
@@ -373,24 +361,17 @@ impl Hub {
     ) -> Result<String> {
         check_name_validity(&name)?;
         if let Some(user) = self.members.get(user_id) {
-            if user.clone().has_channel_permission(
-                channel_id,
-                &ChannelPermission::ViewChannel,
-                self,
-            ) {
-                if let Some(channel) = self.channels.get_mut(channel_id) {
-                    let old_name = channel.name.clone();
-                    channel.name = name;
-                    if let Ok(_) = self.save().await {
-                        Ok(old_name)
-                    } else {
-                        Err(Error::WriteFile)
-                    }
+            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            if let Some(channel) = self.channels.get_mut(channel_id) {
+                let old_name = channel.name.clone();
+                channel.name = name;
+                if let Ok(_) = self.save().await {
+                    Ok(old_name)
                 } else {
-                    Err(Error::ChannelNotFound)
+                    Err(Error::WriteFile)
                 }
             } else {
-                Err(Error::MissingPermission)
+                Err(Error::ChannelNotFound)
             }
         } else {
             Err(Error::NotInHub)
@@ -399,29 +380,16 @@ impl Hub {
 
     pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result<()> {
         if let Some(user) = self.members.get(user_id) {
-            if user
-                .clone()
-                .has_permission(HubPermission::DeleteChannel, self)
-            {
-                if user.clone().has_channel_permission(
-                    channel_id,
-                    &ChannelPermission::ViewChannel,
-                    self,
-                ) {
-                    if let Some(_) = self.channels.remove(channel_id) {
-                        if let Ok(_) = self.save().await {
-                            Ok(())
-                        } else {
-                            Err(Error::WriteFile)
-                        }
-                    } else {
-                        Err(Error::ChannelNotFound)
-                    }
+            check_permission!(user, HubPermission::DeleteChannel, self);
+            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            if let Some(_) = self.channels.remove(channel_id) {
+                if let Ok(_) = self.save().await {
+                    Ok(())
                 } else {
-                    Err(Error::MissingPermission)
+                    Err(Error::WriteFile)
                 }
             } else {
-                Err(Error::MissingPermission)
+                Err(Error::ChannelNotFound)
             }
         } else {
             Err(Error::NotInHub)
@@ -436,26 +404,19 @@ impl Hub {
     ) -> Result<ID> {
         if let Some(member) = self.members.get(&user_id) {
             if !self.mutes.contains(&user_id) {
-                if member.clone().has_channel_permission(
-                    &channel_id,
-                    &ChannelPermission::SendMessage,
-                    self,
-                ) {
-                    if let Some(channel) = self.channels.get_mut(&channel_id) {
-                        let id = new_id();
-                        let message = Message {
-                            id: id.clone(),
-                            sender: member.user.clone(),
-                            created: get_system_millis(),
-                            content: message,
-                        };
-                        channel.add_message(message).await?;
-                        Ok(id)
-                    } else {
-                        Err(Error::ChannelNotFound)
-                    }
+                check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
+                if let Some(channel) = self.channels.get_mut(&channel_id) {
+                    let id = new_id();
+                    let message = Message {
+                        id: id.clone(),
+                        sender: member.user.clone(),
+                        created: get_system_millis(),
+                        content: message,
+                    };
+                    channel.add_message(message).await?;
+                    Ok(id)
                 } else {
-                    Err(Error::MissingPermission)
+                    Err(Error::ChannelNotFound)
                 }
             } else {
                 Err(Error::Muted)
@@ -481,15 +442,15 @@ impl Hub {
     }
 
     pub fn get_info_path(&self) -> String {
-        HUB_INFO_FOLDER.to_owned() + &self.id.to_string() + ".json"
+        format!("{}{}.json", HUB_INFO_FOLDER, self.id)
     }
 
     pub fn get_data_path(&self) -> String {
-        HUB_INFO_FOLDER.to_owned() + &self.id.to_string() + "/"
+        format!("{}{}/", HUB_DATA_FOLDER, self.id)
     }
 
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = HUB_INFO_FOLDER.to_owned() + &id.to_string() + ".json";
+        let filename = format!("{}{}.json", HUB_INFO_FOLDER, id);
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(Error::HubNotFound);
@@ -655,25 +616,13 @@ mod tests {
         let id = ID::from_u128(0);
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            Some(false),
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(false));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            None,
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, None);
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            Some(true),
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(true));
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
         member.set_permission(HubPermission::All, Some(true));

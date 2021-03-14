@@ -4,6 +4,7 @@
 
 use auth::Auth;
 use futures::lock::Mutex;
+use prelude::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::{
     fmt::Display,
@@ -36,7 +37,8 @@ pub enum Error {
     Banned,
     HubNotFound,
     ChannelNotFound,
-    MissingPermission,
+    MissingHubPermission(HubPermission),
+    MissingChannelPermission(ChannelPermission),
     NotInHub,
     WriteFile,
     Deserialize,
@@ -70,7 +72,12 @@ impl Error {
             Self::HubNotFound => "Hub not found.",
             Self::MemberNotFound => "Hub member not found.",
             Self::Muted => "You are muted.",
-            Self::MissingPermission => "You do not have permission to do that.",
+            Self::MissingChannelPermission(_) => {
+                "You are missing the channel permission required to do that."
+            }
+            Self::MissingHubPermission(_) => {
+                "You are missing the hub permission required to do that."
+            }
             Self::NotInHub => "You are not in that hub.",
             Self::ReadFile => "Server was unable to read the data. Try again later.",
             Self::Serialize => "Server was unable to serialize the data. Try again later.",
@@ -96,7 +103,8 @@ impl Error {
             Self::HubNotFound => StatusCode::NOT_FOUND,
             Self::MemberNotFound => StatusCode::NOT_FOUND,
             Self::Muted => StatusCode::FORBIDDEN,
-            Self::MissingPermission => StatusCode::FORBIDDEN,
+            Self::MissingChannelPermission(_) => StatusCode::FORBIDDEN,
+            Self::MissingHubPermission(_) => StatusCode::FORBIDDEN,
             Self::NotInHub => StatusCode::NOT_FOUND,
             Self::ReadFile => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Serialize => StatusCode::INTERNAL_SERVER_ERROR,
@@ -152,6 +160,20 @@ pub fn check_name_validity(name: &str) -> Result<()> {
     }
 }
 
+#[macro_export]
+macro_rules! check_permission {
+    ($member:expr, $perm:expr, $hub:expr) => {
+        if !$member.has_permission($perm, &$hub) {
+            return Err(Error::MissingHubPermission($perm));
+        }
+    };
+    ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
+        if !$member.has_channel_permission($channel, &$perm, &$hub) {
+            return Err(Error::MissingChannelPermission($perm));
+        }
+    };
+}
+
 pub type ID = Uuid;
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
@@ -159,14 +181,16 @@ pub fn new_id() -> ID {
 
 pub mod prelude {
     pub use crate::api::*;
+    pub use crate::auth::{IDToken, Service};
     pub use crate::channel::{Channel, Message};
     pub use crate::check_name_validity;
     pub use crate::hub::{Hub, HubMember, PermissionGroup};
     pub use crate::is_valid_name;
     pub use crate::new_id;
-    pub use crate::permission::{ChannelPermission, HubPermission, PermissionSetting, HubPermissions, ChannelPermissions};
-    pub use crate::user::{GenericUser, User, get_id};
-    pub use crate::auth::{Service, IDToken};
+    pub use crate::permission::{
+        ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
+    };
+    pub use crate::user::{get_id, GenericUser, User};
     pub use crate::Error;
     pub use crate::Result;
     pub use crate::ID;
