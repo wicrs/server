@@ -21,11 +21,7 @@ pub async fn invalidate_tokens(user: &User) {
 }
 
 pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
-    if let Ok(other) = User::load(&id).await {
-        Ok(other.to_generic())
-    } else {
-        Err(Error::UserNotFound)
-    }
+    User::load(&id).await.map(User::to_generic).map_err(|_| Error::UserNotFound)
 }
 
 pub async fn change_username(user: &mut User, new_name: String) -> Result<String> {
@@ -79,11 +75,7 @@ pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     let member = hub.get_member(&user.id)?;
     if member.has_all_permissions() {
         if let Ok(()) = tokio::fs::remove_file(hub.get_info_path()).await {
-            if let Ok(()) = tokio::fs::remove_dir_all(hub.get_data_path()).await {
-                Ok(())
-            } else {
-                Err(Error::DeleteFailed)
-            }
+            tokio::fs::remove_dir_all(hub.get_data_path()).await.map_err(|_| Error::DeleteFailed)
         } else {
             Err(Error::DeleteFailed)
         }
@@ -120,8 +112,7 @@ pub async fn change_nickname(user: &User, hub_id: &ID, new_name: String) -> Resu
 
 pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
-    let hub = Hub::load(hub_id).await?;
-    Ok(hub.bans.contains(user_id))
+    Hub::load(hub_id).await.map(|hub| hub.bans.contains(user_id))
 }
 
 pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
@@ -170,24 +161,21 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
     }
 }
 
-pub async fn kick_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
-    hub_user_op(user, hub_id, user_id, HubPermission::Kick).await
+macro_rules! action_fns {
+  ($(($fnName:ident, $variant:ident)),*) => {
+    $(
+      pub async fn $fnName(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
+          hub_user_op(user, hub_id, user_id, HubPermission::$variant).await
+      }
+    )*
+  }
 }
-
-pub async fn ban_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
-    hub_user_op(user, hub_id, user_id, HubPermission::Ban).await
-}
-
-pub async fn unban_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
-    hub_user_op(user, hub_id, user_id, HubPermission::Unban).await
-}
-
-pub async fn mute_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
-    hub_user_op(user, hub_id, user_id, HubPermission::Mute).await
-}
-
-pub async fn unmute_user(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
-    hub_user_op(user, hub_id, user_id, HubPermission::Unmute).await
+action_fns! { 
+(kick_user, Kick), 
+(ban_user, Ban), 
+(unban_user, Unban), 
+(mute_user, Mute),
+(unmute_user, Unmute)
 }
 
 pub async fn create_channel(user: &User, hub_id: &ID, name: String) -> Result<ID> {
