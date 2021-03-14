@@ -284,7 +284,7 @@ impl GitHub {
         }
     }
 
-    async fn get_id(&self, token: &String) -> std::result::Result<String, AuthGetError> {
+    async fn get_id(&self, token: &String) -> Result<String, AuthGetError> {
         let user_request = self
             .client
             .get("https://api.github.com/user")
@@ -303,7 +303,7 @@ impl GitHub {
         }
     }
 
-    async fn get_email(&self, token: &String) -> std::result::Result<String, AuthGetError> {
+    async fn get_email(&self, token: &String) -> Result<String, AuthGetError> {
         let email_request = self
             .client
             .get("https://api.github.com/user/emails")

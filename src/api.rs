@@ -2,7 +2,7 @@ use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::Channel,
     hub::{Hub, HubMember},
-    is_valid_username, new_id,
+    check_name_validity, new_id,
     permission::HubPermission,
     user::{GenericUser, User},
     Error, Result, AUTH, ID,
@@ -21,19 +21,19 @@ pub async fn invalidate_tokens(user: &User) {
 }
 
 pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
-    User::load(&id).await.map(User::to_generic).map_err(|_| Error::UserNotFound)
+    User::load(&id).await.map(|u| User::to_generic(&u)).map_err(|_| Error::UserNotFound)
 }
 
-pub async fn change_username(user: &mut User, new_name: String) -> Result<String> {
-    is_valid_username(&new_name)?;
+pub async fn change_username<S: Into<String> + Clone>(user: &mut User, new_name: S) -> Result<String> {
+    check_name_validity(&new_name.clone().into())?;
     let old_name = user.username.clone();
-    user.username = new_name;
+    user.username = new_name.into();
     user.save().await?;
     Ok(old_name)
 }
 
 pub async fn create_hub(owner: &mut User, name: String) -> Result<ID> {
-    is_valid_username(&name)?;
+    check_name_validity(&name)?;
     let mut id = new_id();
     while Hub::load(&id).await.is_ok() {
         id = new_id();
@@ -44,17 +44,17 @@ pub async fn create_hub(owner: &mut User, name: String) -> Result<ID> {
         group.set_channel_permission(
             channel_id.clone(),
             crate::permission::ChannelPermission::ViewChannel,
-            crate::permission::PermissionSetting::TRUE,
+            Some(true),
         );
         group.set_channel_permission(
             channel_id.clone(),
             crate::permission::ChannelPermission::SendMessage,
-            crate::permission::PermissionSetting::TRUE,
+            Some(true),
         );
         group.set_channel_permission(
             channel_id.clone(),
             crate::permission::ChannelPermission::ReadMessage,
-            crate::permission::PermissionSetting::TRUE,
+            Some(true),
         );
     }
     owner.in_hubs.push(id.clone());
@@ -80,32 +80,32 @@ pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
             Err(Error::DeleteFailed)
         }
     } else {
-        Err(Error::NoPermission)
+        Err(Error::MissingPermission)
     }
 }
 
-pub async fn rename_hub(user: &User, hub_id: &ID, new_name: String) -> Result<String> {
-    is_valid_username(&new_name)?;
+pub async fn rename_hub<S: Into<String> + Clone>(user: &User, hub_id: &ID, new_name: S) -> Result<String> {
+    check_name_validity(&new_name.clone().into())?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
     if member.has_permission(HubPermission::Administrate, &hub) {
         let old_name = hub.name.clone();
-        hub.name = new_name;
+        hub.name = new_name.into();
         hub.save().await?;
         Ok(old_name)
     } else {
-        Err(Error::NoPermission)
+        Err(Error::MissingPermission)
     }
 }
 
-pub async fn change_nickname(user: &User, hub_id: &ID, new_name: String) -> Result<String> {
-    is_valid_username(&new_name)?;
+pub async fn change_nickname<S: Into<String> + Clone>(user: &User, hub_id: &ID, new_name: S) -> Result<String> {
+    check_name_validity(&new_name.clone().into())?;
     user.in_hub(&hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member_mut(&user.id)?;
     let old_name = member.nickname.clone();
-    member.nickname = new_name;
+    member.nickname = new_name.into();
     hub.save().await?;
     Ok(old_name)
 }
@@ -117,8 +117,7 @@ pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool>
 
 pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
-    let hub = Hub::load(hub_id).await?;
-    Ok(hub.mutes.contains(user_id))
+    Hub::load(hub_id).await.map(|hub| hub.mutes.contains(user_id))
 }
 
 pub async fn get_hub_member(user: &User, hub_id: &ID, user_id: &ID) -> Result<HubMember> {
@@ -146,7 +145,7 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
-    if member.has_permission(op.clone(), &hub) {
+    if member.has_permission(op, &hub) {
         match op {
             HubPermission::Kick => hub.kick_user(user_id).await?,
             HubPermission::Ban => hub.ban_user(user_id.clone()).await?,
@@ -157,7 +156,7 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
         }
         hub.save().await
     } else {
-        Err(Error::NoPermission)
+        Err(Error::MissingPermission)
     }
 }
 
@@ -178,11 +177,11 @@ action_fns! {
 (unmute_user, Unmute)
 }
 
-pub async fn create_channel(user: &User, hub_id: &ID, name: String) -> Result<ID> {
-    is_valid_username(&name)?;
+pub async fn create_channel<S: Into<String> + Clone>(user: &User, hub_id: &ID, name: S) -> Result<ID> {
+    check_name_validity(&name.clone().into())?;
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
-    let channel_id = hub.new_channel(&user.id, name).await?;
+    let channel_id = hub.new_channel(&user.id, name.into()).await?;
     hub.save().await?;
     Ok(channel_id)
 }
@@ -193,18 +192,18 @@ pub async fn get_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result<Ch
     Ok(hub.get_channel(&user.id, channel_id)?.clone())
 }
 
-pub async fn rename_channel(
+pub async fn rename_channel<S: Into<String> + Clone>(
     user: &User,
     hub_id: &ID,
     channel_id: &ID,
-    new_name: String,
+    new_name: S,
 ) -> Result<String> {
-    is_valid_username(&new_name)?;
+    check_name_validity(&new_name.clone().into())?;
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
     let channel = hub.get_channel_mut(&user.id, channel_id)?;
     let old_name = channel.name.clone();
-    channel.name = new_name;
+    channel.name = new_name.into();
     hub.save().await?;
     Ok(old_name)
 }
@@ -223,7 +222,7 @@ pub async fn send_message(
     message: String,
 ) -> Result<ID> {
     user.in_hub(hub_id)?;
-    if &message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
+    if message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
         user.send_hub_message(hub_id, channel_id, message).await
     } else {
         Err(Error::MessageTooBig)

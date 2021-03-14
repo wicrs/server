@@ -11,7 +11,7 @@ use crate::{
     auth::Service,
     get_system_millis,
     hub::Hub,
-    is_valid_username, Error, Result, ID,
+    check_name_validity, Error, Result, ID,
 };
 
 static USER_FOLDER: &str = "data/users/";
@@ -66,7 +66,7 @@ impl User {
     }
 
     pub async fn change_username(&mut self, new_name: String) -> Result<String> {
-        is_valid_username(&new_name)?;
+        check_name_validity(&new_name)?;
         let old_name = self.username.clone();
         self.username = new_name;
         Ok(old_name)

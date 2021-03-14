@@ -282,7 +282,7 @@ impl ToString for Message {
 impl FromStr for Message {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(4, ',');
         if let Some(id_str) = parts.next() {
             if let Ok(id) = Uuid::from_str(id_str) {

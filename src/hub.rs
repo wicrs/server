@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     channel::{Channel, Message},
-    get_system_millis, is_valid_username, new_id,
+    get_system_millis, check_name_validity, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
@@ -41,7 +41,7 @@ impl HubMember {
     }
 
     pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
-        is_valid_username(&nickname)?;
+        check_name_validity(&nickname)?;
         self.nickname = nickname;
         Ok(())
     }
@@ -83,7 +83,7 @@ impl HubMember {
 
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
@@ -99,13 +99,13 @@ impl HubMember {
         }
         if let Some(value) = self.hub_permissions.get(&permission) {
             match value {
-                &PermissionSetting::TRUE => {
+                &Some(true) => {
                     return true;
                 }
-                &PermissionSetting::FALSE => {
+                &Some(false) => {
                     return false;
                 }
-                PermissionSetting::NONE => {}
+                None => {}
             };
         } else {
             for group in self.groups.iter() {
@@ -133,19 +133,19 @@ impl HubMember {
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
             if let Some(value) = channel.get(&ChannelPermission::All) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
                 }
             }
             if let Some(value) = channel.get(permission) {
                 match value {
-                    &PermissionSetting::TRUE => {
+                    &Some(true) => {
                         return true;
                     }
-                    &PermissionSetting::FALSE => {
+                    &Some(false) => {
                         return false;
                     }
-                    PermissionSetting::NONE => {
+                    None => {
                         if self.has_permission(permission.hub_equivalent(), hub) {
                             return true;
                         }
@@ -214,7 +214,7 @@ impl PermissionGroup {
 
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
@@ -226,7 +226,7 @@ impl PermissionGroup {
             return true;
         }
         if let Some(value) = self.hub_permissions.get(permission) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
@@ -239,14 +239,14 @@ impl PermissionGroup {
         }
         if let Some(channel) = self.channel_permissions.get(channel_id) {
             if let Some(value) = channel.get(&ChannelPermission::All) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
                 }
             }
             if let Some(value) = channel.get(&permission) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
-                } else if value == &PermissionSetting::NONE {
+                } else if value == &None {
                     if self.has_permission(&permission.hub_equivalent()) {
                         return true;
                     }
@@ -279,7 +279,7 @@ impl Hub {
         let mut members = HashMap::new();
         let mut groups = HashMap::new(); 
         owner.join_group(&mut everyone);
-        owner.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        owner.set_permission(HubPermission::All, Some(true));
         members.insert(creator_id.clone(), owner);
         groups.insert(everyone.id.clone(), everyone.clone());
         Self {
@@ -297,7 +297,7 @@ impl Hub {
     }
 
     pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
-        is_valid_username(&name)?;
+        check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
         if member
             .clone()
@@ -313,13 +313,13 @@ impl Hub {
                 self.get_member_mut(member_id)?.set_channel_permission(
                     channel.id.clone(),
                     ChannelPermission::ViewChannel,
-                    PermissionSetting::TRUE,
+                    Some(true),
                 );
             }
             self.channels.insert(id.clone(), channel);
             Ok(id)
         } else {
-            Err(Error::NoPermission)
+            Err(Error::MissingPermission)
         }
     }
 
@@ -371,7 +371,7 @@ impl Hub {
         channel_id: &ID,
         name: String,
     ) -> Result<String> {
-        is_valid_username(&name)?;
+        check_name_validity(&name)?;
         if let Some(user) = self.members.get(user_id) {
             if user.clone().has_channel_permission(
                 channel_id,
@@ -390,7 +390,7 @@ impl Hub {
                     Err(Error::ChannelNotFound)
                 }
             } else {
-                Err(Error::NoPermission)
+                Err(Error::MissingPermission)
             }
         } else {
             Err(Error::NotInHub)
@@ -418,10 +418,10 @@ impl Hub {
                         Err(Error::ChannelNotFound)
                     }
                 } else {
-                    Err(Error::NoPermission)
+                    Err(Error::MissingPermission)
                 }
             } else {
-                Err(Error::NoPermission)
+                Err(Error::MissingPermission)
             }
         } else {
             Err(Error::NotInHub)
@@ -455,7 +455,7 @@ impl Hub {
                         Err(Error::ChannelNotFound)
                     }
                 } else {
-                    Err(Error::NoPermission)
+                    Err(Error::MissingPermission)
                 }
             } else {
                 Err(Error::Muted)
@@ -596,7 +596,7 @@ impl Hub {
 mod tests {
     use crate::{
         auth::Service,
-        permission::{ChannelPermission, HubPermission, PermissionSetting},
+        permission::{ChannelPermission, HubPermission},
         user::User,
         ID,
     };
@@ -631,16 +631,16 @@ mod tests {
         assert!(!member.has_permission(HubPermission::All, &hub));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::FALSE);
+        member.set_permission(HubPermission::SendMessage, Some(false));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::NONE);
+        member.set_permission(HubPermission::SendMessage, None);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::SendMessage, Some(true));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::All, Some(true));
         assert!(member.has_permission(HubPermission::ReadMessage, &hub));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
     }
@@ -658,25 +658,25 @@ mod tests {
         member.set_channel_permission(
             id.clone(),
             ChannelPermission::SendMessage,
-            PermissionSetting::FALSE,
+            Some(false),
         );
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
         member.set_channel_permission(
             id.clone(),
             ChannelPermission::SendMessage,
-            PermissionSetting::NONE,
+            None,
         );
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
         member.set_channel_permission(
             id.clone(),
             ChannelPermission::SendMessage,
-            PermissionSetting::TRUE,
+            Some(true),
         );
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::All, Some(true));
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
     }
@@ -700,25 +700,25 @@ mod tests {
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::FALSE);
+            .set_permission(HubPermission::SendMessage, Some(false));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::NONE);
+            .set_permission(HubPermission::SendMessage, None);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::TRUE);
+            .set_permission(HubPermission::SendMessage, Some(true));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::All, PermissionSetting::TRUE);
+            .set_permission(HubPermission::All, Some(true));
         assert!(member.has_permission(HubPermission::ReadMessage, &hub));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
     }
@@ -735,7 +735,7 @@ mod tests {
                     .members
                     .get_mut(&member.user)
                     .expect("Failed to get hub member.");
-                member_in_hub.set_permission(HubPermission::CreateChannel, PermissionSetting::TRUE);
+                member_in_hub.set_permission(HubPermission::CreateChannel, Some(true));
                 member = member_in_hub.clone();
             }
             assert!(!member.has_permission(HubPermission::All, &hub));
@@ -762,7 +762,7 @@ mod tests {
             member_in_hub.set_channel_permission(
                 channel_0.clone(),
                 ChannelPermission::ViewChannel,
-                PermissionSetting::TRUE,
+                Some(true),
             );
         }
         let get = hub

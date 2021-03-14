@@ -30,13 +30,13 @@ pub mod user;
 
 use uuid::Uuid;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Error {
     Muted,
     Banned,
     HubNotFound,
     ChannelNotFound,
-    NoPermission,
+    MissingPermission,
     NotInHub,
     WriteFile,
     Deserialize,
@@ -45,7 +45,7 @@ pub enum Error {
     Serialize,
     UserNotFound,
     MemberNotFound,
-    BadAuth,
+    NotAuthenticated,
     GroupNotFound,
     InvalidName,
     DeleteFailed,
@@ -58,7 +58,7 @@ pub enum Error {
 impl Error {
     fn info_string(&self) -> &str {
         match self {
-            Self::BadAuth => "You are not authenticated.",
+            Self::NotAuthenticated => "You are not authenticated.",
             Self::InvalidName => "Invalid name.",
             Self::Banned => "You are banned from that hub.",
             Self::ChannelNotFound => "Channel not found.",
@@ -70,7 +70,7 @@ impl Error {
             Self::HubNotFound => "Hub not found.",
             Self::MemberNotFound => "Hub member not found.",
             Self::Muted => "You are muted.",
-            Self::NoPermission => "You do not have permission to do that.",
+            Self::MissingPermission => "You do not have permission to do that.",
             Self::NotInHub => "You are not in that hub.",
             Self::ReadFile => "Server was unable to read the data. Try again later.",
             Self::Serialize => "Server was unable to serialize the data. Try again later.",
@@ -86,7 +86,7 @@ impl Error {
 
     fn http_status_code(&self) -> StatusCode {
         match self {
-            Self::BadAuth => StatusCode::UNAUTHORIZED,
+            Self::NotAuthenticated => StatusCode::UNAUTHORIZED,
             Self::InvalidName => StatusCode::BAD_REQUEST,
             Self::Banned => StatusCode::FORBIDDEN,
             Self::ChannelNotFound => StatusCode::NOT_FOUND,
@@ -96,7 +96,7 @@ impl Error {
             Self::HubNotFound => StatusCode::NOT_FOUND,
             Self::MemberNotFound => StatusCode::NOT_FOUND,
             Self::Muted => StatusCode::FORBIDDEN,
-            Self::NoPermission => StatusCode::FORBIDDEN,
+            Self::MissingPermission => StatusCode::FORBIDDEN,
             Self::NotInHub => StatusCode::NOT_FOUND,
             Self::ReadFile => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Serialize => StatusCode::INTERNAL_SERVER_ERROR,
@@ -117,12 +117,12 @@ impl Display for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = crate::Error> = std::result::Result<T, E>;
 
-pub static USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 pub const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub static MESSAGE_MAX_SIZE: &usize = &4096;
+pub const MESSAGE_MAX_SIZE: usize = 4096;
 
 lazy_static! {
     static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));
@@ -140,8 +140,12 @@ pub fn get_system_millis() -> u128 {
         .as_millis()
 }
 
-pub fn is_valid_username(name: &str) -> Result<()> {
-    if name.len() > 0 && name.len() < 32 && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
+pub fn is_valid_name(name: &str) -> bool {
+    name.len() > 0 && name.len() < 32 && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
+}
+
+pub fn check_name_validity(name: &str) -> Result<()> {
+    if is_valid_name(name) {
         Ok(())
     } else {
         Err(Error::InvalidName)
@@ -153,18 +157,33 @@ pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
 }
 
+pub mod prelude {
+    pub use crate::api::*;
+    pub use crate::channel::{Channel, Message};
+    pub use crate::check_name_validity;
+    pub use crate::hub::{Hub, HubMember, PermissionGroup};
+    pub use crate::is_valid_name;
+    pub use crate::new_id;
+    pub use crate::permission::{ChannelPermission, HubPermission, PermissionSetting};
+    pub use crate::user::{GenericUser, User};
+    pub use crate::Error;
+    pub use crate::Result;
+    pub use crate::ID;
+    pub use crate::MESSAGE_MAX_SIZE;
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_valid_username;
+    use super::is_valid_name;
 
     #[test]
     fn valid_username_check() {
-        assert!(is_valid_username("a").is_ok());
-        assert!(is_valid_username("Test_test tHAt-tester.").is_ok());
-        assert!(is_valid_username("1234567890").is_ok());
-        assert!(is_valid_username("l33t 5p34k").is_ok());
-        assert!(is_valid_username("").is_err());
-        assert!(is_valid_username("Test! @thing").is_err());
-        assert!(is_valid_username("123456789111315171921232527293133").is_err());
+        assert!(is_valid_name("a"));
+        assert!(is_valid_name("Test_test tHAt-tester."));
+        assert!(is_valid_name("1234567890"));
+        assert!(is_valid_name("l33t 5p34k"));
+        assert!(is_valid_name(""));
+        assert!(is_valid_name("Test! @thing"));
+        assert!(is_valid_name("123456789111315171921232527293133"));
     }
 }
