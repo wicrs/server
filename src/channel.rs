@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, Error, Result, ID, hub::HUB_DATA_FOLDER};
+use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Error, Result, ID};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -42,7 +42,6 @@ impl Channel {
         } else {
             Err(Error::Directory)
         }
-        
     }
 
     pub async fn add_message(&mut self, message: Message) -> Result<()> {

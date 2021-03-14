@@ -91,14 +91,12 @@ impl HubMember {
     }
 
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
-        println!("{:?}", self.hub_permissions);
         if hub.owner == self.user {
             return true;
         }
         if self.has_all_permissions() {
             return true;
         }
-        println!("passed all");
         if let Some(value) = self.hub_permissions.get(&permission) {
             match value {
                 &PermissionSetting::TRUE => {

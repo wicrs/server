@@ -1,5 +1,6 @@
 use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
+    channel::Channel,
     hub::{Hub, HubMember},
     is_valid_username, new_id,
     permission::HubPermission,
@@ -198,6 +199,12 @@ pub async fn create_channel(user: &User, hub_id: &ID, name: String) -> Result<ID
     Ok(channel_id)
 }
 
+pub async fn get_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result<Channel> {
+    user.in_hub(hub_id)?;
+    let hub = Hub::load(hub_id).await?;
+    Ok(hub.get_channel(&user.id, channel_id)?.clone())
+}
+
 pub async fn rename_channel(
     user: &User,
     hub_id: &ID,
@@ -221,7 +228,12 @@ pub async fn delete_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result
     hub.save().await
 }
 
-pub async fn send_message(user: &User, hub_id: &ID, channel_id: &ID, message: String) -> Result<ID> {
+pub async fn send_message(
+    user: &User,
+    hub_id: &ID,
+    channel_id: &ID,
+    message: String,
+) -> Result<ID> {
     user.in_hub(hub_id)?;
     if &message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
         user.send_hub_message(hub_id, channel_id, message).await
