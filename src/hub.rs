@@ -203,13 +203,13 @@ impl PermissionGroup {
 
     pub fn set_channel_permission(
         &mut self,
-        channel: ID,
+        channel_id: ID,
         permission: ChannelPermission,
         value: PermissionSetting,
     ) {
         let channel_permissions = self
             .channel_permissions
-            .entry(channel)
+            .entry(channel_id)
             .or_insert(HashMap::new());
         channel_permissions.insert(permission, value);
     }
@@ -235,11 +235,11 @@ impl PermissionGroup {
         return false;
     }
 
-    pub fn has_channel_permission(&self, channel: &ID, permission: &ChannelPermission) -> bool {
+    pub fn has_channel_permission(&self, channel_id: &ID, permission: &ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
         }
-        if let Some(channel) = self.channel_permissions.get(channel) {
+        if let Some(channel) = self.channel_permissions.get(channel_id) {
             if let Some(value) = channel.get(&ChannelPermission::All) {
                 if value == &PermissionSetting::TRUE {
                     return true;
@@ -279,7 +279,7 @@ impl Hub {
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
         let mut members = HashMap::new();
-        let mut groups = HashMap::new();
+        let mut groups = HashMap::new(); 
         owner.join_group(&mut everyone);
         owner.set_permission(HubPermission::All, PermissionSetting::TRUE);
         members.insert(creator_id.clone(), owner);
@@ -553,17 +553,18 @@ impl Hub {
         }
     }
 
-    pub async fn ban_user(&mut self, user_id: &ID) -> Result<()> {
-        self.bans.insert(user_id.clone());
-        self.kick_user(user_id).await
+    pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
+        self.kick_user(&user_id).await?;
+        self.bans.insert(user_id);
+        Ok(())
     }
 
     pub fn unban_user(&mut self, user_id: &ID) {
         self.bans.remove(user_id);
     }
 
-    pub fn mute_user(&mut self, user_id: &ID) {
-        self.mutes.insert(user_id.clone());
+    pub fn mute_user(&mut self, user_id: ID) {
+        self.mutes.insert(user_id);
     }
 
     pub fn unmute_user(&mut self, user_id: &ID) {

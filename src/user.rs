@@ -258,7 +258,7 @@ mod tests {
             EMAIL.to_string(),
             Service::GitHub,
         );
-        let id = crate::api::create_hub("test".to_string(), &mut user)
+        let id = crate::api::create_hub(&mut user, "test".to_string())
             .await
             .expect("Failed to create hub.");
         let mut hub = Hub::load(&id).await.expect("Failed to load test hub.");

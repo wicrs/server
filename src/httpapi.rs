@@ -1,6 +1,11 @@
 use std::fmt::Write;
 
-use crate::{Error, ID, Result, api, auth::{Auth, AuthQuery, Service}, user::User};
+use crate::{
+    api,
+    auth::{Auth, AuthQuery, Service},
+    user::User,
+    Error, Result, ID,
+};
 
 use actix_web::{
     delete, error, get, post, put,
@@ -179,7 +184,7 @@ async fn rename_user(mut user: User, name: Path<String>) -> Result<String> {
 
 #[post("/v2/hub/create/{name}")]
 async fn create_hub(mut user: User, name: Path<String>) -> Result<String> {
-    string_response!(api::create_hub(name.0, &mut user).await)
+    string_response!(api::create_hub(&mut user, name.0).await)
 }
 
 #[get("/v2/hub/{hub_id}")]
@@ -272,6 +277,10 @@ async fn rename_channel(
 }
 
 #[delete("/v2/channel/delete/{hub_id}/{channel_id}")]
-async fn delete_channel(user: User, hub_id: Path<ID>, channel_id: Path<ID>) -> Result<HttpResponse> {
+async fn delete_channel(
+    user: User,
+    hub_id: Path<ID>,
+    channel_id: Path<ID>,
+) -> Result<HttpResponse> {
     no_content!(api::delete_channel(&user, &hub_id.0, &channel_id.0).await)
 }

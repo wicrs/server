@@ -35,16 +35,34 @@ pub async fn change_username(user: &mut User, new_name: String) -> Result<String
     Ok(old_name)
 }
 
-pub async fn create_hub(name: String, owner: &mut User) -> Result<ID> {
+pub async fn create_hub(owner: &mut User, name: String) -> Result<ID> {
     is_valid_username(&name)?;
     let mut id = new_id();
     while Hub::load(&id).await.is_ok() {
         id = new_id();
     }
-    let new_hub = Hub::new(name, id.clone(), &owner);
-    new_hub.save().await?;
+    let mut new_hub = Hub::new(name, id.clone(), &owner);
+    let channel_id = new_hub.new_channel(&owner.id, "chat".to_string()).await?;
+    if let Some(group) = new_hub.groups.get_mut(&new_hub.default_group) {
+        group.set_channel_permission(
+            channel_id.clone(),
+            crate::permission::ChannelPermission::ViewChannel,
+            crate::permission::PermissionSetting::TRUE,
+        );
+        group.set_channel_permission(
+            channel_id.clone(),
+            crate::permission::ChannelPermission::SendMessage,
+            crate::permission::PermissionSetting::TRUE,
+        );
+        group.set_channel_permission(
+            channel_id.clone(),
+            crate::permission::ChannelPermission::ReadMessage,
+            crate::permission::PermissionSetting::TRUE,
+        );
+    }
     owner.in_hubs.push(id.clone());
     owner.save().await?;
+    new_hub.save().await?;
     Ok(id)
 }
 
@@ -139,9 +157,9 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
     if member.has_permission(op.clone(), &hub) {
         match op {
             HubPermission::Kick => hub.kick_user(user_id).await?,
-            HubPermission::Ban => hub.ban_user(user_id).await?,
+            HubPermission::Ban => hub.ban_user(user_id.clone()).await?,
             HubPermission::Unban => hub.unban_user(user_id),
-            HubPermission::Mute => hub.mute_user(user_id),
+            HubPermission::Mute => hub.mute_user(user_id.clone()),
             HubPermission::Unmute => hub.unmute_user(user_id),
             _ => return Err(Error::UnexpectedServerArg),
         }
