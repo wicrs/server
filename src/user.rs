@@ -77,34 +77,22 @@ impl User {
         message: String,
     ) -> Result<ID> {
         if self.in_hubs.contains(hub_id) {
-            if let Ok(mut hub) = Hub::load(hub_id).await {
-                hub.send_message(&self.id, channel_id, message).await
-            } else {
-                Err(ApiError::HubNotFound)
-            }
+            let mut hub = Hub::load(hub_id).await?;
+            hub.send_message(&self.id, channel_id, message).await
         } else {
             Err(ApiError::NotInHub)
         }
     }
 
     pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
-        if let Ok(mut hub) = Hub::load(hub_id).await {
-            if !hub.bans.contains(&self.id) {
-                if let Ok(_) = hub.user_join(&self) {
-                    if let Ok(()) = hub.save().await {
-                        self.in_hubs.push(hub_id.clone());
-                        Ok(())
-                    } else {
-                        Err(DataError::WriteFile.into())
-                    }
-                } else {
-                    Err(ApiError::GroupNotFound)
-                }
-            } else {
-                Err(ApiError::Banned)
-            }
+        let mut hub = Hub::load(hub_id).await?;
+        if !hub.bans.contains(&self.id) {
+            hub.user_join(&self)?;
+            hub.save().await?;
+            self.in_hubs.push(hub_id.clone());
+            Ok(())
         } else {
-            Err(ApiError::HubNotFound)
+            Err(ApiError::Banned)
         }
     }
 
@@ -118,20 +106,11 @@ impl User {
 
     pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
         if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == hub_id) {
-            if let Ok(mut hub) = Hub::load(hub_id).await {
-                if let Ok(()) = hub.user_leave(&self) {
-                    if let Ok(()) = hub.save().await {
-                        self.in_hubs.remove(index);
-                        Ok(())
-                    } else {
-                        Err(DataError::WriteFile.into())
-                    }
-                } else {
-                    Err(ApiError::GroupNotFound)
-                }
-            } else {
-                Err(ApiError::HubNotFound)
-            }
+            let mut hub = Hub::load(hub_id).await?;
+            hub.user_leave(&self)?;
+            hub.save().await?;
+            self.in_hubs.remove(index);
+            Ok(())
         } else {
             Err(ApiError::NotInHub)
         }
@@ -139,12 +118,9 @@ impl User {
 
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(USER_FOLDER).await?;
-        if let Ok(json) = serde_json::to_string(self) {
-            tokio::fs::write(format!("{}{}.json", USER_FOLDER, self.id), json).await?;
-            Ok(())
-        } else {
-            Err(DataError::Serialize.into())
-        }
+        let json = serde_json::to_string(self).map_err(|_| DataError::Serialize)?;
+        tokio::fs::write(format!("{}{}.json", USER_FOLDER, self.id), json).await?;
+        Ok(())
     }
 
     pub async fn load(id: &ID) -> Result<Self> {
@@ -154,11 +130,7 @@ impl User {
             return Err(ApiError::HubNotFound);
         }
         let json = tokio::fs::read_to_string(path).await?;
-        if let Ok(result) = serde_json::from_str(&json) {
-            Ok(result)
-        } else {
-            Err(DataError::Deserialize.into())
-        }
+        serde_json::from_str(&json).map_err(|_| DataError::Deserialize.into())
     }
 
     pub async fn load_get_id(id: &str, service: &Service) -> Result<Self> {
