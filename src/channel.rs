@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Error, Result, ID};
+use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Result, ID};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -37,34 +37,22 @@ impl Channel {
     }
 
     pub async fn create_dir(&self) -> Result<()> {
-        if let Ok(_) = tokio::fs::create_dir_all(self.get_folder()).await {
-            Ok(())
-        } else {
-            Err(Error::Directory)
-        }
+        tokio::fs::create_dir_all(self.get_folder()).await?;
+        Ok(())
     }
 
     pub async fn add_message(&mut self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
-        if let Ok(mut file) = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
             .open(self.get_current_file().await)
-            .await
-        {
-            if let Ok(_) = file
-                .write((message_string.to_owned() + "\n").as_bytes())
-                .await
-            {
-                self.messages.push(message);
-                Ok(())
-            } else {
-                Err(Error::WriteFile)
-            }
-        } else {
-            Err(Error::ReadFile)
-        }
+            .await?;
+        file.write((message_string.to_owned() + "\n").as_bytes())
+            .await?;
+        self.messages.push(message);
+        Ok(())
     }
 
     pub async fn get_last_messages(&self, max: usize) -> Vec<Message> {

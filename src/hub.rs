@@ -10,7 +10,7 @@ use crate::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
     user::User,
-    Error, Result, ID,
+    ApiError, DataError, Result, ID,
 };
 
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
@@ -323,7 +323,7 @@ impl Hub {
         if let Some(channel) = self.channels.get(channel_id) {
             Ok(channel)
         } else {
-            Err(Error::ChannelNotFound)
+            Err(ApiError::ChannelNotFound)
         }
     }
 
@@ -333,7 +333,7 @@ impl Hub {
         if let Some(channel) = self.channels.get_mut(channel_id) {
             Ok(channel)
         } else {
-            Err(Error::ChannelNotFound)
+            Err(ApiError::ChannelNotFound)
         }
     }
 
@@ -341,7 +341,7 @@ impl Hub {
         if let Some(member) = self.members.get(member_id) {
             Ok(member.clone())
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 
@@ -349,7 +349,7 @@ impl Hub {
         if let Some(member) = self.members.get_mut(member_id) {
             Ok(member)
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 
@@ -365,16 +365,12 @@ impl Hub {
             if let Some(channel) = self.channels.get_mut(channel_id) {
                 let old_name = channel.name.clone();
                 channel.name = name;
-                if let Ok(_) = self.save().await {
-                    Ok(old_name)
-                } else {
-                    Err(Error::WriteFile)
-                }
+                Ok(old_name)
             } else {
-                Err(Error::ChannelNotFound)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -383,16 +379,12 @@ impl Hub {
             check_permission!(user, HubPermission::DeleteChannel, self);
             check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
             if let Some(_) = self.channels.remove(channel_id) {
-                if let Ok(_) = self.save().await {
-                    Ok(())
-                } else {
-                    Err(Error::WriteFile)
-                }
+                Ok(())
             } else {
-                Err(Error::ChannelNotFound)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -416,28 +408,23 @@ impl Hub {
                     channel.add_message(message).await?;
                     Ok(id)
                 } else {
-                    Err(Error::ChannelNotFound)
+                    Err(ApiError::ChannelNotFound)
                 }
             } else {
-                Err(Error::Muted)
+                Err(ApiError::Muted)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
     pub async fn save(&self) -> Result<()> {
-        if let Err(_) = tokio::fs::create_dir_all(HUB_INFO_FOLDER).await {
-            return Err(Error::Directory);
-        }
+        tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = tokio::fs::write(self.get_info_path(), json).await {
-                Ok(result)
-            } else {
-                Err(Error::WriteFile)
-            }
+            tokio::fs::write(self.get_info_path(), json).await?;
+            Ok(())
         } else {
-            Err(Error::Serialize)
+            Err(DataError::Serialize.into())
         }
     }
 
@@ -453,16 +440,13 @@ impl Hub {
         let filename = format!("{}{}.json", HUB_INFO_FOLDER, id);
         let path = std::path::Path::new(&filename);
         if !path.exists() {
-            return Err(Error::HubNotFound);
+            return Err(ApiError::HubNotFound);
         }
-        if let Ok(json) = tokio::fs::read_to_string(path).await {
-            if let Ok(result) = serde_json::from_str(&json) {
-                Ok(result)
-            } else {
-                Err(Error::Deserialize)
-            }
+        let json = tokio::fs::read_to_string(path).await?;
+        if let Ok(result) = serde_json::from_str(&json) {
+            Ok(result)
         } else {
-            Err(Error::ReadFile)
+            Err(DataError::Deserialize.into())
         }
     }
 
@@ -473,7 +457,7 @@ impl Hub {
             self.members.insert(member.user.clone(), member.clone());
             Ok(member)
         } else {
-            Err(Error::GroupNotFound)
+            Err(ApiError::GroupNotFound)
         }
     }
 
@@ -484,29 +468,23 @@ impl Hub {
                 self.members.remove(&user.id);
                 Ok(())
             } else {
-                Err(Error::GroupNotFound)
+                Err(ApiError::GroupNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
     pub async fn kick_user(&mut self, user_id: &ID) -> Result<()> {
         if self.members.contains_key(user_id) {
-            if let Ok(mut user) = User::load(user_id).await {
-                self.user_leave(&user)?;
-                if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
-                    user.in_hubs.remove(index);
-                }
-                if let Ok(()) = user.save().await {
-                    self.members.remove(&user_id);
-                    Ok(())
-                } else {
-                    Err(Error::WriteFile)
-                }
-            } else {
-                Err(Error::ReadFile)
+            let mut user = User::load(user_id).await?;
+            self.user_leave(&user)?;
+            if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
+                user.in_hubs.remove(index);
             }
+            user.save().await?;
+            self.members.remove(&user_id);
+            Ok(())
         } else {
             Ok(())
         }
@@ -542,7 +520,7 @@ impl Hub {
             }
             Ok(result)
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 

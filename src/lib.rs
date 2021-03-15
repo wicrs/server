@@ -7,10 +7,11 @@ use futures::lock::Mutex;
 use prelude::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::{
-    fmt::Display,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use thiserror::Error;
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -31,74 +32,71 @@ pub mod user;
 
 use uuid::Uuid;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Error {
-    Muted,
-    Banned,
-    HubNotFound,
-    ChannelNotFound,
-    MissingHubPermission(HubPermission),
-    MissingChannelPermission(ChannelPermission),
-    NotInHub,
+#[derive(Debug, PartialEq, Eq, Clone, Error)]
+pub enum DataError {
+    #[error("server was unable to write new data to disk")]
     WriteFile,
+    #[error("server was unable to parse some data")]
     Deserialize,
+    #[error("server could not create a directory")]
     Directory,
+    #[error("server failed to read requested data from disk")]
     ReadFile,
+    #[error("server could not serialize some data")]
     Serialize,
-    UserNotFound,
-    MemberNotFound,
-    NotAuthenticated,
-    GroupNotFound,
-    InvalidName,
+    #[error("server was unable to delete the data")]
     DeleteFailed,
-    UnexpectedServerArg,
-    MessageTooBig,
-    InvalidMessage,
-    Other(String, StatusCode),
 }
 
-impl Error {
-    fn info_string(&self) -> &str {
-        match self {
-            Self::NotAuthenticated => "You are not authenticated.",
-            Self::InvalidName => "Invalid name.",
-            Self::Banned => "You are banned from that hub.",
-            Self::ChannelNotFound => "Channel not found.",
-            Self::Deserialize => "Server was unable to deserialize the data. Try again later.",
-            Self::Directory => {
-                "Server is missing a directory and could not create it. Try again later."
-            }
-            Self::GroupNotFound => "Group not found.",
-            Self::HubNotFound => "Hub not found.",
-            Self::MemberNotFound => "Hub member not found.",
-            Self::Muted => "You are muted.",
-            Self::MissingChannelPermission(_) => {
-                "You are missing the channel permission required to do that."
-            }
-            Self::MissingHubPermission(_) => {
-                "You are missing the hub permission required to do that."
-            }
-            Self::NotInHub => "You are not in that hub.",
-            Self::ReadFile => "Server was unable to read the data. Try again later.",
-            Self::Serialize => "Server was unable to serialize the data. Try again later.",
-            Self::UserNotFound => "User not found.",
-            Self::WriteFile => "Server was unable to store the data. Try again later.",
-            Self::DeleteFailed => "Server was unable to delete the data.",
-            Self::UnexpectedServerArg => "Something strange happened...",
-            Self::MessageTooBig => "Message too big.",
-            Self::InvalidMessage => "Messages must be sent as UTF-8 strings.",
-            Self::Other(message, _) => message,
-        }
-    }
+#[derive(Debug, Error)]
+pub enum ApiError {
+    #[error("user is muted")]
+    Muted,
+    #[error("user is banned")]
+    Banned,
+    #[error("hub does not exist")]
+    HubNotFound,
+    #[error("channel does not exist")]
+    ChannelNotFound,
+    #[error("user does not have the {0} hub permission")]
+    MissingHubPermission(HubPermission),
+    #[error("user does not have the {0} channel permission")]
+    MissingChannelPermission(ChannelPermission),
+    #[error("user not in hub")]
+    NotInHub,
+    #[error("user does not exist")]
+    UserNotFound,
+    #[error("member does not exist")]
+    MemberNotFound,
+    #[error("not authenticated")]
+    NotAuthenticated,
+    #[error("group does not exist")]
+    GroupNotFound,
+    #[error("name is not valid, too long or invalid characters")]
+    InvalidName,
+    #[error("server did something unexpected")]
+    UnexpectedServerArg,
+    #[error("message is too big, maximum is {} bytes", MESSAGE_MAX_SIZE)]
+    MessageTooBig,
+    #[error("unable to parse message, only UTF-8 is supported")]
+    InvalidMessage,
+    #[error("{0}")]
+    Other(String, StatusCode),
+    #[error(transparent)]
+    AuthGet(#[from] auth::AuthGetError),
+    #[error(transparent)]
+    Data(#[from] DataError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
+impl ApiError {
     fn http_status_code(&self) -> StatusCode {
         match self {
             Self::NotAuthenticated => StatusCode::UNAUTHORIZED,
             Self::InvalidName => StatusCode::BAD_REQUEST,
             Self::Banned => StatusCode::FORBIDDEN,
             Self::ChannelNotFound => StatusCode::NOT_FOUND,
-            Self::Deserialize => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Directory => StatusCode::INTERNAL_SERVER_ERROR,
             Self::GroupNotFound => StatusCode::NOT_FOUND,
             Self::HubNotFound => StatusCode::NOT_FOUND,
             Self::MemberNotFound => StatusCode::NOT_FOUND,
@@ -106,26 +104,19 @@ impl Error {
             Self::MissingChannelPermission(_) => StatusCode::FORBIDDEN,
             Self::MissingHubPermission(_) => StatusCode::FORBIDDEN,
             Self::NotInHub => StatusCode::NOT_FOUND,
-            Self::ReadFile => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Serialize => StatusCode::INTERNAL_SERVER_ERROR,
             Self::UserNotFound => StatusCode::NOT_FOUND,
-            Self::WriteFile => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::DeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             Self::UnexpectedServerArg => StatusCode::INTERNAL_SERVER_ERROR,
             Self::MessageTooBig => StatusCode::BAD_REQUEST,
             Self::InvalidMessage => StatusCode::BAD_REQUEST,
             Self::Other(_, code) => code.clone(),
+            Self::AuthGet(_) => StatusCode::BAD_GATEWAY,
+            Self::Data(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:?}", self))
-    }
-}
-
-pub type Result<T, E = crate::Error> = std::result::Result<T, E>;
+pub type Result<T, E = crate::ApiError> = std::result::Result<T, E>;
 
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 pub const NAME_ALLOWED_CHARS: &str =
@@ -156,7 +147,7 @@ pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
     } else {
-        Err(Error::InvalidName)
+        Err(ApiError::InvalidName)
     }
 }
 
@@ -164,12 +155,12 @@ pub fn check_name_validity(name: &str) -> Result<()> {
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {
         if !$member.has_permission($perm, &$hub) {
-            return Err(Error::MissingHubPermission($perm));
+            return Err(ApiError::MissingHubPermission($perm));
         }
     };
     ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
         if !$member.has_channel_permission($channel, &$perm, &$hub) {
-            return Err(Error::MissingChannelPermission($perm));
+            return Err(ApiError::MissingChannelPermission($perm));
         }
     };
 }
@@ -191,7 +182,7 @@ pub mod prelude {
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     };
     pub use crate::user::{get_id, GenericUser, User};
-    pub use crate::Error;
+    pub use crate::ApiError;
     pub use crate::Result;
     pub use crate::ID;
     pub use crate::MESSAGE_MAX_SIZE;

@@ -8,10 +8,8 @@ use sha3::{
 };
 
 use crate::{
-    auth::Service,
-    get_system_millis,
-    hub::Hub,
-    check_name_validity, Error, Result, ID,
+    auth::Service, check_name_validity, get_system_millis, hub::Hub, ApiError, DataError, Result,
+    ID,
 };
 
 const USER_FOLDER: &str = "data/users/";
@@ -72,15 +70,20 @@ impl User {
         Ok(old_name)
     }
 
-    pub async fn send_hub_message(&self, hub_id: &ID, channel_id: &ID, message: String) -> Result<ID> {
+    pub async fn send_hub_message(
+        &self,
+        hub_id: &ID,
+        channel_id: &ID,
+        message: String,
+    ) -> Result<ID> {
         if self.in_hubs.contains(hub_id) {
             if let Ok(mut hub) = Hub::load(hub_id).await {
                 hub.send_message(&self.id, channel_id, message).await
             } else {
-                Err(Error::HubNotFound)
+                Err(ApiError::HubNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -92,16 +95,16 @@ impl User {
                         self.in_hubs.push(hub_id.clone());
                         Ok(())
                     } else {
-                        Err(Error::WriteFile)
+                        Err(DataError::WriteFile.into())
                     }
                 } else {
-                    Err(Error::GroupNotFound)
+                    Err(ApiError::GroupNotFound)
                 }
             } else {
-                Err(Error::Banned)
+                Err(ApiError::Banned)
             }
         } else {
-            Err(Error::HubNotFound)
+            Err(ApiError::HubNotFound)
         }
     }
 
@@ -109,7 +112,7 @@ impl User {
         if self.in_hubs.contains(hub_id) {
             Ok(())
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -121,34 +124,26 @@ impl User {
                         self.in_hubs.remove(index);
                         Ok(())
                     } else {
-                        Err(Error::WriteFile)
+                        Err(DataError::WriteFile.into())
                     }
                 } else {
-                    Err(Error::GroupNotFound)
+                    Err(ApiError::GroupNotFound)
                 }
             } else {
-                Err(Error::HubNotFound)
+                Err(ApiError::HubNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
     pub async fn save(&self) -> Result<()> {
-        if let Err(_) = tokio::fs::create_dir_all(USER_FOLDER).await {
-            return Err(Error::Directory);
-        }
+        tokio::fs::create_dir_all(USER_FOLDER).await?;
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = std::fs::write(
-                format!("{}{}.json", USER_FOLDER, self.id),
-                json,
-            ) {
-                Ok(result)
-            } else {
-                Err(Error::WriteFile)
-            }
+            tokio::fs::write(format!("{}{}.json", USER_FOLDER, self.id), json).await?;
+            Ok(())
         } else {
-            Err(Error::Serialize)
+            Err(DataError::Serialize.into())
         }
     }
 
@@ -156,16 +151,13 @@ impl User {
         let filename = format!("{}{}.json", USER_FOLDER, id);
         let path = std::path::Path::new(&filename);
         if !path.exists() {
-            return Err(Error::HubNotFound);
+            return Err(ApiError::HubNotFound);
         }
-        if let Ok(json) = tokio::fs::read_to_string(path).await {
-            if let Ok(result) = serde_json::from_str(&json) {
-                Ok(result)
-            } else {
-                Err(Error::Deserialize)
-            }
+        let json = tokio::fs::read_to_string(path).await?;
+        if let Ok(result) = serde_json::from_str(&json) {
+            Ok(result)
         } else {
-            Err(Error::ReadFile)
+            Err(DataError::Deserialize.into())
         }
     }
 

@@ -6,7 +6,7 @@ use crate::{
     new_id,
     permission::HubPermission,
     user::{GenericUser, User},
-    Error, Result, AUTH, ID,
+    ApiError, Result, AUTH, ID,
 };
 
 pub async fn start_login(service: Service) -> String {
@@ -25,7 +25,7 @@ pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
     User::load(&id)
         .await
         .map(|u| User::to_generic(&u))
-        .map_err(|_| Error::UserNotFound)
+        .map_err(|_| ApiError::UserNotFound)
 }
 
 pub async fn change_username<S: Into<String> + Clone>(
@@ -81,13 +81,9 @@ pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     let hub = Hub::load(hub_id).await?;
     let member = hub.get_member(&user.id)?;
     check_permission!(member, HubPermission::All, hub);
-    if let Ok(()) = tokio::fs::remove_file(hub.get_info_path()).await {
-        tokio::fs::remove_dir_all(hub.get_data_path())
-            .await
-            .map_err(|_| Error::DeleteFailed)
-    } else {
-        Err(Error::DeleteFailed)
-    }
+    tokio::fs::remove_file(hub.get_info_path()).await?;
+    tokio::fs::remove_dir_all(hub.get_data_path()).await?;
+    Ok(())
 }
 
 pub async fn rename_hub<S: Into<String> + Clone>(
@@ -167,7 +163,7 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
         HubPermission::Unban => hub.unban_user(user_id),
         HubPermission::Mute => hub.mute_user(user_id.clone()),
         HubPermission::Unmute => hub.unmute_user(user_id),
-        _ => return Err(Error::UnexpectedServerArg),
+        _ => return Err(ApiError::UnexpectedServerArg),
     }
     hub.save().await
 }
@@ -241,6 +237,6 @@ pub async fn send_message(
     if message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
         user.send_hub_message(hub_id, channel_id, message).await
     } else {
-        Err(Error::MessageTooBig)
+        Err(ApiError::MessageTooBig)
     }
 }

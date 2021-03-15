@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::{Error, ID, Result, api, auth::{Auth, AuthQuery, Service}, channel::Channel, user::User};
+use crate::{ApiError, ID, Result, api, auth::{Auth, AuthQuery, Service}, channel::Channel, user::User};
 
 use actix_web::{
     delete, error, get, post, put,
@@ -48,7 +48,7 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     .await
 }
 
-impl ResponseError for Error {
+impl ResponseError for ApiError {
     fn status_code(&self) -> reqwest::StatusCode {
         self.http_status_code()
     }
@@ -56,7 +56,7 @@ impl ResponseError for Error {
     fn error_response(&self) -> HttpResponse {
         let mut resp = HttpResponse::new(self.status_code());
         let mut buf = actix_web::web::BytesMut::new();
-        let _ = buf.write_str(self.info_string());
+        let _ = buf.write_fmt(format_args!("{}", self));
         resp.headers_mut().insert(
             reqwest::header::CONTENT_TYPE,
             actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),
@@ -289,6 +289,6 @@ async fn send_message(
     if let Ok(message) = String::from_utf8(message.to_vec()) {
         string_response!(api::send_message(&user, &path.0.0, &path.1, message).await)
     } else {
-        Err(Error::InvalidMessage)
+        Err(ApiError::InvalidMessage)
     }
 }
