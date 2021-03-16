@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use fs::OpenOptions;
 use uuid::Uuid;
 
-use crate::{get_system_millis, ApiActionError, ID};
-
-static HUB_DATA_FOLDER: &str = "data/hubs/data";
+use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Result, ID};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -24,50 +22,37 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub async fn new(name: String, id: ID, server_id: ID) -> Result<Self, ()> {
-        let new = Self {
+    pub fn new(name: String, id: ID, server_id: ID) -> Self {
+        Self {
             name,
             id,
             server_id,
             messages: Vec::new(),
             created: crate::get_system_millis(),
-        };
-        if let Ok(_) = new.create_dir().await {
-            Ok(new)
-        } else {
-            Err(())
         }
     }
 
     pub fn get_folder(&self) -> String {
-        format!("{}/{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
+        format!("{}{}/{}", HUB_DATA_FOLDER, self.server_id, self.id)
     }
 
-    pub async fn create_dir(&self) -> tokio::io::Result<()> {
-        tokio::fs::create_dir_all(self.get_folder()).await
+    pub async fn create_dir(&self) -> Result<()> {
+        tokio::fs::create_dir_all(self.get_folder()).await?;
+        Ok(())
     }
 
-    pub async fn add_message(&mut self, message: Message) -> Result<(), ApiActionError> {
+    pub async fn add_message(&mut self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
-        if let Ok(mut file) = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
             .open(self.get_current_file().await)
-            .await
-        {
-            if let Ok(_) = file
-                .write((message_string.to_owned() + "\n").as_bytes())
-                .await
-            {
-                self.messages.push(message);
-                Ok(())
-            } else {
-                Err(ApiActionError::WriteFileError)
-            }
-        } else {
-            Err(ApiActionError::OpenFileError)
-        }
+            .await?;
+        file.write((message_string.to_owned() + "\n").as_bytes())
+            .await?;
+        self.messages.push(message);
+        Ok(())
     }
 
     pub async fn get_last_messages(&self, max: usize) -> Vec<Message> {
@@ -273,7 +258,7 @@ pub struct Message {
 impl ToString for Message {
     fn to_string(&self) -> String {
         format!(
-            "{},{},{},{}",
+            "{:X},{:X},{:X},{}",
             self.id.as_u128(),
             self.sender.as_u128(),
             self.created,
@@ -288,11 +273,11 @@ impl FromStr for Message {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(4, ',');
         if let Some(id_str) = parts.next() {
-            if let Ok(id) = uuid_from_num_string(id_str) {
+            if let Ok(id) = Uuid::from_str(id_str) {
                 if let Some(sender_str) = parts.next() {
-                    if let Ok(sender) = uuid_from_num_string(sender_str) {
+                    if let Ok(sender) = Uuid::from_str(sender_str) {
                         if let Some(created_str) = parts.next() {
-                            if let Ok(created) = created_str.parse::<u128>() {
+                            if let Ok(created) = u128::from_str_radix(created_str, 16) {
                                 if let Some(content) = parts.next() {
                                     return Ok(Self {
                                         id,
@@ -308,14 +293,6 @@ impl FromStr for Message {
             }
         }
         return Err(());
-    }
-}
-
-fn uuid_from_num_string(string: &str) -> Result<Uuid, ()> {
-    if let Ok(num) = string.parse::<u128>() {
-        Ok(Uuid::from_u128(num))
-    } else {
-        Err(())
     }
 }
 
@@ -343,9 +320,7 @@ mod tests {
             "test".to_string(),
             Uuid::from_u128(123456789),
             Uuid::from_u128(123456789),
-        )
-        .await
-        .expect("Could not create a channel with ID \"123456789\".");
+        );
         channel
     }
 

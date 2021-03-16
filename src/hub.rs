@@ -5,15 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     channel::{Channel, Message},
-    get_system_millis, is_valid_username, new_id,
+    check_name_validity, check_permission, get_system_millis, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
     user::User,
-    ApiActionError, JsonLoadError, JsonSaveError, ID,
+    ApiError, DataError, Result, ID,
 };
 
-pub static HUB_DATA_FOLDER: &str = "data/hubs/info";
+pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
+pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
@@ -39,13 +40,10 @@ impl HubMember {
         }
     }
 
-    pub fn set_nickname(&mut self, nickname: String) -> Result<(), ()> {
-        if is_valid_username(&nickname) {
-            self.nickname = nickname;
-            Ok(())
-        } else {
-            Err(())
-        }
+    pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
+        check_name_validity(&nickname)?;
+        self.nickname = nickname;
+        Ok(())
     }
 
     pub fn join_group(&mut self, group: &mut PermissionGroup) {
@@ -85,7 +83,7 @@ impl HubMember {
 
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
@@ -93,23 +91,21 @@ impl HubMember {
     }
 
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
-        println!("{:?}", self.hub_permissions);
         if hub.owner == self.user {
             return true;
         }
         if self.has_all_permissions() {
             return true;
         }
-        println!("passed all");
         if let Some(value) = self.hub_permissions.get(&permission) {
             match value {
-                &PermissionSetting::TRUE => {
+                &Some(true) => {
                     return true;
                 }
-                &PermissionSetting::FALSE => {
+                &Some(false) => {
                     return false;
                 }
-                PermissionSetting::NONE => {}
+                None => {}
             };
         } else {
             for group in self.groups.iter() {
@@ -137,19 +133,19 @@ impl HubMember {
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
             if let Some(value) = channel.get(&ChannelPermission::All) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
                 }
             }
             if let Some(value) = channel.get(permission) {
                 match value {
-                    &PermissionSetting::TRUE => {
+                    &Some(true) => {
                         return true;
                     }
-                    &PermissionSetting::FALSE => {
+                    &Some(false) => {
                         return false;
                     }
-                    PermissionSetting::NONE => {
+                    None => {
                         if self.has_permission(permission.hub_equivalent(), hub) {
                             return true;
                         }
@@ -205,20 +201,20 @@ impl PermissionGroup {
 
     pub fn set_channel_permission(
         &mut self,
-        channel: ID,
+        channel_id: ID,
         permission: ChannelPermission,
         value: PermissionSetting,
     ) {
         let channel_permissions = self
             .channel_permissions
-            .entry(channel)
+            .entry(channel_id)
             .or_insert(HashMap::new());
         channel_permissions.insert(permission, value);
     }
 
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
@@ -230,27 +226,27 @@ impl PermissionGroup {
             return true;
         }
         if let Some(value) = self.hub_permissions.get(permission) {
-            if value == &PermissionSetting::TRUE {
+            if value == &Some(true) {
                 return true;
             }
         }
         return false;
     }
 
-    pub fn has_channel_permission(&self, channel: &ID, permission: &ChannelPermission) -> bool {
+    pub fn has_channel_permission(&self, channel_id: &ID, permission: &ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
         }
-        if let Some(channel) = self.channel_permissions.get(channel) {
+        if let Some(channel) = self.channel_permissions.get(channel_id) {
             if let Some(value) = channel.get(&ChannelPermission::All) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
                 }
             }
             if let Some(value) = channel.get(&permission) {
-                if value == &PermissionSetting::TRUE {
+                if value == &Some(true) {
                     return true;
-                } else if value == &PermissionSetting::NONE {
+                } else if value == &None {
                     if self.has_permission(&permission.hub_equivalent()) {
                         return true;
                     }
@@ -283,7 +279,7 @@ impl Hub {
         let mut members = HashMap::new();
         let mut groups = HashMap::new();
         owner.join_group(&mut everyone);
-        owner.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        owner.set_permission(HubPermission::All, Some(true));
         members.insert(creator_id.clone(), owner);
         groups.insert(everyone.id.clone(), everyone.clone());
         Self {
@@ -300,246 +296,238 @@ impl Hub {
         }
     }
 
-    pub async fn new_channel(&mut self, member_id: ID, name: String) -> Result<ID, ApiActionError> {
-        if is_valid_username(&name) {
-            if let Some(member) = self.members.get(&member_id) {
-                if member
-                    .clone()
-                    .has_permission(HubPermission::CreateChannel, self)
-                {
-                    let mut id = new_id();
-                    while self.channels.contains_key(&id) {
-                        id = new_id();
-                    }
-                    if let Ok(channel) = Channel::new(name, id.clone(), self.id.clone()).await {
-                        self.channels.insert(id.clone(), channel);
-                        if let Ok(_) = self.save().await {
-                            Ok(id)
-                        } else {
-                            Err(ApiActionError::WriteFileError)
-                        }
-                    } else {
-                        Err(ApiActionError::WriteFileError)
-                    }
-                } else {
-                    Err(ApiActionError::NoPermission)
-                }
-            } else {
-                Err(ApiActionError::NotInHub)
-            }
+    pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
+        check_name_validity(&name)?;
+        let member = self.get_member(member_id)?;
+        check_permission!(member, HubPermission::CreateChannel, self);
+        let mut id = new_id();
+        while self.channels.contains_key(&id) {
+            id = new_id();
+        }
+        let channel = Channel::new(name, id.clone(), self.id.clone());
+        channel.create_dir().await?;
+        {
+            self.get_member_mut(member_id)?.set_channel_permission(
+                channel.id.clone(),
+                ChannelPermission::ViewChannel,
+                Some(true),
+            );
+        }
+        self.channels.insert(id.clone(), channel);
+        Ok(id)
+    }
+
+    pub fn get_channel(&self, member_id: &ID, channel_id: &ID) -> Result<&Channel> {
+        let member = self.get_member(member_id)?;
+        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        if let Some(channel) = self.channels.get(channel_id) {
+            Ok(channel)
         } else {
-            Err(ApiActionError::BadNameCharacters)
+            Err(ApiError::ChannelNotFound)
+        }
+    }
+
+    pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: &ID) -> Result<&mut Channel> {
+        let member = self.get_member(member_id)?;
+        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        if let Some(channel) = self.channels.get_mut(channel_id) {
+            Ok(channel)
+        } else {
+            Err(ApiError::ChannelNotFound)
+        }
+    }
+
+    pub fn get_member(&self, member_id: &ID) -> Result<HubMember> {
+        if let Some(member) = self.members.get(member_id) {
+            Ok(member.clone())
+        } else {
+            Err(ApiError::MemberNotFound)
+        }
+    }
+
+    pub fn get_member_mut(&mut self, member_id: &ID) -> Result<&mut HubMember> {
+        if let Some(member) = self.members.get_mut(member_id) {
+            Ok(member)
+        } else {
+            Err(ApiError::MemberNotFound)
         }
     }
 
     pub async fn rename_channel(
         &mut self,
-        user: ID,
-        channel: ID,
+        user_id: &ID,
+        channel_id: &ID,
         name: String,
-    ) -> Result<String, ApiActionError> {
-        if is_valid_username(&name) {
-            if let Some(user) = self.members.get(&user) {
-                if user.clone().has_channel_permission(
-                    &channel,
-                    &ChannelPermission::ViewChannel,
-                    self,
-                ) {
-                    if let Some(channel) = self.channels.get_mut(&channel) {
-                        let old_name = channel.name.clone();
-                        channel.name = name;
-                        if let Ok(_) = self.save().await {
-                            Ok(old_name)
-                        } else {
-                            Err(ApiActionError::WriteFileError)
-                        }
-                    } else {
-                        Err(ApiActionError::ChannelNotFound)
-                    }
-                } else {
-                    Err(ApiActionError::NoPermission)
-                }
+    ) -> Result<String> {
+        check_name_validity(&name)?;
+        if let Some(user) = self.members.get(user_id) {
+            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            if let Some(channel) = self.channels.get_mut(channel_id) {
+                let old_name = channel.name.clone();
+                channel.name = name;
+                Ok(old_name)
             } else {
-                Err(ApiActionError::NotInHub)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(ApiActionError::BadNameCharacters)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn delete_channel(&mut self, user: ID, channel: ID) -> Result<(), ApiActionError> {
-        if let Some(user) = self.members.get(&user) {
-            if user
-                .clone()
-                .has_permission(HubPermission::DeleteChannel, self)
-            {
-                if user.clone().has_channel_permission(
-                    &channel,
-                    &ChannelPermission::ViewChannel,
-                    self,
-                ) {
-                    if let Some(_) = self.channels.remove(&channel) {
-                        if let Ok(_) = self.save().await {
-                            Ok(())
-                        } else {
-                            Err(ApiActionError::WriteFileError)
-                        }
-                    } else {
-                        Err(ApiActionError::ChannelNotFound)
-                    }
-                } else {
-                    Err(ApiActionError::NoPermission)
-                }
+    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result<()> {
+        if let Some(user) = self.members.get(user_id) {
+            check_permission!(user, HubPermission::DeleteChannel, self);
+            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            if let Some(_) = self.channels.remove(channel_id) {
+                Ok(())
             } else {
-                Err(ApiActionError::NoPermission)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
     pub async fn send_message(
         &mut self,
-        user: ID,
-        channel: ID,
+        user_id: &ID,
+        channel_id: &ID,
         message: String,
-    ) -> Result<ID, ApiActionError> {
-        if let Some(member) = self.members.get(&user) {
-            if !self.mutes.contains(&user) {
-                if member.clone().has_channel_permission(
-                    &channel,
-                    &ChannelPermission::SendMessage,
-                    self,
-                ) {
-                    if let Some(channel) = self.channels.get_mut(&channel) {
-                        let id = new_id();
-                        let message = Message {
-                            id: id.clone(),
-                            sender: member.user.clone(),
-                            created: get_system_millis(),
-                            content: message,
-                        };
-                        channel.add_message(message).await?;
-                        Ok(id)
-                    } else {
-                        Err(ApiActionError::ChannelNotFound)
-                    }
+    ) -> Result<ID> {
+        if let Some(member) = self.members.get(&user_id) {
+            if !self.mutes.contains(&user_id) {
+                check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
+                if let Some(channel) = self.channels.get_mut(&channel_id) {
+                    let id = new_id();
+                    let message = Message {
+                        id: id.clone(),
+                        sender: member.user.clone(),
+                        created: get_system_millis(),
+                        content: message,
+                    };
+                    channel.add_message(message).await?;
+                    Ok(id)
                 } else {
-                    Err(ApiActionError::NoPermission)
+                    Err(ApiError::ChannelNotFound)
                 }
             } else {
-                Err(ApiActionError::Muted)
+                Err(ApiError::Muted)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = tokio::fs::create_dir_all(HUB_DATA_FOLDER).await {
-            return Err(JsonSaveError::Directory);
-        }
+    pub async fn save(&self) -> Result<()> {
+        tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
         if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = tokio::fs::write(
-                HUB_DATA_FOLDER.to_owned() + "/" + &self.id.to_string() + ".json",
-                json,
-            )
-            .await
-            {
-                Ok(result)
-            } else {
-                Err(JsonSaveError::WriteFile)
-            }
+            tokio::fs::write(self.get_info_path(), json).await?;
+            Ok(())
         } else {
-            Err(JsonSaveError::Serialize)
+            Err(DataError::Serialize.into())
         }
     }
 
-    pub async fn load(id: ID) -> Result<Self, JsonLoadError> {
-        if let Ok(json) = tokio::fs::read_to_string(
-            HUB_DATA_FOLDER.to_owned() + "/" + &id.to_string() + ".json",
-        )
-        .await
-        {
-            if let Ok(result) = serde_json::from_str(&json) {
-                Ok(result)
-            } else {
-                Err(JsonLoadError::Deserialize)
-            }
+    pub fn get_info_path(&self) -> String {
+        format!("{}{}.json", HUB_INFO_FOLDER, self.id)
+    }
+
+    pub fn get_data_path(&self) -> String {
+        format!("{}{}/", HUB_DATA_FOLDER, self.id)
+    }
+
+    pub async fn load(id: &ID) -> Result<Self> {
+        let filename = format!("{}{}.json", HUB_INFO_FOLDER, id);
+        let path = std::path::Path::new(&filename);
+        if !path.exists() {
+            return Err(ApiError::HubNotFound);
+        }
+        let json = tokio::fs::read_to_string(path).await?;
+        if let Ok(result) = serde_json::from_str(&json) {
+            Ok(result)
         } else {
-            Err(JsonLoadError::ReadFile)
+            Err(DataError::Deserialize.into())
         }
     }
 
-    pub fn user_join(&mut self, user: &User) -> Result<HubMember, ApiActionError> {
+    pub fn user_join(&mut self, user: &User) -> Result<HubMember> {
         let mut member = HubMember::new(user, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
             self.members.insert(member.user.clone(), member.clone());
             Ok(member)
         } else {
-            Err(ApiActionError::GroupNotFound)
+            Err(ApiError::GroupNotFound)
         }
     }
 
-    pub fn user_leave(&mut self, user: &User) -> Result<(), ApiActionError> {
+    pub fn user_leave(&mut self, user: &User) -> Result<()> {
         if let Some(member) = self.members.get_mut(&user.id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
                 self.members.remove(&user.id);
                 Ok(())
             } else {
-                Err(ApiActionError::GroupNotFound)
+                Err(ApiError::GroupNotFound)
             }
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn kick_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
-        if self.members.contains_key(&user_id) {
-            if let Ok(mut user) = User::load(&user_id).await {
-                self.user_leave(&user)?;
-                if let Some(index)  = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
-                    user.in_hubs.remove(index);
-                }
-                if let Ok(()) = user.save().await {
-                    self.members.remove(&user_id);
-                    if let Err(_) = self.save().await {
-                        Err(ApiActionError::WriteFileError)
-                    } else {
-                        Ok(())
-                    }
-                } else {
-                    Err(ApiActionError::WriteFileError)
-                }
-            } else {
-                Err(ApiActionError::OpenFileError)
+    pub async fn kick_user(&mut self, user_id: &ID) -> Result<()> {
+        if self.members.contains_key(user_id) {
+            let mut user = User::load(user_id).await?;
+            self.user_leave(&user)?;
+            if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
+                user.in_hubs.remove(index);
             }
+            user.save().await?;
+            self.members.remove(&user_id);
+            Ok(())
         } else {
-            Err(ApiActionError::NotInHub)
+            Ok(())
         }
     }
 
-    pub async fn ban_user(&mut self, user_id: ID) -> Result<(), ApiActionError> {
-        self.bans.insert(user_id.clone());
-        self.kick_user(user_id).await
+    pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
+        self.kick_user(&user_id).await?;
+        self.bans.insert(user_id);
+        Ok(())
     }
 
-    pub fn channels(&mut self, user: ID) -> Result<Vec<Channel>, ApiActionError> {
+    pub fn unban_user(&mut self, user_id: &ID) {
+        self.bans.remove(user_id);
+    }
+
+    pub fn mute_user(&mut self, user_id: ID) {
+        self.mutes.insert(user_id);
+    }
+
+    pub fn unmute_user(&mut self, user_id: &ID) {
+        self.mutes.remove(user_id);
+    }
+
+    pub fn get_channels_for_user(&self, user_id: &ID) -> Result<HashMap<ID, Channel>> {
         let hub_im = self.clone();
-        if let Some(user) = self.members.get_mut(&user) {
-            let mut result = Vec::new();
+        if let Some(user) = self.members.get(user_id) {
+            let mut result = HashMap::new();
             for channel in self.channels.clone() {
                 if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &hub_im)
                 {
-                    result.push(channel.1.clone());
+                    result.insert(channel.0.clone(), channel.1.clone());
                 }
             }
             Ok(result)
         } else {
-            Err(ApiActionError::UserNotFound)
+            Err(ApiError::MemberNotFound)
         }
+    }
+
+    pub fn strip(&self, user_id: &ID) -> Result<Self> {
+        let mut hub = self.clone();
+        hub.channels = self.get_channels_for_user(user_id)?;
+        Ok(hub)
     }
 }
 
@@ -547,7 +535,7 @@ impl Hub {
 mod tests {
     use crate::{
         auth::Service,
-        permission::{ChannelPermission, HubPermission, PermissionSetting},
+        permission::{ChannelPermission, HubPermission},
         user::User,
         ID,
     };
@@ -582,16 +570,16 @@ mod tests {
         assert!(!member.has_permission(HubPermission::All, &hub));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::FALSE);
+        member.set_permission(HubPermission::SendMessage, Some(false));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::NONE);
+        member.set_permission(HubPermission::SendMessage, None);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::SendMessage, Some(true));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::All, Some(true));
         assert!(member.has_permission(HubPermission::ReadMessage, &hub));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
     }
@@ -606,28 +594,16 @@ mod tests {
         let id = ID::from_u128(0);
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            PermissionSetting::FALSE,
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(false));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            PermissionSetting::NONE,
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, None);
         assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(
-            id.clone(),
-            ChannelPermission::SendMessage,
-            PermissionSetting::TRUE,
-        );
+        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(true));
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, PermissionSetting::TRUE);
+        member.set_permission(HubPermission::All, Some(true));
         assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
         assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
     }
@@ -651,25 +627,25 @@ mod tests {
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::FALSE);
+            .set_permission(HubPermission::SendMessage, Some(false));
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::NONE);
+            .set_permission(HubPermission::SendMessage, None);
         assert!(!member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, PermissionSetting::TRUE);
+            .set_permission(HubPermission::SendMessage, Some(true));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
         assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
         hub.groups
             .get_mut(&group.id)
             .expect("Failed to get test group.")
-            .set_permission(HubPermission::All, PermissionSetting::TRUE);
+            .set_permission(HubPermission::All, Some(true));
         assert!(member.has_permission(HubPermission::ReadMessage, &hub));
         assert!(member.has_permission(HubPermission::SendMessage, &hub));
     }
@@ -686,22 +662,22 @@ mod tests {
                     .members
                     .get_mut(&member.user)
                     .expect("Failed to get hub member.");
-                member_in_hub.set_permission(HubPermission::CreateChannel, PermissionSetting::TRUE);
+                member_in_hub.set_permission(HubPermission::CreateChannel, Some(true));
                 member = member_in_hub.clone();
             }
             assert!(!member.has_permission(HubPermission::All, &hub));
             assert!(member.has_permission(HubPermission::CreateChannel, &hub));
         }
         let channel_0 = hub
-            .new_channel(member.user.clone(), "test0".to_string())
+            .new_channel(&member.user, "test0".to_string())
             .await
             .expect("Failed to create test channel.");
         let _channel_1 = hub
-            .new_channel(member.user.clone(), "test1".to_string())
+            .new_channel(&member.user, "test1".to_string())
             .await
             .expect("Failed to create test channel.");
         assert!(hub
-            .channels(member.user.clone())
+            .get_channels_for_user(&member.user)
             .expect("Failed to get hub channels.")
             .is_empty());
 
@@ -713,14 +689,14 @@ mod tests {
             member_in_hub.set_channel_permission(
                 channel_0.clone(),
                 ChannelPermission::ViewChannel,
-                PermissionSetting::TRUE,
+                Some(true),
             );
         }
         let get = hub
-            .channels(member.user.clone())
+            .get_channels_for_user(&member.user)
             .expect("Failed to get hub channels.");
         assert_eq!(get.len(), 1);
-        assert_eq!(get[0].id, channel_0.clone());
+        assert_eq!(get.get(&channel_0).unwrap().id, channel_0.clone());
     }
 
     #[tokio::test]
@@ -735,7 +711,7 @@ mod tests {
         )
         .await;
         hub.save().await.expect("Failed to save hub info.");
-        let load = Hub::load(hub.id).await.expect("Failed to load hub info.");
+        let load = Hub::load(&hub.id).await.expect("Failed to load hub info.");
         assert_eq!(hub, load);
     }
 }

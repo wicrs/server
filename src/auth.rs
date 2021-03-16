@@ -1,13 +1,17 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use base64::URL_SAFE_NO_PAD;
-use reqwest::header::{AUTHORIZATION, USER_AGENT};
+use futures::lock::Mutex;
+use reqwest::{
+    header::{AUTHORIZATION, USER_AGENT},
+    StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use futures::lock::Mutex;
 use sha3::{Digest, Sha3_256};
+use thiserror::Error as ThisError;
 
-use crate::{get_system_millis, user::User, USER_AGENT_STRING, ID};
+use crate::{get_system_millis, user::User, ApiError, Result, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -29,7 +33,7 @@ pub enum Service {
 impl ToString for Service {
     fn to_string(&self) -> String {
         match self {
-            &Self::GitHub => String::from("GitHub")
+            &Self::GitHub => String::from("GitHub"),
         }
     }
 }
@@ -44,7 +48,7 @@ pub struct AuthQuery {
 impl FromStr for Service {
     type Err = ();
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "github" => Ok(Self::GitHub),
             _ => Err(()),
@@ -55,6 +59,22 @@ impl FromStr for Service {
 pub struct Auth {
     github: Arc<Mutex<GitHub>>,
     sessions: SessionMap,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, ThisError)]
+pub enum AuthGetError {
+    #[error("oauth service failed to respond")]
+    NoResponse,
+    #[error("unable to parse response of oauth service")]
+    BadJson,
+    #[error("{0}")]
+    OauthRequest(String),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct IDToken {
+    id: ID,
+    token: String,
 }
 
 impl Auth {
@@ -70,7 +90,7 @@ impl Auth {
                 github_conf.client_id,
                 github_conf.client_secret,
             ))),
-            sessions: Arc::new(Mutex::new(Auth::load_tokens()))
+            sessions: Arc::new(Mutex::new(Auth::load_tokens())),
         }
     }
 
@@ -100,13 +120,12 @@ impl Auth {
         (auth, account.id, token)
     }
 
-    fn save_tokens(
-        sessions: &HashMap<String, Vec<(u128, String)>>,
-    ) -> Result<(), std::io::Error> {
+    fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<()> {
         std::fs::write(
             "data/sessions.json",
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
         )
+        .map_err(|e| e.into())
     }
 
     fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
@@ -178,7 +197,7 @@ impl Auth {
         manager: Arc<Mutex<Self>>,
         service: Service,
         query: AuthQuery,
-    ) -> (String, Option<(ID, String)>) {
+    ) -> Result<IDToken> {
         let expires = query.expires.unwrap_or(get_system_millis() + 604800000);
         match service {
             Service::GitHub => {
@@ -202,20 +221,14 @@ impl Auth {
         id: &str,
         expires: u128,
         email: String,
-    ) -> (bool, Option<(ID, String)>) {
-        let user_existed;
+    ) -> Result<IDToken> {
         let user;
         if let Ok(loaded_account) = User::load_get_id(id, &service).await {
             user = loaded_account;
-            user_existed = true;
         } else {
-            user_existed = false;
             let new_account = User::new(id.to_string(), email, service);
-            if let Ok(_) = new_account.save().await {
-                user = new_account;
-            } else {
-                return (user_existed, None);
-            }
+            new_account.save().await?;
+            user = new_account;
         }
         let id = user.id;
         let mut vec: Vec<u8> = Vec::with_capacity(64);
@@ -239,13 +252,11 @@ impl Auth {
             }
             let _write = Auth::save_tokens(&sessions_lock);
         }
-        (user_existed, Some((id, token)))
+        Ok(IDToken {
+            id: id,
+            token: token,
+        })
     }
-}
-
-enum AuthGetError {
-    NoResponse,
-    BadJson,
 }
 
 struct GitHub {
@@ -309,10 +320,8 @@ impl GitHub {
                         }
                     }
                 }
-                Err(AuthGetError::BadJson)
-            } else {
-                Err(AuthGetError::BadJson)
             }
+            Err(AuthGetError::BadJson)
         } else {
             Err(AuthGetError::NoResponse)
         }
@@ -350,54 +359,29 @@ impl GitHub {
         state: String,
         code: String,
         expires: u128,
-    ) -> (String, Option<(ID, String)>) {
+    ) -> Result<IDToken> {
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());
-            if let Ok(token) = client.1.exchange_code(code).request(http_client) {
-                let token = token.access_token().secret();
-                if let Ok(id) = self.get_id(&token).await {
-                    if let Ok(email) = self.get_email(&token).await {
-                        let auth =
-                            Auth::finalize_login(manager, Service::GitHub, &id, expires, email).await;
-                        if let Some(info) = auth.1 {
-                            if auth.0 {
-                                return (
-                                    String::from(format!(
-                                    "Signed in using GitHub to ID {}.\nYour access token is: {}",
-                                    info.0, info.1
-                                )),
-                                    Some((info.0, info.1)),
-                                );
-                            } else {
-                                return (String::from(format!("Signed up using GitHub, your ID is {}.\nYour access token is: {}", info.0, info.1)), Some((info.0, info.1)));
-                            }
-                        }
-                        if auth.0 {
-                            return (String::from("Sign in failed."), None);
-                        } else {
-                            return (String::from("Sign up failed."), None);
-                        }
-                    }
-                    return (
-                        String::from("Failed to get the primary email of your GitHub account."),
-                        None,
-                    );
+            match client.1.exchange_code(code).request(http_client) {
+                Ok(token) => {
+                    let token = token.access_token().secret();
+                    let id = self.get_id(&token).await?;
+                    let email = self.get_email(&token).await?;
+                    Auth::finalize_login(manager, Service::GitHub, &id, expires, email).await
                 }
-                return (
-                    String::from("Failed to get the ID of your GitHub account."),
-                    None,
-                );
+                Err(error) => Err(AuthGetError::OauthRequest(format!("{:?}", error)).into()),
             }
-            return (
-                String::from("Failed to get an access token from the code."),
-                None,
-            );
+        } else {
+            Err(ApiError::Other(
+                "Invalid session.".to_string(),
+                StatusCode::BAD_REQUEST,
+            ))
         }
-        return (String::from("Invalid session."), None);
     }
 }
 
-fn hash_auth(id: ID, token: String) -> (String, String) { // (Hashed ID, Hashed Token)
+fn hash_auth(id: ID, token: String) -> (String, String) {
+    // (Hashed ID, Hashed Token)
     let mut hasher = Sha3_256::new();
     hasher.update(id.as_bytes());
     let id_hash = format!("{:x}", hasher.finalize_reset());
@@ -446,11 +430,10 @@ mod tests {
             get_system_millis() + 50,
             EMAIL.to_string(),
         )
-        .await;
-        assert!(!login.0);
-        let token_id = login.1.unwrap();
-        assert_eq!(token_id.0.clone().to_string(), USER_ID.to_string());
-        assert!(Auth::is_authenticated(auth.clone(), get_uuid(), token_id.1).await);
+        .await
+        .unwrap();
+        assert_eq!(login.id.clone().to_string(), USER_ID.to_string());
+        assert!(Auth::is_authenticated(auth.clone(), get_uuid(), login.token).await);
         let read = std::fs::read_to_string("data/users/".to_string() + USER_ID + ".json").unwrap();
         assert!(read.starts_with(r#"{"id":"b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0","email":"test@example.com","created":"#) && read.ends_with(r#","service":"github","accounts":{}}"#));
     }
@@ -466,7 +449,8 @@ mod tests {
             get_system_millis() + 50,
             EMAIL.to_string(),
         )
-        .await;
+        .await
+        .unwrap();
         let login_1 = Auth::finalize_login(
             auth.clone(),
             Service::GitHub,
@@ -474,14 +458,11 @@ mod tests {
             get_system_millis() + 100000,
             EMAIL.to_string(),
         )
-        .await;
-        assert!(!login_0.0.clone() && login_1.0.clone());
-        assert!(
-            login_0.1.clone().unwrap().0 == login_1.1.clone().unwrap().0
-                && login_0.1.clone().unwrap().0 == get_uuid()
-        );
-        let token_0 = login_0.1.unwrap().1;
-        let token_1 = login_1.1.unwrap().1;
+        .await
+        .unwrap();
+        assert!(login_0.id == login_1.id && login_0.id == get_uuid());
+        let token_0 = login_0.token;
+        let token_1 = login_1.token;
         assert!(Auth::is_authenticated(auth.clone(), get_uuid(), token_0.clone()).await);
         assert!(Auth::is_authenticated(auth.clone(), get_uuid(), token_1.clone()).await);
         std::thread::sleep(std::time::Duration::from_millis(64));
@@ -515,10 +496,10 @@ mod tests {
             get_system_millis() + 10000,
             EMAIL.to_string(),
         )
-        .await;
-        assert!(!login.0.clone());
-        assert!(login.1.clone().unwrap().0 == get_uuid());
-        let token = login.1.unwrap().1;
+        .await
+        .unwrap();
+        assert!(login.id == get_uuid());
+        let token = login.token;
         assert!(Auth::is_authenticated(auth.clone(), get_uuid(), token.clone()).await);
         Auth::invalidate_tokens(auth.clone(), get_uuid()).await;
         assert!(!Auth::is_authenticated(auth.clone(), get_uuid(), token.clone()).await);

@@ -3112,6 +3112,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha3",
+ "thiserror",
  "tokio 0.2.25",
  "tokio-test",
  "uuid 0.8.2",

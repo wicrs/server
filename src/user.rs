@@ -8,13 +8,11 @@ use sha3::{
 };
 
 use crate::{
-    auth::Service,
-    get_system_millis,
-    hub::{Hub, HubMember},
-    is_valid_username, ApiActionError, JsonLoadError, JsonSaveError, ID, NAME_ALLOWED_CHARS,
+    auth::Service, check_name_validity, get_system_millis, hub::Hub, ApiError, DataError, Result,
+    ID,
 };
 
-static USER_FOLDER: &str = "data/users/";
+const USER_FOLDER: &str = "data/users/";
 
 /// Represents a user, keeps track of which accounts it owns and their metadata.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -65,145 +63,77 @@ impl User {
         }
     }
 
-    pub async fn change_username(&mut self, new_name: String) -> Result<String, ApiActionError> {
-        if is_valid_username(&new_name) {
-            let old_name = self.username.clone();
-            self.username = new_name;
-            if let Ok(_save) = self.save().await {
-                Ok(old_name)
-            } else {
-                Err(ApiActionError::WriteFileError)
-            }
-        } else {
-            Err(ApiActionError::BadNameCharacters)
-        }
+    pub async fn change_username(&mut self, new_name: String) -> Result<String> {
+        check_name_validity(&new_name)?;
+        let old_name = self.username.clone();
+        self.username = new_name;
+        Ok(old_name)
     }
 
     pub async fn send_hub_message(
         &self,
-        hub: ID,
-        channel: ID,
+        hub_id: &ID,
+        channel_id: &ID,
         message: String,
-    ) -> Result<ID, ApiActionError> {
-        if self.in_hubs.contains(&hub) {
-            if let Ok(mut hub) = Hub::load(hub).await {
-                hub.send_message(self.id, channel, message).await
-            } else {
-                Err(ApiActionError::HubNotFound)
-            }
+    ) -> Result<ID> {
+        if self.in_hubs.contains(hub_id) {
+            let mut hub = Hub::load(hub_id).await?;
+            hub.send_message(&self.id, channel_id, message).await
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn join_hub(&mut self, hub_id: ID) -> Result<HubMember, ApiActionError> {
-        if let Ok(mut hub) = Hub::load(hub_id).await {
-            if !hub.bans.contains(&self.id) {
-                if let Ok(member) = hub.user_join(&self) {
-                    if let Ok(()) = hub.save().await {
-                        self.in_hubs.push(hub_id);
-                        if let Ok(()) = self.save().await {
-                            Ok(member)
-                        } else {
-                            Err(ApiActionError::WriteFileError)
-                        }
-                    } else {
-                        Err(ApiActionError::WriteFileError)
-                    }
-                } else {
-                    Err(ApiActionError::GroupNotFound)
-                }
-            } else {
-                Err(ApiActionError::Banned)
-            }
+    pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
+        let mut hub = Hub::load(hub_id).await?;
+        if !hub.bans.contains(&self.id) {
+            hub.user_join(&self)?;
+            hub.save().await?;
+            self.in_hubs.push(hub_id.clone());
+            Ok(())
         } else {
-            Err(ApiActionError::HubNotFound)
+            Err(ApiError::Banned)
         }
     }
 
-    pub async fn leave_hub(&mut self, hub_id: ID) -> Result<(), ApiActionError> {
-        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == &hub_id) {
-            if let Ok(mut hub) = Hub::load(hub_id).await {
-                if let Ok(()) = hub.user_leave(&self) {
-                    if let Ok(()) = hub.save().await {
-                        self.in_hubs.remove(index);
-                        if let Ok(()) = self.save().await {
-                            Ok(())
-                        } else {
-                            Err(ApiActionError::WriteFileError)
-                        }
-                    } else {
-                        Err(ApiActionError::WriteFileError)
-                    }
-                } else {
-                    Err(ApiActionError::GroupNotFound)
-                }
-            } else {
-                Err(ApiActionError::HubNotFound)
-            }
+    pub fn in_hub(&self, hub_id: &ID) -> Result<()> {
+        if self.in_hubs.contains(hub_id) {
+            Ok(())
         } else {
-            Err(ApiActionError::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn create_hub(&mut self, name: String, id: ID) -> Result<ID, ApiActionError> {
-        if !name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c)) {
-            return Err(ApiActionError::BadNameCharacters);
-        }
-        if Hub::load(id).await.is_err() {
-            let new_hub = Hub::new(name, id, &self);
-            if let Ok(_) = new_hub.save().await {
-                self.in_hubs.push(new_hub.id.clone());
-                if let Ok(_) = self.save().await {
-                    Ok(new_hub.id)
-                } else {
-                    Err(ApiActionError::WriteFileError)
-                }
-            } else {
-                Err(ApiActionError::WriteFileError)
-            }
+    pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
+        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == hub_id) {
+            let mut hub = Hub::load(hub_id).await?;
+            hub.user_leave(&self)?;
+            hub.save().await?;
+            self.in_hubs.remove(index);
+            Ok(())
         } else {
-            Err(ApiActionError::WriteFileError)
+            Err(ApiError::NotInHub)
         }
     }
 
-    pub async fn is_in_hub(&self, hub: ID) -> bool {
-        self.in_hubs.contains(&hub)
+    pub async fn save(&self) -> Result<()> {
+        tokio::fs::create_dir_all(USER_FOLDER).await?;
+        let json = serde_json::to_string(self).map_err(|_| DataError::Serialize)?;
+        tokio::fs::write(format!("{}{}.json", USER_FOLDER, self.id), json).await?;
+        Ok(())
     }
 
-    pub async fn save(&self) -> Result<(), JsonSaveError> {
-        if let Err(_) = tokio::fs::create_dir_all(USER_FOLDER).await {
-            return Err(JsonSaveError::Directory);
+    pub async fn load(id: &ID) -> Result<Self> {
+        let filename = format!("{}{}.json", USER_FOLDER, id);
+        let path = std::path::Path::new(&filename);
+        if !path.exists() {
+            return Err(ApiError::HubNotFound);
         }
-        if let Ok(json) = serde_json::to_string(self) {
-            if let Ok(result) = std::fs::write(
-                USER_FOLDER.to_owned() + &self.id.to_string() + ".json",
-                json,
-            ) {
-                Ok(result)
-            } else {
-                Err(JsonSaveError::WriteFile)
-            }
-        } else {
-            Err(JsonSaveError::Serialize)
-        }
+        let json = tokio::fs::read_to_string(path).await?;
+        serde_json::from_str(&json).map_err(|_| DataError::Deserialize.into())
     }
 
-    pub async fn load(id: &ID) -> Result<Self, JsonLoadError> {
-        if let Ok(json) =
-            tokio::fs::read_to_string(USER_FOLDER.to_owned() + &id.to_string() + ".json").await
-        {
-            if let Ok(result) = serde_json::from_str(&json) {
-                Ok(result)
-            } else {
-                Err(JsonLoadError::Deserialize)
-            }
-        } else {
-            Err(JsonLoadError::ReadFile)
-        }
-    }
-
-    pub async fn load_get_id(id: &str, service: &Service) -> Result<Self, JsonLoadError> {
+    pub async fn load_get_id(id: &str, service: &Service) -> Result<Self> {
         Self::load(&get_id(id, service)).await
     }
 }
@@ -286,45 +216,22 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn create_hub() {
-        let mut user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            Service::GitHub,
-        );
-        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id.to_string());
-        let id = ID::from_u128(0);
-        let _delete = std::fs::remove_file("data/hubs/info/".to_string() + &id.to_string());
-        let hub = user
-            .create_hub("test_hub".to_string(), id.clone())
-            .await
-            .expect("Failed to create test hub.");
-        assert!(std::path::Path::new(
-            &("data/hubs/info/".to_string() + &hub.to_string() + ".json")
-        )
-        .exists());
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn send_hub_message() {
         let mut user = User::new(
             SERVICE_USER_ID.to_string(),
             EMAIL.to_string(),
             Service::GitHub,
         );
-        let id = ID::from_u128(0);
-        let hub_id = user
-            .create_hub("test_hub".to_string(), id.clone())
+        let id = crate::api::create_hub(&mut user, "test".to_string())
             .await
-            .expect("Failed to create test hub.");
-        let mut hub = Hub::load(hub_id).await.expect("Failed to load test hub.");
+            .expect("Failed to create hub.");
+        let mut hub = Hub::load(&id).await.expect("Failed to load test hub.");
         let channel = hub
-            .new_channel(user.id, "test_channel".to_string())
+            .new_channel(&user.id, "test_channel".to_string())
             .await
             .expect("Failed to create test channel.");
         hub.save().await.expect("Failed to save test hub.");
-        user.send_hub_message(hub_id, channel.clone(), "test".to_string())
+        user.send_hub_message(&id, &channel, "test".to_string())
             .await
             .expect("Failed to send message.");
         let channel = hub
