@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub auth_services: AuthConfigs,
     pub address: String,
+    pub show_version: bool,
 }
 
 #[derive(Serialize, Deserialize)]

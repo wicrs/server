@@ -139,8 +139,12 @@ macro_rules! json_response {
 }
 
 #[get("/")]
-async fn index() -> &'static str {
-    "WICRS is up and running!"
+async fn index() -> String {
+    if crate::CONFIG.show_version {
+        format!("WICRS server version {} is up and running!", env!("CARGO_PKG_VERSION"))
+    } else {
+        String::from("WICRS server is up and running!")
+    }
 }
 
 #[get("/v2/login/{service}")]

@@ -32,13 +32,13 @@ Here is an example of what the contents of `config.json` should be:
             "client_secret": "$GITHUB_CLIENT_SECRET"
         }
     },
-    "address": "127.0.0.1:8080"
+    "address": "127.0.0.1:8080",
+    "show_version": true
 }
 ```
 
 Make sure to replace `$GITHUB_CLIENT_ID` with the client ID and `$GITHUB_CLIENT_SECRET` with the client secret you got when you created the GitHub OAuth application.
-`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`.
-You can also set the GitHub client ID and secret with environement variables (which will be used instead of any configuration values) the variables are `$GITHUB_CLIENT_ID` and `$GITHUB_CLIENT_SECRET`.
+`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`).
 
 Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
 
