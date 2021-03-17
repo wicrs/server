@@ -62,13 +62,27 @@ pub struct Auth {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, ThisError)]
-pub enum AuthGetError {
+pub enum AuthError {
     #[error("oauth service failed to respond")]
     NoResponse,
     #[error("unable to parse response of oauth service")]
     BadJson,
     #[error("{0}")]
     OauthRequest(String),
+    #[error("invalid token")]
+    InvalidToken,
+    #[error("malformed ID Token string, should be ID^Token")]
+    MalformedIDToken,
+}
+
+impl From<&AuthError> for StatusCode {
+    fn from(error: &AuthError) -> Self {
+        match error {
+            AuthError::InvalidToken => Self::UNAUTHORIZED,
+            AuthError::MalformedIDToken => Self::BAD_REQUEST,
+            _ => StatusCode::BAD_GATEWAY,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -83,7 +97,7 @@ impl Auth {
             .expect("Failed to create the ./data/users directory.");
         let auth_config = crate::config::load_config().auth_services;
         let github_conf = auth_config.github.expect(
-            "GitHub is currently the only support authentication provider, it cannot be empty.",
+            "GitHub is currently the only supported oauth service provider, it must be configured.",
         );
         Self {
             github: Arc::new(Mutex::new(GitHub::new(
@@ -282,7 +296,7 @@ impl GitHub {
         }
     }
 
-    async fn get_id(&self, token: &String) -> Result<String, AuthGetError> {
+    async fn get_id(&self, token: &String) -> Result<String, AuthError> {
         let user_request = self
             .client
             .get("https://api.github.com/user")
@@ -294,14 +308,14 @@ impl GitHub {
             if let Ok(json) = response.json::<Value>().await {
                 Ok(json["id"].to_string())
             } else {
-                Err(AuthGetError::BadJson)
+                Err(AuthError::BadJson)
             }
         } else {
-            Err(AuthGetError::NoResponse)
+            Err(AuthError::NoResponse)
         }
     }
 
-    async fn get_email(&self, token: &String) -> Result<String, AuthGetError> {
+    async fn get_email(&self, token: &String) -> Result<String, AuthError> {
         let email_request = self
             .client
             .get("https://api.github.com/user/emails")
@@ -321,9 +335,9 @@ impl GitHub {
                     }
                 }
             }
-            Err(AuthGetError::BadJson)
+            Err(AuthError::BadJson)
         } else {
-            Err(AuthGetError::NoResponse)
+            Err(AuthError::NoResponse)
         }
     }
 
@@ -369,7 +383,7 @@ impl GitHub {
                     let email = self.get_email(&token).await?;
                     Auth::finalize_login(manager, Service::GitHub, &id, expires, email).await
                 }
-                Err(error) => Err(AuthGetError::OauthRequest(format!("{:?}", error)).into()),
+                Err(error) => Err(AuthError::OauthRequest(format!("{:?}", error)).into()),
             }
         } else {
             Err(ApiError::Other(

@@ -83,35 +83,35 @@ pub enum ApiError {
     #[error("{0}")]
     Other(String, StatusCode),
     #[error(transparent)]
-    AuthGet(#[from] auth::AuthGetError),
+    Auth(#[from] auth::AuthError),
     #[error(transparent)]
     Data(#[from] DataError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
-impl ApiError {
-    fn http_status_code(&self) -> StatusCode {
-        match self {
-            Self::NotAuthenticated => StatusCode::UNAUTHORIZED,
-            Self::InvalidName => StatusCode::BAD_REQUEST,
-            Self::Banned => StatusCode::FORBIDDEN,
-            Self::ChannelNotFound => StatusCode::NOT_FOUND,
-            Self::GroupNotFound => StatusCode::NOT_FOUND,
-            Self::HubNotFound => StatusCode::NOT_FOUND,
-            Self::MemberNotFound => StatusCode::NOT_FOUND,
-            Self::Muted => StatusCode::FORBIDDEN,
-            Self::MissingChannelPermission(_) => StatusCode::FORBIDDEN,
-            Self::MissingHubPermission(_) => StatusCode::FORBIDDEN,
-            Self::NotInHub => StatusCode::NOT_FOUND,
-            Self::UserNotFound => StatusCode::NOT_FOUND,
-            Self::UnexpectedServerArg => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::MessageTooBig => StatusCode::BAD_REQUEST,
-            Self::InvalidMessage => StatusCode::BAD_REQUEST,
-            Self::Other(_, code) => code.clone(),
-            Self::AuthGet(_) => StatusCode::BAD_GATEWAY,
-            Self::Data(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+impl From<&ApiError> for StatusCode {
+    fn from(error: &ApiError) -> Self {
+        match error {
+            ApiError::NotAuthenticated => Self::UNAUTHORIZED,
+            ApiError::InvalidName => Self::BAD_REQUEST,
+            ApiError::Banned => Self::FORBIDDEN,
+            ApiError::ChannelNotFound => Self::NOT_FOUND,
+            ApiError::GroupNotFound => Self::NOT_FOUND,
+            ApiError::HubNotFound => Self::NOT_FOUND,
+            ApiError::MemberNotFound => Self::NOT_FOUND,
+            ApiError::Muted => Self::FORBIDDEN,
+            ApiError::MissingChannelPermission(_) => Self::FORBIDDEN,
+            ApiError::MissingHubPermission(_) => Self::FORBIDDEN,
+            ApiError::NotInHub => Self::NOT_FOUND,
+            ApiError::UserNotFound => Self::NOT_FOUND,
+            ApiError::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
+            ApiError::MessageTooBig => Self::BAD_REQUEST,
+            ApiError::InvalidMessage => Self::BAD_REQUEST,
+            ApiError::Other(_, code) => code.clone(),
+            ApiError::Auth(error) => error.into(),
+            ApiError::Data(_) => Self::INTERNAL_SERVER_ERROR,
+            ApiError::Io(_) => Self::INTERNAL_SERVER_ERROR,
         }
     }
 }

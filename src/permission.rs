@@ -46,8 +46,8 @@ impl ChannelPermission {
             ChannelPermission::ReadMessage => HubPermission::ReadMessage,
             ChannelPermission::ViewChannel => HubPermission::ViewChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
-	    ChannelPermission::All => HubPermission::All,
-	}
+            ChannelPermission::All => HubPermission::All,
+        }
     }
 }
 

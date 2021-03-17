@@ -1,15 +1,10 @@
 use std::fmt::Write;
 
-use crate::{ApiError, ID, Result, api, auth::{Auth, AuthQuery, Service}, channel::Channel, user::User};
+use crate::{ApiError, ID, Result, api, auth::{Auth, AuthError, AuthQuery, Service}, channel::Channel, user::User};
 
-use actix_web::{
-    delete, error, get, post, put,
-    web::{Bytes, Json, Path, Query},
-    App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
-};
+use actix_web::{App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError, delete, get, http::header, post, put, web::{Bytes, Json, Path, Query}};
 use futures::{
     future::{err, ok, Ready},
-    AsyncReadExt,
 };
 
 pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
@@ -50,7 +45,7 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
 
 impl ResponseError for ApiError {
     fn status_code(&self) -> reqwest::StatusCode {
-        self.http_status_code()
+        self.into()
     }
 
     fn error_response(&self) -> HttpResponse {
@@ -66,44 +61,39 @@ impl ResponseError for ApiError {
 }
 
 impl FromRequest for User {
-    type Error = actix_web::Error;
+    type Error = ApiError;
 
-    type Future = Ready<actix_web::Result<Self>>;
+    type Future = Ready<Result<Self>>;
 
     type Config = ();
 
     fn from_request(request: &HttpRequest, _payload: &mut actix_web::dev::Payload) -> Self::Future {
         let result = futures::executor::block_on(async {
-            if let Some(header) = request.headers().get_all("Authorization").next() {
+            if let Some(header) = request.headers().get(header::AUTHORIZATION) {
                 if let Ok(header_str) = header.to_str() {
-                    if let Some(encoded) = header_str.trim().strip_prefix("Basic") {
-                        let mut result = String::new();
-                        if let Ok(decoded) = base64::decode(encoded.trim()) {
-                            let _tostring = decoded.as_slice().read_to_string(&mut result).await;
-                            if let Some(split) = result.split_once(':') {
-                                if let Ok(id) = ID::parse_str(split.0) {
-                                    return if Auth::is_authenticated(
-                                        crate::AUTH.clone(),
+                    dbg!(header_str);
+                    if let Some(split) = header_str.split_once(':') {
+                        if let Ok(id) = ID::parse_str(split.0) {
+                            return if Auth::is_authenticated(
+                                crate::AUTH.clone(),
                                         id,
                                         split.1.to_string(),
                                     )
                                     .await
-                                    {
-                                        if let Ok(user) = Self::load(&id).await {
-                                            ok(user)
-                                        } else {
-                                            err(error::ErrorNotFound("User not found."))
-                                        }
-                                    } else {
-                                        err(error::ErrorUnauthorized("Invalid ID:token pair."))
-                                    };
+                            {
+                                if let Ok(user) = Self::load(&id).await {
+                                    ok(user)
+                                } else {
+                                    err(ApiError::UserNotFound)
                                 }
-                            }
+                            } else {
+                                err(AuthError::InvalidToken.into())
+                            };
                         }
                     }
                 }
             }
-            err(error::ErrorBadRequest("Malformed request."))
+            err(AuthError::MalformedIDToken.into())
         });
         result
     }
