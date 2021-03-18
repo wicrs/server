@@ -1,11 +1,24 @@
 use std::fmt::Write;
 
-use crate::{ApiError, ID, Result, api, auth::{Auth, AuthError, AuthQuery, Service}, channel::Channel, user::User};
+use serde::Deserialize;
 
-use actix_web::{App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError, delete, get, http::header, post, put, web::{Bytes, Json, Path, Query}};
-use futures::{
-    future::{err, ok, Ready},
+use crate::{
+    api,
+    auth::{Auth, AuthError, AuthQuery, Service},
+    channel::{Channel, Message},
+    get_system_millis,
+    user::User,
+    ApiError, Result, ID,
 };
+
+use actix_web::{
+    delete, get,
+    http::header,
+    post, put,
+    web::{Bytes, Json, Path, Query},
+    App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
+};
+use futures::future::{err, ok, Ready};
 
 pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
@@ -76,10 +89,10 @@ impl FromRequest for User {
                         if let Ok(id) = ID::parse_str(split.0) {
                             return if Auth::is_authenticated(
                                 crate::AUTH.clone(),
-                                        id,
-                                        split.1.to_string(),
-                                    )
-                                    .await
+                                id,
+                                split.1.to_string(),
+                            )
+                            .await
                             {
                                 if let Ok(user) = Self::load(&id).await {
                                     ok(user)
@@ -131,7 +144,10 @@ macro_rules! json_response {
 #[get("/")]
 async fn index() -> String {
     if crate::CONFIG.show_version {
-        format!("WICRS server version {} is up and running!", env!("CARGO_PKG_VERSION"))
+        format!(
+            "WICRS server version {} is up and running!",
+            env!("CARGO_PKG_VERSION")
+        )
     } else {
         String::from("WICRS server is up and running!")
     }
@@ -190,24 +206,22 @@ async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
 
 #[put("/v2/hub/rename/{hub_id}/{name}")]
 async fn rename_hub(user: User, path: Path<(ID, String)>) -> Result<String> {
-    api::rename_hub(&user, &path.0.0, path.1.clone()).await
+    api::rename_hub(&user, &path.0 .0, path.1.clone()).await
 }
 
 #[get("/v2/member/{hub_id}/{user_id}/is_banned")]
 async fn is_banned_from_hub(user: User, path: Path<(ID, ID)>) -> Result<String> {
-    string_response!(api::user_banned(&user, &path.0.0, &path.1).await)
+    string_response!(api::user_banned(&user, &path.0 .0, &path.1).await)
 }
 
 #[get("/v2/member/{hub_id}/{user_id}/is_muted")]
 async fn hub_member_is_muted(user: User, path: Path<(ID, ID)>) -> Result<String> {
-    string_response!(api::user_muted(&user, &path.0.0, &path.1).await)
+    string_response!(api::user_muted(&user, &path.0 .0, &path.1).await)
 }
 
 #[get("/v2/hub/{hub_id}/{user_id}")]
-async fn get_hub_member(
-    user: User,path: Path<(ID, ID)>
-) -> Result<Json<crate::hub::HubMember>> {
-    json_response!(api::get_hub_member(&user, &path.0.0, &path.1).await)
+async fn get_hub_member(user: User, path: Path<(ID, ID)>) -> Result<Json<crate::hub::HubMember>> {
+    json_response!(api::get_hub_member(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/hub/join/{hub_id}")]
@@ -222,67 +236,107 @@ async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
 
 #[post("/v2/member/{hub_id}/{user_id}/kick")]
 async fn kick_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::kick_user(&user, &path.0.0, &path.1).await)
+    no_content!(api::kick_user(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/ban")]
 async fn ban_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::ban_user(&user, &path.0.0, &path.1).await)
+    no_content!(api::ban_user(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/unban")]
 async fn unban_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unban_user(&user, &path.0.0, &path.1).await)
+    no_content!(api::unban_user(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/mute")]
 async fn mute_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::mute_user(&user, &path.0.0, &path.1).await)
+    no_content!(api::mute_user(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/unmute")]
 async fn unmute_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unmute_user(&user, &path.0.0, &path.1).await)
+    no_content!(api::unmute_user(&user, &path.0 .0, &path.1).await)
 }
 
 #[put("/v2/member/change_nickname/{hub_id}/{name}")]
 async fn change_nickname(user: User, path: Path<(ID, String)>) -> Result<String> {
-    api::change_nickname(&user, &path.0.0, path.1.clone()).await
+    api::change_nickname(&user, &path.0 .0, path.1.clone()).await
 }
 
 #[post("/v2/channel/create/{hub_id}/{name}")]
 async fn create_channel(user: User, path: Path<(ID, String)>) -> Result<String> {
-    string_response!(api::create_channel(&user, &path.0.0, path.1.clone()).await)
+    string_response!(api::create_channel(&user, &path.0 .0, path.1.clone()).await)
 }
 
 #[get("/v2/channel/{hub_id}/{channel_id}")]
 async fn get_channel(user: User, path: Path<(ID, ID)>) -> Result<Json<Channel>> {
-    json_response!(api::get_channel(&user, &path.0.0, &path.1).await)
+    json_response!(api::get_channel(&user, &path.0 .0, &path.1).await)
 }
 
 #[put("/v2/channel/rename/{hub_id}/{channel_id}/{name}")]
-async fn rename_channel(
-    user: User,path: Path<(ID, ID, String)>
-) -> Result<String> {
-    api::rename_channel(&user, &path.0.0, &path.1, path.2.clone()).await
+async fn rename_channel(user: User, path: Path<(ID, ID, String)>) -> Result<String> {
+    api::rename_channel(&user, &path.0 .0, &path.1, path.2.clone()).await
 }
 
 #[delete("/v2/channel/delete/{hub_id}/{channel_id}")]
-async fn delete_channel(
-    user: User,path: Path<(ID, ID)>
-) -> Result<HttpResponse> {
-    no_content!(api::delete_channel(&user, &path.0.0, &path.1).await)
+async fn delete_channel(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::delete_channel(&user, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/message/send/{hub_id}/{channel_id}")]
-async fn send_message(
-    user: User,
-    path: Path<(ID, ID)>,
-    message: Bytes,
-) -> Result<String> {
+async fn send_message(user: User, path: Path<(ID, ID)>, message: Bytes) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
-        string_response!(api::send_message(&user, &path.0.0, &path.1, message).await)
+        string_response!(api::send_message(&user, &path.0 .0, &path.1, message).await)
     } else {
         Err(ApiError::InvalidMessage)
     }
+}
+
+#[get("/v2/message/{hub_id}/{channel_id}/{message_id}")]
+async fn get_message(user: User, path: Path<(ID, ID, ID)>) -> Result<Json<Message>> {
+    json_response!(api::get_message(&user, &path.0 .0, &path.1, &path.2).await)
+}
+
+#[derive(Deserialize)]
+struct GetMessagesQuery {
+    from: Option<u128>,
+    to: Option<u128>,
+    invert: Option<bool>,
+    max: Option<usize>,
+}
+
+impl GetMessagesQuery {
+    fn from(&self) -> u128 {
+        self.from.unwrap_or(get_system_millis() - 86400001)
+    }
+    fn to(&self) -> u128 {
+        self.to.unwrap_or(get_system_millis())
+    }
+    fn max(&self) -> usize {
+        self.max.unwrap_or(100)
+    }
+    fn invert(&self) -> bool {
+        self.invert.unwrap_or(false)
+    }
+}
+
+#[get("/v2/message/{hub_id}/{channel_id}/get")]
+async fn get_messages(
+    user: User,
+    path: Path<(ID, ID)>,
+    query: Query<GetMessagesQuery>,
+) -> Result<Json<Vec<Message>>> {
+    json_response!(
+        api::get_messages(
+            &user,
+            &path.0 .0,
+            &path.1,
+            query.from(),
+            query.to(),
+            query.invert(),
+            query.max()
+        )
+        .await
+    )
 }

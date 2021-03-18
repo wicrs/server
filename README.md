@@ -7,13 +7,13 @@ A server for handling chat rooms and messaging groups written in rust.
 
 ## Build
 
-Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions.
+Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions. Requires rustc 1.52.0-nightly.
 Then clone the git repo, then to build:
 
 ```bash
 git clone https://github.com/wicrs/server.git wicrs_server
 cd wicrs_server
-cargo build # to build the release version run cargo build --release
+cargo +nightly build # to build the release version run cargo +nightly build --release
 ```
 
 ## Setup
@@ -42,8 +42,8 @@ Make sure to replace `$GITHUB_CLIENT_ID` with the client ID and `$GITHUB_CLIENT_
 
 Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
 
-Once this is done run the server by executing `cargo run` or `cargo run --release` if you are in the project git directory. If you are not in the project's git directory you will need to either put the executable in the desired run directory (where you have the `config.json` file) and run `./wicrs_server`. Otherwise you need to have it in your path in which case you just need to run `wicrs_server` in your chosen run directory.
+Once this is done run the server by executing `cargo +nightly run` or `cargo +nightly run --release` if you are in the project git directory. If you are not in the project's git directory you will need to either put the executable in the desired run directory (where you have the `config.json` file) and run `./wicrs_server`. Otherwise you need to have it in your path in which case you just need to run `wicrs_server` in your chosen run directory.
 
 ## Developing and Contributing
 
-To contribute fork the GitHub repo and make your changes, for changes to be accepted your fork must pass all of the tests, to run the tests go to the root directory of the project and run `cargo test`. If you add any features make sure to add tests to ensure they work.
+To contribute fork the GitHub repo and make your changes, for changes to be accepted your fork must pass all of the tests, to run the tests go to the root directory of the project and run `cargo +nightly test`. If you add any features make sure to add tests to ensure they work.
