@@ -1,13 +1,4 @@
-use crate::{
-    auth::{Auth, AuthQuery, IDToken, Service},
-    channel::Channel,
-    check_name_validity, check_permission,
-    hub::{Hub, HubMember},
-    new_id,
-    permission::HubPermission,
-    user::{GenericUser, User},
-    ApiError, Result, AUTH, ID,
-};
+use crate::{AUTH, ApiError, ID, Result, auth::{Auth, AuthQuery, IDToken, Service}, channel::{Channel, Message}, check_name_validity, check_permission, get_system_millis, hub::{Hub, HubMember}, new_id, permission::HubPermission, user::{GenericUser, User}};
 
 pub async fn start_login(service: Service) -> String {
     Auth::start_login(AUTH.clone(), service).await
@@ -239,4 +230,40 @@ pub async fn send_message(
     } else {
         Err(ApiError::MessageTooBig)
     }
+}
+
+pub async fn get_message(
+    user: &User,
+    hub_id: &ID,
+    channel_id: &ID,
+    message_id: &ID,
+) -> Result<Message> {
+    user.in_hub(hub_id)?;
+    let hub = Hub::load(hub_id).await?;
+    let channel = Hub::get_channel(&hub, &user.id, channel_id)?;
+    if let Some(message) = channel.get_message(message_id).await {
+        Ok(message)
+    } else {
+        Err(ApiError::MessageNotFound)
+    }
+}
+
+pub async fn get_messages(
+    user: &User,
+    hub_id: &ID,
+    channel_id: &ID,
+    from: Option<u128>,
+    to: Option<u128>,
+    invert: Option<bool>,
+    max: Option<usize>,
+) -> Result<Vec<Message>> {
+    user.in_hub(hub_id)?;
+    let time = get_system_millis();
+    let invert = invert.unwrap_or(false);
+    let max = max.unwrap_or(100);
+    let from = from.unwrap_or(time - 86400001);
+    let to = to.unwrap_or(time);
+    let hub = Hub::load(hub_id).await?;
+    let channel = Hub::get_channel(&hub, &user.id, channel_id)?;
+    Ok(channel.get_messages(from, to, invert, max).await)
 }

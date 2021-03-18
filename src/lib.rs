@@ -68,6 +68,8 @@ pub enum ApiError {
     UserNotFound,
     #[error("member does not exist")]
     MemberNotFound,
+    #[error("message does not exist")]
+    MessageNotFound,
     #[error("not authenticated")]
     NotAuthenticated,
     #[error("group does not exist")]
@@ -100,6 +102,7 @@ impl From<&ApiError> for StatusCode {
             ApiError::GroupNotFound => Self::NOT_FOUND,
             ApiError::HubNotFound => Self::NOT_FOUND,
             ApiError::MemberNotFound => Self::NOT_FOUND,
+            ApiError::MessageNotFound => Self::NOT_FOUND,
             ApiError::Muted => Self::FORBIDDEN,
             ApiError::MissingChannelPermission(_) => Self::FORBIDDEN,
             ApiError::MissingHubPermission(_) => Self::FORBIDDEN,
