@@ -119,12 +119,12 @@ impl User {
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(USER_FOLDER).await?;
         let json = serde_json::to_string(self).map_err(|_| DataError::Serialize)?;
-        tokio::fs::write(format!("{}{}.json", USER_FOLDER, self.id), json).await?;
+        tokio::fs::write(format!("{}{:x}.json", USER_FOLDER, self.id.as_u128()), json).await?;
         Ok(())
     }
 
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = format!("{}{}.json", USER_FOLDER, id);
+        let filename = format!("{}{:x}.json", USER_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(ApiError::HubNotFound);
@@ -148,99 +148,4 @@ pub fn get_id(id: &str, service: &Service) -> ID {
         .read_exact(&mut bytes)
         .expect("Failed to read the user ID hash");
     ID::from_bytes(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::hub::Hub;
-
-    use super::{get_id, GenericUser, Service, User, ID};
-
-    static USER_ID: &str = "b5aefca491710ba9965c2ef91384210fbf80d2ada056d3229c09912d343ac6b0";
-    static SERVICE_USER_ID: &str = "testid";
-    static EMAIL: &str = "test@example.com";
-
-    #[test]
-    fn id_gen() {
-        assert_eq!(
-            get_id(SERVICE_USER_ID, &Service::GitHub).to_string(),
-            USER_ID.to_string()
-        );
-    }
-
-    #[test]
-    fn new_account() {
-        let user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            Service::GitHub,
-        );
-        assert_eq!(user.id.to_string(), USER_ID.to_string());
-    }
-
-    #[test]
-    fn user_to_generic() {
-        let uuid = ID::from_u128(0);
-        let account = User {
-            id: uuid,
-            username: "Test_with-chars. And".to_string(),
-            created: 0,
-            service: Service::GitHub,
-            in_hubs: Vec::new(),
-            email: "test".to_string(),
-        };
-        let generic = GenericUser {
-            id: uuid,
-            username: "Test_with-chars. And".to_string(),
-            created: account.created,
-            hubs_hashed: Vec::new(),
-        };
-        assert_eq!(account.to_generic(), generic);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn user_save_load() {
-        let user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            Service::GitHub,
-        );
-        let _delete = std::fs::remove_file("data/users/".to_string() + &user.id.to_string());
-        let _save = user.save().await;
-        let loaded = User::load(&user.id)
-            .await
-            .expect("Failed to load the test account from disk.");
-        assert_eq!(user, loaded);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn send_hub_message() {
-        let mut user = User::new(
-            SERVICE_USER_ID.to_string(),
-            EMAIL.to_string(),
-            Service::GitHub,
-        );
-        let id = crate::api::create_hub(&mut user, "test".to_string())
-            .await
-            .expect("Failed to create hub.");
-        let mut hub = Hub::load(&id).await.expect("Failed to load test hub.");
-        let channel = hub
-            .new_channel(&user.id, "test_channel".to_string())
-            .await
-            .expect("Failed to create test channel.");
-        hub.save().await.expect("Failed to save test hub.");
-        user.send_hub_message(&id, &channel, "test".to_string())
-            .await
-            .expect("Failed to send message.");
-        let channel = hub
-            .channels
-            .get(&channel)
-            .expect("Failed to load test channel.");
-        assert!(!channel
-            .find_messages_containing("test".to_string(), true)
-            .await
-            .is_empty());
-    }
 }

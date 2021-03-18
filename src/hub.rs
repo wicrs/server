@@ -429,15 +429,15 @@ impl Hub {
     }
 
     pub fn get_info_path(&self) -> String {
-        format!("{}{}.json", HUB_INFO_FOLDER, self.id)
+        format!("{}{:x}.json", HUB_INFO_FOLDER, self.id.as_u128())
     }
 
     pub fn get_data_path(&self) -> String {
-        format!("{}{}/", HUB_DATA_FOLDER, self.id)
+        format!("{}{:x}/", HUB_DATA_FOLDER, self.id.as_u128())
     }
 
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = format!("{}{}.json", HUB_INFO_FOLDER, id);
+        let filename = format!("{}{:x}.json", HUB_INFO_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(ApiError::HubNotFound);
@@ -528,190 +528,5 @@ impl Hub {
         let mut hub = self.clone();
         hub.channels = self.get_channels_for_user(user_id)?;
         Ok(hub)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        auth::Service,
-        permission::{ChannelPermission, HubPermission},
-        user::User,
-        ID,
-    };
-
-    use super::{Hub, HubMember, PermissionGroup};
-
-    fn get_user_for_test(id: u128) -> User {
-        User::new(
-            ID::from_u128(id).to_string(),
-            "test_user@example.com".to_string(),
-            Service::GitHub,
-        )
-    }
-
-    fn get_hub_for_test() -> Hub {
-        Hub::new("test".to_string(), ID::from_u128(1), &get_user_for_test(1))
-    }
-
-    #[test]
-    fn hub_creator_permissions() {
-        let member = HubMember::new(&get_user_for_test(1), ID::from_u128(1));
-        let hub = get_hub_for_test();
-        assert!(member.has_permission(HubPermission::All, &hub));
-    }
-
-    #[test]
-    fn hub_permissions() {
-        let mut hub = get_hub_for_test();
-        let mut member = hub
-            .user_join(&get_user_for_test(2))
-            .expect("Test user could not join test hub.");
-        assert!(!member.has_permission(HubPermission::All, &hub));
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, Some(false));
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, None);
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::SendMessage, Some(true));
-        assert!(member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, Some(true));
-        assert!(member.has_permission(HubPermission::ReadMessage, &hub));
-        assert!(member.has_permission(HubPermission::SendMessage, &hub));
-    }
-
-    #[test]
-    fn channel_permissions() {
-        let mut hub = get_hub_for_test();
-        let mut member = hub
-            .user_join(&get_user_for_test(2))
-            .expect("Test user could not join test hub.");
-        assert!(!member.has_permission(HubPermission::All, &hub));
-        let id = ID::from_u128(0);
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(false));
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, None);
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_channel_permission(id.clone(), ChannelPermission::SendMessage, Some(true));
-        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
-        assert!(!member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-        member.set_permission(HubPermission::All, Some(true));
-        assert!(member.has_channel_permission(&id, &ChannelPermission::SendMessage, &hub));
-        assert!(member.has_channel_permission(&id, &ChannelPermission::ReadMessage, &hub));
-    }
-
-    #[test]
-    fn group_permissions() {
-        let mut hub = get_hub_for_test();
-        let mut member = hub
-            .user_join(&get_user_for_test(2))
-            .expect("Test user could not join test hub.");
-        let group = PermissionGroup::new("test_group".to_string(), ID::from_u128(0));
-        hub.groups.insert(group.id.clone(), group.clone());
-        member.join_group(
-            hub.groups
-                .get_mut(&group.id)
-                .expect("Failed to get test group."),
-        );
-        assert!(!member.has_permission(HubPermission::All, &hub));
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.groups
-            .get_mut(&group.id)
-            .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, Some(false));
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.groups
-            .get_mut(&group.id)
-            .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, None);
-        assert!(!member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.groups
-            .get_mut(&group.id)
-            .expect("Failed to get test group.")
-            .set_permission(HubPermission::SendMessage, Some(true));
-        assert!(member.has_permission(HubPermission::SendMessage, &hub));
-        assert!(!member.has_permission(HubPermission::ReadMessage, &hub));
-        hub.groups
-            .get_mut(&group.id)
-            .expect("Failed to get test group.")
-            .set_permission(HubPermission::All, Some(true));
-        assert!(member.has_permission(HubPermission::ReadMessage, &hub));
-        assert!(member.has_permission(HubPermission::SendMessage, &hub));
-    }
-
-    #[tokio::test]
-    async fn channel_view() {
-        let mut hub = get_hub_for_test();
-        let mut member = hub
-            .user_join(&get_user_for_test(2))
-            .expect("Test user could not join test hub.");
-        {
-            {
-                let member_in_hub = hub
-                    .members
-                    .get_mut(&member.user)
-                    .expect("Failed to get hub member.");
-                member_in_hub.set_permission(HubPermission::CreateChannel, Some(true));
-                member = member_in_hub.clone();
-            }
-            assert!(!member.has_permission(HubPermission::All, &hub));
-            assert!(member.has_permission(HubPermission::CreateChannel, &hub));
-        }
-        let channel_0 = hub
-            .new_channel(&member.user, "test0".to_string())
-            .await
-            .expect("Failed to create test channel.");
-        let _channel_1 = hub
-            .new_channel(&member.user, "test1".to_string())
-            .await
-            .expect("Failed to create test channel.");
-        assert!(hub
-            .get_channels_for_user(&member.user)
-            .expect("Failed to get hub channels.")
-            .is_empty());
-
-        {
-            let member_in_hub = hub
-                .members
-                .get_mut(&member.user)
-                .expect("Failed to get hub member.");
-            member_in_hub.set_channel_permission(
-                channel_0.clone(),
-                ChannelPermission::ViewChannel,
-                Some(true),
-            );
-        }
-        let get = hub
-            .get_channels_for_user(&member.user)
-            .expect("Failed to get hub channels.");
-        assert_eq!(get.len(), 1);
-        assert_eq!(get.get(&channel_0).unwrap().id, channel_0.clone());
-    }
-
-    #[tokio::test]
-    async fn save_load() {
-        let hub = Hub::new(
-            "test".to_string(),
-            ID::from_u128(1234),
-            &get_user_for_test(1),
-        );
-        let _remove = tokio::fs::remove_file(
-            "data/hubs/info/".to_string() + &ID::from_u128(1234).to_string() + ".json",
-        )
-        .await;
-        hub.save().await.expect("Failed to save hub info.");
-        let load = Hub::load(&hub.id).await.expect("Failed to load hub info.");
-        assert_eq!(hub, load);
     }
 }
