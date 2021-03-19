@@ -12,8 +12,6 @@ use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Result, ID};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
-    #[serde(skip)]
-    pub messages: Vec<Message>,
     pub id: ID,
     pub server_id: ID,
     pub name: String,
@@ -26,13 +24,17 @@ impl Channel {
             name,
             id,
             server_id,
-            messages: Vec::new(),
             created: crate::get_system_millis(),
         }
     }
 
     pub fn get_folder(&self) -> String {
-        format!("{}{:x}/{:x}", HUB_DATA_FOLDER, self.server_id.as_u128(), self.id.as_u128())
+        format!(
+            "{}{:x}/{:x}",
+            HUB_DATA_FOLDER,
+            self.server_id.as_u128(),
+            self.id.as_u128()
+        )
     }
 
     pub async fn create_dir(&self) -> Result<()> {
@@ -50,7 +52,6 @@ impl Channel {
             .await?;
         file.write((message_string.to_owned() + "\n").as_bytes())
             .await?;
-        self.messages.push(message);
         Ok(())
     }
 
@@ -115,29 +116,32 @@ impl Channel {
                 files.reverse()
             }
             let mut whole_file = String::new();
-            for file in files.iter() {
+            let div_from = from / 86400000;
+            let div_to = to / 86400000;
+            for file in files.iter().filter(|f| {
+                if let Ok(fname) = f.file_name().into_string() {
+                    if let Ok(n) = u128::from_str(&fname) {
+                        return n >= div_from && n <= div_to;
+                    }
+                }
+                false
+            }) {
                 if let Ok(mut file) = fs::File::open(file.path()).await {
                     whole_file.clear();
                     if let Ok(_) = file.read_to_string(&mut whole_file).await {
                         let lines = whole_file.par_lines();
                         let mut filtered: Vec<Message> = lines
                             .filter_map(|l| {
-                                let created = l
-                                    .splitn(4, ',')
-                                    .skip(2)
-                                    .next()
-                                    .unwrap_or("0")
-                                    .parse::<u128>()
-                                    .unwrap_or(0);
-                                if created >= from && created <= to {
-                                    if let Ok(message) = l.parse::<Message>() {
-                                        Some(message)
-                                    } else {
-                                        None
+                                if let Some(created_str) = l.splitn(4, ',').skip(2).next() {
+                                    if let Ok(created) = u128::from_str_radix(created_str, 16) {
+                                        if created >= from && created <= to {
+                                            if let Ok(message) = l.parse::<Message>() {
+                                                return Some(message);
+                                            }
+                                        }
                                     }
-                                } else {
-                                    None
                                 }
+                                None
                             })
                             .collect();
                         if invert {
@@ -145,7 +149,10 @@ impl Channel {
                         }
                         filtered.truncate(max - result.len());
                         result.append(&mut filtered);
-                        if result.len() >= max {
+                        let len = result.len();
+                        if len == max {
+                            return result;
+                        } else if result.len() > max {
                             result.truncate(max);
                             return result;
                         }
@@ -207,18 +214,13 @@ impl Channel {
         results
     }
 
-    pub async fn get_message(&self, id: String) -> Option<Message> {
-        for message in self.messages.iter() {
-            if message.id.to_string() == id {
-                return Some(message.clone());
-            }
-        }
-        let id = id.as_str();
+    pub async fn get_message(&self, id: &ID) -> Option<Message> {
+        let id = format!("{:X}", id.as_u128());
         let mut result: Option<Message> = None;
         self.on_all_raw_lines(|lines| {
             let results: Vec<Message> = lines
                 .filter_map(|l| {
-                    if l.starts_with(id) {
+                    if l.starts_with(&id) {
                         if let Ok(message) = l.parse::<Message>() {
                             Some(message)
                         } else {
@@ -238,10 +240,7 @@ impl Channel {
     }
 
     pub async fn get_current_file(&mut self) -> String {
-        let now = get_system_millis() / 1000 / 60 / 60 / 24;
-        self.messages.reverse();
-        self.messages.truncate(100);
-        self.messages.reverse();
+        let now = get_system_millis() / 86400000;
         format!("{}/{}", self.get_folder(), now)
     }
 }

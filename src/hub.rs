@@ -70,13 +70,13 @@ impl HubMember {
 
     pub fn set_channel_permission(
         &mut self,
-        channel: ID,
+        channel: &ID,
         permission: ChannelPermission,
         value: PermissionSetting,
     ) {
         let channel_permissions = self
             .channel_permissions
-            .entry(channel)
+            .entry(*channel)
             .or_insert(HashMap::new());
         channel_permissions.insert(permission, value);
     }
@@ -308,7 +308,7 @@ impl Hub {
         channel.create_dir().await?;
         {
             self.get_member_mut(member_id)?.set_channel_permission(
-                channel.id.clone(),
+                &channel.id,
                 ChannelPermission::ViewChannel,
                 Some(true),
             );
