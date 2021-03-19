@@ -7,6 +7,7 @@ use crate::{
     auth::{Auth, AuthError, AuthQuery, Service},
     channel::{Channel, Message},
     get_system_millis,
+    permission::{ChannelPermission, HubPermission, PermissionSetting},
     user::User,
     ApiError, Result, ID,
 };
@@ -336,6 +337,41 @@ async fn get_messages(
             query.to(),
             query.invert(),
             query.max()
+        )
+        .await
+    )
+}
+
+#[derive(Deserialize)]
+struct PermissionSettingQuery {
+    pub setting: PermissionSetting,
+}
+
+#[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{hub_permission}")]
+async fn set_user_hub_permission(
+    user: User,
+    path: Path<(ID, ID, HubPermission)>,
+    query: Query<PermissionSettingQuery>,
+) -> Result<HttpResponse> {
+    no_content!(
+        api::set_member_hub_permission(&user, &path.1, &path.0 .0, path.2, query.setting).await
+    )
+}
+
+#[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{channel_id}/{channel_permission}")]
+async fn set_user_channel_permission(
+    user: User,
+    path: Path<(ID, ID, ID, ChannelPermission)>,
+    query: Query<PermissionSettingQuery>,
+) -> Result<HttpResponse> {
+    no_content!(
+        api::set_member_channel_permission(
+            &user,
+            &path.1,
+            &path.0 .0,
+            &path.2,
+            path.3,
+            query.setting
         )
         .await
     )

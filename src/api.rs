@@ -263,9 +263,10 @@ pub async fn get_messages(
     Ok(channel.get_messages(from, to, invert, max).await)
 }
 
-pub async fn set_user_hub_permission(
+pub async fn set_member_hub_permission(
     user: &User,
     hub_id: &ID,
+    member_id: &ID,
     permission: HubPermission,
     value: PermissionSetting,
 ) -> Result<()> {
@@ -275,14 +276,15 @@ pub async fn set_user_hub_permission(
         let member = hub.get_member(&user.id)?;
         check_permission!(member, HubPermission::Administrate, hub);
     }
-    let member = hub.get_member_mut(&user.id)?;
+    let member = hub.get_member_mut(member_id)?;
     member.set_permission(permission, value);
     hub.save().await
 }
 
-pub async fn set_user_channel_permission(
+pub async fn set_member_channel_permission(
     user: &User,
     hub_id: &ID,
+    member_id: &ID,
     channel_id: &ID,
     permission: ChannelPermission,
     value: PermissionSetting,
@@ -293,7 +295,7 @@ pub async fn set_user_channel_permission(
         let member = hub.get_member(&user.id)?;
         check_permission!(member, HubPermission::Administrate, hub);
     }
-    let member = hub.get_member_mut(&user.id)?;
+    let member = hub.get_member_mut(member_id)?;
     member.set_channel_permission(channel_id, permission, value);
     hub.save().await
 }
