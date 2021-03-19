@@ -7,7 +7,7 @@ A server for handling chat rooms and messaging groups written in rust.
 
 ## Build
 
-Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions. Requires rustc 1.52.0-nightly.
+Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions. Requires rustc 1.52.0-nightly or newer.
 Then clone the git repo, then to build:
 
 ```bash

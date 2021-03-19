@@ -1,6 +1,6 @@
 [package]
 name = "wicrs_server"
-version = "0.6.0"
+version = "0.6.1"
 authors = ["willemml <willem@leit.so>"]
 edition = "2018"
 license = "GPL-3.0"
@@ -25,7 +25,3 @@ async-trait = "0.1.42"
 futures = "0.3.8"
 lazy_static = "1.4.0"
 thiserror = "1.0"
-
-[dev-dependencies]
-tokio-test = "0.3.0"
-serial_test = "0.5.1"

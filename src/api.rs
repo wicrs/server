@@ -1,15 +1,32 @@
-use crate::{AUTH, ApiError, ID, Result, auth::{Auth, AuthQuery, IDToken, Service}, channel::{Channel, Message}, check_name_validity, check_permission, hub::{Hub, HubMember}, new_id, permission::{ChannelPermission, HubPermission, PermissionSetting}, user::{GenericUser, User}};
+use std::sync::Arc;
 
-pub async fn start_login(service: Service) -> String {
-    Auth::start_login(AUTH.clone(), service).await
+use futures::lock::Mutex;
+
+use crate::{
+    auth::{Auth, AuthQuery, IDToken, Service},
+    channel::{Channel, Message},
+    check_name_validity, check_permission,
+    hub::{Hub, HubMember},
+    new_id,
+    permission::{ChannelPermission, HubPermission, PermissionSetting},
+    user::{GenericUser, User},
+    ApiError, Result, ID,
+};
+
+pub async fn start_login(auth_manager: Arc<Mutex<Auth>>, service: Service) -> String {
+    Auth::start_login(auth_manager, service).await
 }
 
-pub async fn complete_login(service: Service, query: AuthQuery) -> Result<IDToken> {
-    Auth::handle_oauth(AUTH.clone(), service, query).await
+pub async fn complete_login(
+    auth_manager: Arc<Mutex<Auth>>,
+    service: Service,
+    query: AuthQuery,
+) -> Result<IDToken> {
+    Auth::handle_oauth(auth_manager, service, query).await
 }
 
-pub async fn invalidate_tokens(user: &User) {
-    Auth::invalidate_tokens(AUTH.clone(), user.id).await
+pub async fn invalidate_tokens(auth_manager: Arc<Mutex<Auth>>, user: &User) {
+    Auth::invalidate_tokens(auth_manager, user.id).await
 }
 
 pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {

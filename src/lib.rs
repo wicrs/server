@@ -1,30 +1,16 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 #![feature(in_band_lifetimes)]
 
-use auth::Auth;
-use futures::lock::Mutex;
 use prelude::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
-
-#[allow(unused_imports)]
-#[macro_use]
-extern crate lazy_static;
-
-#[cfg(test)]
-#[macro_use]
-extern crate serial_test;
 
 pub mod api;
 pub mod auth;
 pub mod channel;
 pub mod config;
-pub mod httpapi;
 pub mod hub;
 pub mod permission;
 pub mod user;
@@ -118,22 +104,15 @@ impl From<&ApiError> for StatusCode {
     }
 }
 
-pub type Result<T, E = crate::ApiError> = std::result::Result<T, E>;
+pub type Result<T, E = ApiError> = std::result::Result<T, E>;
 
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 pub const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub const MAX_NAME_LENGTH: usize = 32;
 pub const MESSAGE_MAX_SIZE: usize = 4096;
 
-lazy_static! {
-    static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));
-    pub static ref CONFIG: config::Config = config::load_config();
-}
-
-pub async fn start(bind_address: &str) -> std::io::Result<()> {
-    httpapi::server(bind_address).await
-}
-
+/// Get the current time in milliseconds since Unix Epoch.
 pub fn get_system_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -141,10 +120,14 @@ pub fn get_system_millis() -> u128 {
         .as_millis()
 }
 
+/// Checks if a name is valid (not too long and only allowed characters).
 pub fn is_valid_name(name: &str) -> bool {
-    name.len() > 0 && name.len() < 32 && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
+    name.len() > 0
+        && name.len() < MAX_NAME_LENGTH
+        && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
 }
 
+/// Wraps `is_valid_name` to return a `Result<()>`.
 pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
@@ -153,6 +136,7 @@ pub fn check_name_validity(name: &str) -> Result<()> {
     }
 }
 
+/// Checks that a hub member has a given permission and returns if they it doesn't.
 #[macro_export]
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {
@@ -167,11 +151,15 @@ macro_rules! check_permission {
     };
 }
 
+/// Type used to represent IDs throughout wicrs.
 pub type ID = Uuid;
+
+/// Generates a new random ID.
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
 }
 
+/// Re-export important types, functions and constants.
 pub mod prelude {
     pub use crate::api::*;
     pub use crate::auth::{IDToken, Service};
@@ -187,7 +175,10 @@ pub mod prelude {
     pub use crate::ApiError;
     pub use crate::Result;
     pub use crate::ID;
+    pub use crate::MAX_NAME_LENGTH;
     pub use crate::MESSAGE_MAX_SIZE;
+    pub use crate::NAME_ALLOWED_CHARS;
+    pub use crate::USER_AGENT_STRING;
 }
 
 #[cfg(test)]

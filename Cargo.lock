@@ -2272,28 +2272,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_test"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0bccbcf40c8938196944a3da0e133e031a33f4d6b72db3bda3cc556e361905d"
-dependencies = [
- "lazy_static",
- "parking_lot 0.11.1",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2acd6defeddb41eb60bb468f8825d0cfd0c2a76bc03bfd235b6a1dc4f6a1ad5"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "sha-1"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2615,18 +2593,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46409491c9375a693ce7032101970a54f8a2010efb77e13f70788f0d84489e39"
-dependencies = [
- "autocfg 1.0.1",
- "futures-core",
- "pin-project-lite 0.2.6",
- "slab",
-]
-
-[[package]]
 name = "tokio-buf"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,17 +2686,6 @@ dependencies = [
  "mio",
  "tokio-io",
  "tokio-reactor",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edc5a2b13a713b9134debc9aa1265b0a1ccf6a81fa05af2ba26e4aee56cdf1a"
-dependencies = [
- "bytes 0.5.6",
- "futures-core",
- "tokio 0.3.7",
 ]
 
 [[package]]
@@ -3089,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "wicrs_server"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "actix-web",
  "async-trait",
@@ -3102,11 +3057,9 @@ dependencies = [
  "reqwest 0.10.10",
  "serde",
  "serde_json",
- "serial_test",
  "sha3",
  "thiserror",
  "tokio 0.2.25",
- "tokio-test",
  "uuid 0.8.2",
 ]
 

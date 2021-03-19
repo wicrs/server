@@ -1,16 +1,19 @@
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 
 use serde::Deserialize;
 
-use crate::{
+use wicrs_server::{
     api,
-    auth::{Auth, AuthError, AuthQuery, Service},
+    auth::{Auth, AuthError, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     get_system_millis,
+    hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
-    user::User,
-    ApiError, Result, ID,
+    user::{GenericUser, User},
+    ApiError, ID,
 };
+
+use crate::AUTH;
 
 use actix_web::{
     delete, get,
@@ -21,7 +24,7 @@ use actix_web::{
 };
 use futures::future::{err, ok, Ready};
 
-pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
+pub async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .service(index)
@@ -57,15 +60,34 @@ pub(crate) async fn server(bind_address: &str) -> std::io::Result<()> {
     .await
 }
 
-impl ResponseError for ApiError {
+#[derive(Debug)]
+struct ApiErrorWrapped(ApiError);
+
+impl Display for ApiErrorWrapped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+impl From<ApiError> for ApiErrorWrapped {
+    fn from(err: ApiError) -> Self {
+        Self(err)
+    }
+}
+
+type Result<T, E = ApiErrorWrapped> = std::result::Result<T, E>;
+
+struct UserWrapped(User);
+
+impl ResponseError for ApiErrorWrapped {
     fn status_code(&self) -> reqwest::StatusCode {
-        self.into()
+        (&self.0).into()
     }
 
     fn error_response(&self) -> HttpResponse {
         let mut resp = HttpResponse::new(self.status_code());
         let mut buf = actix_web::web::BytesMut::new();
-        let _ = buf.write_fmt(format_args!("{}", self));
+        let _ = buf.write_fmt(format_args!("{}", self.0));
         resp.headers_mut().insert(
             reqwest::header::CONTENT_TYPE,
             actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),
@@ -74,8 +96,8 @@ impl ResponseError for ApiError {
     }
 }
 
-impl FromRequest for User {
-    type Error = ApiError;
+impl FromRequest for UserWrapped {
+    type Error = ApiErrorWrapped;
 
     type Future = Ready<Result<Self>>;
 
@@ -85,29 +107,24 @@ impl FromRequest for User {
         let result = futures::executor::block_on(async {
             if let Some(header) = request.headers().get(header::AUTHORIZATION) {
                 if let Ok(header_str) = header.to_str() {
-                    dbg!(header_str);
                     if let Some(split) = header_str.split_once(':') {
                         if let Ok(id) = ID::parse_str(split.0) {
-                            return if Auth::is_authenticated(
-                                crate::AUTH.clone(),
-                                id,
-                                split.1.to_string(),
-                            )
-                            .await
+                            return if Auth::is_authenticated(AUTH.clone(), id, split.1.to_string())
+                                .await
                             {
-                                if let Ok(user) = Self::load(&id).await {
-                                    ok(user)
+                                if let Ok(user) = User::load(&id).await {
+                                    ok(UserWrapped(user))
                                 } else {
-                                    err(ApiError::UserNotFound)
+                                    err(ApiErrorWrapped(ApiError::UserNotFound))
                                 }
                             } else {
-                                err(AuthError::InvalidToken.into())
+                                err(ApiErrorWrapped(AuthError::InvalidToken.into()))
                             };
                         }
                     }
                 }
             }
-            err(AuthError::MalformedIDToken.into())
+            err(ApiErrorWrapped(AuthError::MalformedIDToken.into()))
         });
         result
     }
@@ -127,18 +144,21 @@ impl FromRequest for User {
 macro_rules! no_content {
     ($op:expr) => {
         $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
+            .or_else(|e| Err(ApiErrorWrapped(e)))
     };
 }
 
 macro_rules! string_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(t.to_string()))
+            .or_else(|e| Err(ApiErrorWrapped(e)))
     };
 }
 
 macro_rules! json_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(Json(t)))
+            .or_else(|e| Err(ApiErrorWrapped(e)))
     };
 }
 
@@ -157,146 +177,151 @@ async fn index() -> String {
 #[get("/v2/login/{service}")]
 async fn login_start(service: Path<Service>) -> HttpResponse {
     HttpResponse::Found()
-        .header("Location", api::start_login(service.0).await)
+        .header("Location", api::start_login(AUTH.clone(), service.0).await)
         .finish()
 }
 
 #[get("/v2/auth/{service}")]
-async fn login_finish(
-    service: Path<Service>,
-    query: Query<AuthQuery>,
-) -> Result<Json<crate::auth::IDToken>> {
-    json_response!(api::complete_login(service.0, query.0).await)
+async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result<Json<IDToken>> {
+    json_response!(api::complete_login(AUTH.clone(), service.0, query.0).await)
 }
 
 #[post("/v2/invalidate_tokens")]
-async fn invalidate_tokens(user: User) -> HttpResponse {
-    api::invalidate_tokens(&user).await;
+async fn invalidate_tokens(user: UserWrapped) -> HttpResponse {
+    api::invalidate_tokens(AUTH.clone(), &user.0).await;
     HttpResponse::NoContent().finish()
 }
 
 #[get("/v2/user")]
-async fn get_user(user: User) -> Json<User> {
-    Json(user)
+async fn get_user(user: UserWrapped) -> Json<User> {
+    Json(user.0)
 }
 
 #[get("/v2/user/{id}")]
-async fn get_user_by_id(_user: User, id: Path<ID>) -> Result<Json<crate::user::GenericUser>> {
+async fn get_user_by_id(_user: UserWrapped, id: Path<ID>) -> Result<Json<GenericUser>> {
     json_response!(api::get_user_stripped(id.0).await)
 }
 
 #[put("/v2/user/change_username/{name}")]
-async fn rename_user(mut user: User, name: Path<String>) -> Result<String> {
-    api::change_username(&mut user, name.0).await
+async fn rename_user(mut user: UserWrapped, name: Path<String>) -> Result<String> {
+    api::change_username(&mut user.0, name.0)
+        .await
+        .or_else(|e| Err(ApiErrorWrapped(e)))
 }
 
 #[post("/v2/hub/create/{name}")]
-async fn create_hub(mut user: User, name: Path<String>) -> Result<String> {
-    string_response!(api::create_hub(&mut user, name.0).await)
+async fn create_hub(mut user: UserWrapped, name: Path<String>) -> Result<String> {
+    string_response!(api::create_hub(&mut user.0, name.0).await)
 }
 
 #[get("/v2/hub/{hub_id}")]
-async fn get_hub(user: User, hub_id: Path<ID>) -> Result<Json<crate::hub::Hub>> {
-    json_response!(api::get_hub(&user, &hub_id.0).await)
+async fn get_hub(user: UserWrapped, hub_id: Path<ID>) -> Result<Json<Hub>> {
+    json_response!(api::get_hub(&user.0, &hub_id.0).await)
 }
 
 #[delete("/v2/hub/{hub_id}")]
-async fn delete_hub(user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::delete_hub(&user, &hub_id.0).await)
+async fn delete_hub(user: UserWrapped, hub_id: Path<ID>) -> Result<HttpResponse> {
+    no_content!(api::delete_hub(&user.0, &hub_id.0).await)
 }
 
 #[put("/v2/hub/rename/{hub_id}/{name}")]
-async fn rename_hub(user: User, path: Path<(ID, String)>) -> Result<String> {
-    api::rename_hub(&user, &path.0 .0, path.1.clone()).await
+async fn rename_hub(user: UserWrapped, path: Path<(ID, String)>) -> Result<String> {
+    api::rename_hub(&user.0, &path.0 .0, path.1.clone())
+        .await
+        .or_else(|e| Err(ApiErrorWrapped(e)))
 }
 
 #[get("/v2/member/{hub_id}/{user_id}/is_banned")]
-async fn is_banned_from_hub(user: User, path: Path<(ID, ID)>) -> Result<String> {
-    string_response!(api::user_banned(&user, &path.0 .0, &path.1).await)
+async fn is_banned_from_hub(user: UserWrapped, path: Path<(ID, ID)>) -> Result<String> {
+    string_response!(api::user_banned(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[get("/v2/member/{hub_id}/{user_id}/is_muted")]
-async fn hub_member_is_muted(user: User, path: Path<(ID, ID)>) -> Result<String> {
-    string_response!(api::user_muted(&user, &path.0 .0, &path.1).await)
+async fn hub_member_is_muted(user: UserWrapped, path: Path<(ID, ID)>) -> Result<String> {
+    string_response!(api::user_muted(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[get("/v2/hub/{hub_id}/{user_id}")]
-async fn get_hub_member(user: User, path: Path<(ID, ID)>) -> Result<Json<crate::hub::HubMember>> {
-    json_response!(api::get_hub_member(&user, &path.0 .0, &path.1).await)
+async fn get_hub_member(user: UserWrapped, path: Path<(ID, ID)>) -> Result<Json<HubMember>> {
+    json_response!(api::get_hub_member(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/hub/join/{hub_id}")]
-async fn join_hub(mut user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::join_hub(&mut user, &hub_id.0).await)
+async fn join_hub(mut user: UserWrapped, hub_id: Path<ID>) -> Result<HttpResponse> {
+    no_content!(api::join_hub(&mut user.0, &hub_id.0).await)
 }
 
 #[post("/v2/hub/leave/{hub_id}")]
-async fn leave_hub(mut user: User, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::leave_hub(&mut user, &hub_id.0).await)
+async fn leave_hub(mut user: UserWrapped, hub_id: Path<ID>) -> Result<HttpResponse> {
+    no_content!(api::leave_hub(&mut user.0, &hub_id.0).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/kick")]
-async fn kick_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::kick_user(&user, &path.0 .0, &path.1).await)
+async fn kick_user(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::kick_user(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/ban")]
-async fn ban_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::ban_user(&user, &path.0 .0, &path.1).await)
+async fn ban_user(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::ban_user(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/unban")]
-async fn unban_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unban_user(&user, &path.0 .0, &path.1).await)
+async fn unban_user(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::unban_user(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/mute")]
-async fn mute_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::mute_user(&user, &path.0 .0, &path.1).await)
+async fn mute_user(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::mute_user(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/member/{hub_id}/{user_id}/unmute")]
-async fn unmute_user(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unmute_user(&user, &path.0 .0, &path.1).await)
+async fn unmute_user(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::unmute_user(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[put("/v2/member/change_nickname/{hub_id}/{name}")]
-async fn change_nickname(user: User, path: Path<(ID, String)>) -> Result<String> {
-    api::change_nickname(&user, &path.0 .0, path.1.clone()).await
+async fn change_nickname(user: UserWrapped, path: Path<(ID, String)>) -> Result<String> {
+    api::change_nickname(&user.0, &path.0 .0, path.1.clone())
+        .await
+        .or_else(|e| Err(ApiErrorWrapped(e)))
 }
 
 #[post("/v2/channel/create/{hub_id}/{name}")]
-async fn create_channel(user: User, path: Path<(ID, String)>) -> Result<String> {
-    string_response!(api::create_channel(&user, &path.0 .0, path.1.clone()).await)
+async fn create_channel(user: UserWrapped, path: Path<(ID, String)>) -> Result<String> {
+    string_response!(api::create_channel(&user.0, &path.0 .0, path.1.clone()).await)
 }
 
 #[get("/v2/channel/{hub_id}/{channel_id}")]
-async fn get_channel(user: User, path: Path<(ID, ID)>) -> Result<Json<Channel>> {
-    json_response!(api::get_channel(&user, &path.0 .0, &path.1).await)
+async fn get_channel(user: UserWrapped, path: Path<(ID, ID)>) -> Result<Json<Channel>> {
+    json_response!(api::get_channel(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[put("/v2/channel/rename/{hub_id}/{channel_id}/{name}")]
-async fn rename_channel(user: User, path: Path<(ID, ID, String)>) -> Result<String> {
-    api::rename_channel(&user, &path.0 .0, &path.1, path.2.clone()).await
+async fn rename_channel(user: UserWrapped, path: Path<(ID, ID, String)>) -> Result<String> {
+    api::rename_channel(&user.0, &path.0 .0, &path.1, path.2.clone())
+        .await
+        .or_else(|e| Err(ApiErrorWrapped(e)))
 }
 
 #[delete("/v2/channel/delete/{hub_id}/{channel_id}")]
-async fn delete_channel(user: User, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::delete_channel(&user, &path.0 .0, &path.1).await)
+async fn delete_channel(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
+    no_content!(api::delete_channel(&user.0, &path.0 .0, &path.1).await)
 }
 
 #[post("/v2/message/send/{hub_id}/{channel_id}")]
-async fn send_message(user: User, path: Path<(ID, ID)>, message: Bytes) -> Result<String> {
+async fn send_message(user: UserWrapped, path: Path<(ID, ID)>, message: Bytes) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
-        string_response!(api::send_message(&user, &path.0 .0, &path.1, message).await)
+        string_response!(api::send_message(&user.0, &path.0 .0, &path.1, message).await)
     } else {
-        Err(ApiError::InvalidMessage)
+        Err(ApiErrorWrapped(ApiError::InvalidMessage))
     }
 }
 
 #[get("/v2/message/{hub_id}/{channel_id}/{message_id}")]
-async fn get_message(user: User, path: Path<(ID, ID, ID)>) -> Result<Json<Message>> {
-    json_response!(api::get_message(&user, &path.0 .0, &path.1, &path.2).await)
+async fn get_message(user: UserWrapped, path: Path<(ID, ID, ID)>) -> Result<Json<Message>> {
+    json_response!(api::get_message(&user.0, &path.0 .0, &path.1, &path.2).await)
 }
 
 #[derive(Deserialize)]
@@ -324,13 +349,13 @@ impl GetMessagesQuery {
 
 #[get("/v2/message/{hub_id}/{channel_id}/get")]
 async fn get_messages(
-    user: User,
+    user: UserWrapped,
     path: Path<(ID, ID)>,
     query: Query<GetMessagesQuery>,
 ) -> Result<Json<Vec<Message>>> {
     json_response!(
         api::get_messages(
-            &user,
+            &user.0,
             &path.0 .0,
             &path.1,
             query.from(),
@@ -349,24 +374,24 @@ struct PermissionSettingQuery {
 
 #[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{hub_permission}")]
 async fn set_user_hub_permission(
-    user: User,
+    user: UserWrapped,
     path: Path<(ID, ID, HubPermission)>,
     query: Query<PermissionSettingQuery>,
 ) -> Result<HttpResponse> {
     no_content!(
-        api::set_member_hub_permission(&user, &path.1, &path.0 .0, path.2, query.setting).await
+        api::set_member_hub_permission(&user.0, &path.1, &path.0 .0, path.2, query.setting).await
     )
 }
 
 #[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{channel_id}/{channel_permission}")]
 async fn set_user_channel_permission(
-    user: User,
+    user: UserWrapped,
     path: Path<(ID, ID, ID, ChannelPermission)>,
     query: Query<PermissionSettingQuery>,
 ) -> Result<HttpResponse> {
     no_content!(
         api::set_member_channel_permission(
-            &user,
+            &user.0,
             &path.1,
             &path.0 .0,
             &path.2,
