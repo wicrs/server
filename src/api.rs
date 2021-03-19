@@ -1,13 +1,4 @@
-use crate::{
-    auth::{Auth, AuthQuery, IDToken, Service},
-    channel::{Channel, Message},
-    check_name_validity, check_permission,
-    hub::{Hub, HubMember},
-    new_id,
-    permission::HubPermission,
-    user::{GenericUser, User},
-    ApiError, Result, AUTH, ID,
-};
+use crate::{AUTH, ApiError, ID, Result, auth::{Auth, AuthQuery, IDToken, Service}, channel::{Channel, Message}, check_name_validity, check_permission, hub::{Hub, HubMember}, new_id, permission::{ChannelPermission, HubPermission, PermissionSetting}, user::{GenericUser, User}};
 
 pub async fn start_login(service: Service) -> String {
     Auth::start_login(AUTH.clone(), service).await
@@ -270,4 +261,39 @@ pub async fn get_messages(
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, &user.id, channel_id)?;
     Ok(channel.get_messages(from, to, invert, max).await)
+}
+
+pub async fn set_user_hub_permission(
+    user: &User,
+    hub_id: &ID,
+    permission: HubPermission,
+    value: PermissionSetting,
+) -> Result<()> {
+    user.in_hub(hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    {
+        let member = hub.get_member(&user.id)?;
+        check_permission!(member, HubPermission::Administrate, hub);
+    }
+    let member = hub.get_member_mut(&user.id)?;
+    member.set_permission(permission, value);
+    hub.save().await
+}
+
+pub async fn set_user_channel_permission(
+    user: &User,
+    hub_id: &ID,
+    channel_id: &ID,
+    permission: ChannelPermission,
+    value: PermissionSetting,
+) -> Result<()> {
+    user.in_hub(hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    {
+        let member = hub.get_member(&user.id)?;
+        check_permission!(member, HubPermission::Administrate, hub);
+    }
+    let member = hub.get_member_mut(&user.id)?;
+    member.set_channel_permission(channel_id, permission, value);
+    hub.save().await
 }
