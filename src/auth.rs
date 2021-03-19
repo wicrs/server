@@ -11,7 +11,7 @@ use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use thiserror::Error as ThisError;
 
-use crate::{get_system_millis, user::User, ApiError, Result, ID, USER_AGENT_STRING};
+use crate::{ApiError, ID, Result, USER_AGENT_STRING, config::AuthConfigs, get_system_millis, user::User};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -92,17 +92,16 @@ pub struct IDToken {
 }
 
 impl Auth {
-    pub fn from_config() -> Self {
+    pub fn from_config(config: &AuthConfigs) -> Self {
         std::fs::create_dir_all("data/users")
             .expect("Failed to create the ./data/users directory.");
-        let auth_config = crate::config::load_config().auth_services;
-        let github_conf = auth_config.github.expect(
+        let github_conf = config.github.as_ref().expect(
             "GitHub is currently the only supported oauth service provider, it must be configured.",
         );
         Self {
             github: Arc::new(Mutex::new(GitHub::new(
-                github_conf.client_id,
-                github_conf.client_secret,
+                github_conf.client_id.clone(),
+                github_conf.client_secret.clone(),
             ))),
             sessions: Arc::new(Mutex::new(Auth::load_tokens())),
         }

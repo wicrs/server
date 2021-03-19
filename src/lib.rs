@@ -17,6 +17,7 @@ pub mod user;
 
 use uuid::Uuid;
 
+/// Errors related to data processing.
 #[derive(Debug, PartialEq, Eq, Clone, Error)]
 pub enum DataError {
     #[error("server was unable to write new data to disk")]
@@ -106,10 +107,17 @@ impl From<&ApiError> for StatusCode {
 
 pub type Result<T, E = ApiError> = std::result::Result<T, E>;
 
+/// String to identify the version of the library, used for external requests.
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+
+/// List of characters that can be used in a username.
 pub const NAME_ALLOWED_CHARS: &str =
     " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/// Maximum length of a name in characters.
 pub const MAX_NAME_LENGTH: usize = 32;
+
+/// Maximum size of a message in bytes.
 pub const MESSAGE_MAX_SIZE: usize = 4096;
 
 /// Get the current time in milliseconds since Unix Epoch.

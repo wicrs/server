@@ -7,11 +7,12 @@ use wicrs_server::{auth::Auth, config};
 #[macro_use]
 extern crate lazy_static;
 
+/// Definition of the HTTP API.
 pub mod httpapi;
 
 lazy_static! {
-    static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config()));
-    pub static ref CONFIG: config::Config = config::load_config();
+    pub static ref CONFIG: config::Config = config::load_config("config.json");
+    static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config(&CONFIG.auth_services)));
 }
 
 #[actix_web::main]
