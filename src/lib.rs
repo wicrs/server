@@ -7,15 +7,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
-pub mod api;
-pub mod auth;
-pub mod channel;
-pub mod config;
-pub mod hub;
-pub mod permission;
-pub mod user;
-
 use uuid::Uuid;
+
+/// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
+pub mod api;
+/// Authentication handling.
+pub mod auth;
+/// Message storage and retreival for channels.
+pub mod channel;
+/// Various objects for storing configuration.
+pub mod config;
+/// Hubs, permission management, channel management and member management.
+pub mod hub;
+/// Permissions are defined here.
+pub mod permission;
+/// User management.
+pub mod user;
 
 /// Errors related to data processing.
 #[derive(Debug, PartialEq, Eq, Clone, Error)]
@@ -34,6 +41,7 @@ pub enum DataError {
     DeleteFailed,
 }
 
+/// General errors that can occur when using the WICRS API.
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("user is muted")]
@@ -199,8 +207,8 @@ mod tests {
         assert!(is_valid_name("Test_test tHAt-tester."));
         assert!(is_valid_name("1234567890"));
         assert!(is_valid_name("l33t 5p34k"));
-        assert!(is_valid_name(""));
-        assert!(is_valid_name("Test! @thing"));
-        assert!(is_valid_name("123456789111315171921232527293133"));
+        assert!(!is_valid_name(""));
+        assert!(!is_valid_name("Test! @thing"));
+        assert!(!is_valid_name("123456789111315171921232527293133"));
     }
 }
