@@ -24,6 +24,7 @@ use actix_web::{
 };
 use futures::future::{err, ok, Ready};
 
+/// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
 pub async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()

@@ -63,6 +63,7 @@ impl User {
         }
     }
 
+    /// Changes the username of the user while checking that it adheres to the rules set by `crate::is_valid_name`.
     pub async fn change_username(&mut self, new_name: String) -> Result<String> {
         check_name_validity(&new_name)?;
         let old_name = self.username.clone();
@@ -70,20 +71,7 @@ impl User {
         Ok(old_name)
     }
 
-    pub async fn send_hub_message(
-        &self,
-        hub_id: &ID,
-        channel_id: &ID,
-        message: String,
-    ) -> Result<ID> {
-        if self.in_hubs.contains(hub_id) {
-            let mut hub = Hub::load(hub_id).await?;
-            hub.send_message(&self.id, channel_id, message).await
-        } else {
-            Err(ApiError::NotInHub)
-        }
-    }
-
+    /// Adds the user to a hub, giving them the default permissions and making sure that they are not banned.
     pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
         let mut hub = Hub::load(hub_id).await?;
         if !hub.bans.contains(&self.id) {
@@ -96,6 +84,7 @@ impl User {
         }
     }
 
+    /// Returns and error if the user is not in the given hub.
     pub fn in_hub(&self, hub_id: &ID) -> Result<()> {
         if self.in_hubs.contains(hub_id) {
             Ok(())
@@ -104,6 +93,7 @@ impl User {
         }
     }
 
+    /// Removes the user from the hub.
     pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
         if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == hub_id) {
             let mut hub = Hub::load(hub_id).await?;
@@ -116,6 +106,7 @@ impl User {
         }
     }
 
+    /// Saves the user's data to a file on the disk.
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(USER_FOLDER).await?;
         let json = serde_json::to_string(self).map_err(|_| DataError::Serialize)?;
@@ -123,6 +114,7 @@ impl User {
         Ok(())
     }
 
+    /// Loads the data of a user based on their ID.
     pub async fn load(id: &ID) -> Result<Self> {
         let filename = format!("{}{:x}.json", USER_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
@@ -133,11 +125,13 @@ impl User {
         serde_json::from_str(&json).map_err(|_| DataError::Deserialize.into())
     }
 
+    /// Same as `Self::load` but first maps an OAuth ID and service name to a WICRS Server ID.
     pub async fn load_get_id(id: &str, service: &Service) -> Result<Self> {
         Self::load(&get_id(id, service)).await
     }
 }
 
+/// Gets a user ID based on their ID from the OAuth service they used to sign up and the name of the OAuth service.
 pub fn get_id(id: &str, service: &Service) -> ID {
     let mut hasher = Shake128::default();
     hasher.update(id);

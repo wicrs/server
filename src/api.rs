@@ -243,7 +243,8 @@ pub async fn send_message(
 ) -> Result<ID> {
     user.in_hub(hub_id)?;
     if message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
-        user.send_hub_message(hub_id, channel_id, message).await
+        let mut hub = Hub::load(hub_id).await?;
+        hub.send_message(&user.id, channel_id, message).await
     } else {
         Err(ApiError::MessageTooBig)
     }
