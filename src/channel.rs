@@ -25,11 +25,11 @@ pub struct Channel {
 
 impl Channel {
     /// Creates a new channel object based on parameters.
-    pub fn new(name: String, id: ID, server_id: ID) -> Self {
+    pub fn new(name: String, id: ID, hub_id: ID) -> Self {
         Self {
             name,
             id,
-            hub_id: server_id,
+            hub_id,
             created: crate::get_system_millis(),
         }
     }
