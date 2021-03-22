@@ -125,6 +125,9 @@ pub const NAME_ALLOWED_CHARS: &str =
 /// Maximum length of a name in characters.
 pub const MAX_NAME_LENGTH: usize = 32;
 
+/// Minimum length of a name in characters.
+pub const MIN_NAME_LENGTH: usize = 1;
+
 /// Maximum size of a message in bytes.
 pub const MESSAGE_MAX_SIZE: usize = 4096;
 
@@ -138,13 +141,20 @@ pub fn get_system_millis() -> u128 {
 
 /// Checks if a name is valid (not too long and only allowed characters).
 pub fn is_valid_name(name: &str) -> bool {
-    name.len() > 0
-        && name.len() < MAX_NAME_LENGTH
+    name.len() >= MIN_NAME_LENGTH
+        && name.len() <= MAX_NAME_LENGTH
         && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
 }
 
 /// Wraps `is_valid_name` to return a `Result<()>`.
-/// Returns an error if the given name is too long, too short, or contains characters not given in [`NAME_ALLOWED_CHARS`].
+/// 
+/// # Errors
+///
+/// This function returns an error for any of the following reasons:
+///
+/// * The name is too long (maximum defined by [`MAX_NAME_LENGTH`]).
+/// * The name is too short (minimum defined by [`MIN_NAME_LENGTH`]).
+/// * The name contains characters not listed in [`NAME_ALLOWED_CHARS`].
 pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
@@ -153,7 +163,7 @@ pub fn check_name_validity(name: &str) -> Result<()> {
     }
 }
 
-/// Checks that a hub member has a given permission and returns if they it doesn't.
+/// Checks that a hub member has a given permission and returns an error if it doesn't.
 #[macro_export]
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {

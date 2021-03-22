@@ -2,6 +2,7 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use base64::URL_SAFE_NO_PAD;
 use futures::lock::Mutex;
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use reqwest::{
     header::{AUTHORIZATION, USER_AGENT},
     StatusCode,
@@ -143,10 +144,7 @@ impl Auth {
         let hashed = hash_auth(account.id.clone(), token.clone());
         let mut map = HashMap::new();
         map.insert(hashed.1, u128::MAX);
-        auth.sessions
-            .write()
-            .await
-            .insert(hashed.0, map);
+        auth.sessions.write().await.insert(hashed.0, map);
         (auth, account.id, token)
     }
 
@@ -155,7 +153,7 @@ impl Auth {
     /// # Errors
     ///
     /// Returns an error if the data could not be written to the disk.
-    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>> ) -> Result<()> {
+    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>>) -> Result<()> {
         std::fs::write(
             SESSION_FILE,
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
@@ -166,12 +164,12 @@ impl Auth {
     /// Loads authentication tokens from disk and remover any that have expired.
     fn load_tokens() -> HashMap<String, HashMap<String, u128>> {
         if let Ok(read) = std::fs::read_to_string("data/sessions.json") {
-            if let Ok(mut map) = serde_json::from_str::<HashMap<String, HashMap<String, u128>>>(&read)
+            if let Ok(mut map) =
+                serde_json::from_str::<HashMap<String, HashMap<String, u128>>>(&read)
             {
-                let mut now = get_system_millis();
-                for account in &mut map {
-                    account.1.retain(|_, v| v > &mut now);
-                }
+                let now = get_system_millis();
+                map.par_iter_mut()
+                    .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
                 let _save = Auth::save_tokens(&map);
                 return map;
             }
@@ -288,6 +286,10 @@ impl Auth {
                 map.insert(hashed.1, expires);
                 sessions_lock.insert(hashed.0, map);
             }
+            let now = get_system_millis();
+            sessions_lock
+                .par_iter_mut()
+                .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
             let _write = Auth::save_tokens(&sessions_lock);
         }
         Ok(IDToken {

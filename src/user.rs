@@ -73,7 +73,7 @@ impl User {
     }
 
     /// Changes the username of the user or returns an error as outlined by [`check_name_validity`].
-    pub async fn change_username(&mut self, new_name: String) -> Result<String> {
+    pub fn change_username(&mut self, new_name: String) -> Result<String> {
         check_name_validity(&new_name)?;
         let old_name = self.username.clone();
         self.username = new_name;

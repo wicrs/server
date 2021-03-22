@@ -33,7 +33,7 @@ pub async fn start_login(auth_manager: Arc<RwLock<Auth>>, service: Service) -> S
 ///
 /// # Errors
 ///
-/// This may fail for any of the reasons outlined in [`Auth::handle_oauth`].
+/// This function may return an error for any of the reasons outlined in [`Auth::handle_oauth`].
 pub async fn complete_login(
     auth_manager: Arc<RwLock<Auth>>,
     service: Service,
@@ -47,11 +47,21 @@ pub async fn complete_login(
 /// # Arguments
 ///
 /// * `auth_manager` - The Authentication manager for the current server instance, wrapped in Arc<RwLock>> so that it can be used by multiple threads.
-/// * `user` - User whos tokens should be invalidated.
+/// * `user` - User whose tokens should be invalidated.
 pub async fn invalidate_tokens(auth_manager: Arc<RwLock<Auth>>, user: User) {
     Auth::invalidate_tokens(auth_manager, user.id).await
 }
 
+/// Gets a user's data while removing all of their private information.
+///
+/// # Arguments
+///
+/// * `id` - The id of the user whose data is being requested.
+/// * `user` - The user who is requesting the data.
+///
+/// # Errors
+///
+/// This function may return an error if the user's data cannot be loaded for any of the reasons outlined in [`User::load`].
 pub async fn get_user_stripped(user: &User, id: ID) -> Result<GenericUser> {
     User::load(&id)
         .await
@@ -59,17 +69,45 @@ pub async fn get_user_stripped(user: &User, id: ID) -> Result<GenericUser> {
         .map_err(|_| ApiError::UserNotFound)
 }
 
+/// Changes a user's username.
+/// Returns the user's previous username if successful.
+///
+/// # Arguments
+///
+/// * `user` - User whose name is to be changed.
+/// * `new_name` - New username for the user.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons.
+///
+/// * The modified user data could not be saved for any of the reasons outlined in [`User::save`].
+/// * The user's name could not be changed for any of the reasons outlined in [`User::change_username`].
 pub async fn change_username<S: Into<String> + Clone>(
     user: &mut User,
     new_name: S,
 ) -> Result<String> {
-    check_name_validity(&new_name.clone().into())?;
-    let old_name = user.username.clone();
-    user.username = new_name.into();
+    let old_name = user.change_username(new_name.into())?;
     user.save().await?;
     Ok(old_name)
 }
 
+/// Creates a hub, returning the ID of the new hub if successful.
+/// Also adds a default channel named "chat" that all users have access to by default.
+///
+/// # Arguments
+///
+/// * `owner` - User who should be marked as the owner/creator of the hub.
+/// * `name` - The name of the new hub.
+///
+/// # Errors
+///
+/// This function may return an error for any of the reasons outlined in the following functions:
+///
+/// * The user's data could not be saved for any of the reasons outlined in [`User::save`].
+/// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
+/// * The given name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The default channel could not be created for any of the reaons outlined in [`Hub::new_channel`].
 pub async fn create_hub(owner: &mut User, name: String) -> Result<ID> {
     check_name_validity(&name)?;
     let mut id = new_id();
@@ -101,12 +139,40 @@ pub async fn create_hub(owner: &mut User, name: String) -> Result<ID> {
     Ok(id)
 }
 
+/// Gets a hub stripped of data the given user should not be able to see.
+///
+/// # Arguments
+///
+/// * `user` - User to check the visiblity of objects for.
+/// * `hub_id` - ID of the hub to get.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
 pub async fn get_hub(user: &User, hub_id: &ID) -> Result<Hub> {
     user.in_hub(&hub_id)?;
     let hub = Hub::load(hub_id).await?;
     hub.strip(&user.id)
 }
 
+/// Deletes a hub.
+///
+/// # Arguments
+///
+/// * `user` - User to check for permission to perform the operation.
+/// * `hub_id` - ID of the hub to delete.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user does not have permission to delete the hub.
+/// * The hub's data files could not be deleted.
 pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     user.in_hub(&hub_id)?;
     let hub = Hub::load(hub_id).await?;
@@ -117,6 +183,23 @@ pub async fn delete_hub(user: &User, hub_id: &ID) -> Result<()> {
     Ok(())
 }
 
+/// Changes the name of a hub.
+///
+/// # Arguments
+///
+/// * `user` - The user to check for permission to perform the operation.
+/// * `hub_id` - The ID of the hub whose name is to be changed.
+/// * `new_name` - The new name to be given to the hub.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The user does not have permission to rename the hub.
+/// * The given name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn rename_hub<S: Into<String> + Clone>(
     user: &User,
     hub_id: &ID,
@@ -133,6 +216,22 @@ pub async fn rename_hub<S: Into<String> + Clone>(
     Ok(old_name)
 }
 
+/// Changes a user's nickname in a hub.
+///
+/// # Arguments
+///
+/// * `user` - User whose nickname is to be changed.
+/// * `hub_id` - ID of the hub where the new nickname should be applied.
+/// * `new_name` - New nickname to be used.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The new name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn change_nickname<S: Into<String> + Clone>(
     user: &User,
     hub_id: &ID,
@@ -148,6 +247,21 @@ pub async fn change_nickname<S: Into<String> + Clone>(
     Ok(old_name)
 }
 
+/// Checks if a user is banned from a hub.
+/// Returns `true` if they are and `false` if they aren't.
+///
+/// # Arguments
+///
+/// * `user` - The user who is checking.
+/// * `hub_id` - The hub in which to check the ban status.
+/// * `user_id` - The user whose ban status is to be checked.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user who is checking is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
     Hub::load(hub_id)
@@ -155,6 +269,21 @@ pub async fn user_banned(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool>
         .map(|hub| hub.bans.contains(user_id))
 }
 
+/// Checks if a user is muted in a hub.
+/// Returns `true` if they are and `false` if they aren't.
+///
+/// # Arguments
+///
+/// * `user` - The user who is checking.
+/// * `hub_id` - The hub in which to check the mute status.
+/// * `user_id` - The user whose mute status is to be checked.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user who is checking is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> {
     user.in_hub(hub_id)?;
     Hub::load(hub_id)
@@ -162,6 +291,21 @@ pub async fn user_muted(user: &User, hub_id: &ID, user_id: &ID) -> Result<bool> 
         .map(|hub| hub.mutes.contains(user_id))
 }
 
+/// Gets the information on a member of a hub.
+///
+/// # Arguments
+///
+/// * `user` - The user who is requesting the information.
+/// * `hub_id` - Hub from which to get the information.
+/// * `user_id` - ID of the user whose information is being requested.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The requesting user is not in the hub.
+/// * The user whose information is being requested is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_hub_member(user: &User, hub_id: &ID, user_id: &ID) -> Result<HubMember> {
     user.in_hub(hub_id)?;
     let hub = Hub::load(hub_id).await?;
@@ -173,11 +317,33 @@ pub async fn get_hub_member(user: &User, hub_id: &ID, user_id: &ID) -> Result<Hu
     }
 }
 
+/// Adds the given user to a hub.
+///
+/// # Arguments
+///
+/// * `user` - User to add to the hub.
+/// * `hub_id` - ID of the hub the user is to be added to.
+///
+/// # Errors
+///
+/// * The user could not be added to the hub for any of the reasons outlined by [`User::join_hub`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn join_hub(user: &mut User, hub_id: &ID) -> Result<()> {
     user.join_hub(hub_id).await?;
     user.save().await
 }
 
+/// Removes the given user from a hub.
+///
+/// # Arguments
+///
+/// * `user` - User to remove from the hub.
+/// * `hub_id` - ID of the hub the user is to be removed from.
+///
+/// # Errors
+///
+/// * The user could not be removed from the hub for any of the reasons outlined by [`User::leave_hub`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn leave_hub(user: &mut User, hub_id: &ID) -> Result<()> {
     user.leave_hub(hub_id).await?;
     user.save().await
@@ -200,8 +366,9 @@ async fn hub_user_op(user: &User, hub_id: &ID, user_id: &ID, op: HubPermission) 
 }
 
 macro_rules! action_fns {
-  ($(($fnName:ident, $variant:ident)),*) => {
+  ($($(#[$attr:meta])* => ($fnName:ident, $variant:ident)),*) => {
     $(
+      $(#[$attr])*
       pub async fn $fnName(user: &User, hub_id: &ID, user_id: &ID) -> Result<()> {
           hub_user_op(user, hub_id, user_id, HubPermission::$variant).await
       }
@@ -209,11 +376,92 @@ macro_rules! action_fns {
   }
 }
 action_fns! {
-(kick_user, Kick),
-(ban_user, Ban),
-(unban_user, Unban),
-(mute_user, Mute),
-(unmute_user, Unmute)
+/// Kicks a user from a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is doing the kicking.
+/// * `hub_id` - Hub from which the user is being kicked.
+/// * `user_id` - ID of the user who is to be kicked.
+///
+/// # Errors
+///
+/// This function may fail for any of the following reasons:
+///
+/// * The user doing the kicking is not in the hub
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user to be kicked is not in the hub.
+/// * The user doing the kicking does not have permission to kick other users.
+/// * The kick failed for any of the reasons outlined by [`Hub::kick_user`].
+=> (kick_user, Kick),
+/// Bans a user from a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is performing the ban.
+/// * `hub_id` - Hub from which the user is being banned.
+/// * `user_id` - ID of the user who is to be banned.
+///
+/// # Errors
+///
+/// This function may fail for any of the following reasons:
+///
+/// * The user performing the ban is not in the hub
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user performing the ban does not have permission to ban other users.
+/// * The ban failed for any of the reasons outlined by [`Hub::ban_user`].
+=> (ban_user, Ban),
+/// Unbans a user from a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is unbanning.
+/// * `hub_id` - Hub from which the user is being unbanned.
+/// * `user_id` - ID of the user who is to be unbanned.
+///
+/// # Errors
+///
+/// This function may fail for any of the following reasons:
+///
+/// * The user performing the unban is not in the hub
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user doing the unban does not have permission to unban other users.
+/// * The unban failed for any of the reasons outlined by [`Hub::unban_user`].
+=> (unban_user, Unban),
+/// Mutes a user in a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is muting.
+/// * `hub_id` - Hub in which the user is being muted.
+/// * `user_id` - ID of the user who is to be muted.
+///
+/// # Errors
+///
+/// This function may fail for any of the following reasons:
+///
+/// * The user performing the mute is not in the hub
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user performing the mute does not have permission to mute other users.
+/// * The mute failed for any of the reasons outlined by [`Hub::mute_user`].
+=> (mute_user, Mute),
+/// Unmutes a user in a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is unmuting.
+/// * `hub_id` - Hub in which the user is being unmuted.
+/// * `user_id` - ID of the user who is to be unmuted.
+///
+/// # Errors
+///
+/// This function may fail for any of the following reasons:
+///
+/// * The user performing the unmute is not in the hub
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The user performing the unmute does not have permission to unmute other users.
+/// * The unmute failed for any of the reasons outlined by [`Hub::unmute_user`].
+=> (unmute_user, Unmute)
 }
 
 pub async fn create_channel<S: Into<String> + Clone>(
