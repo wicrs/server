@@ -10,38 +10,55 @@ use fs::OpenOptions;
 
 use crate::{get_system_millis, hub::HUB_DATA_FOLDER, Result, ID};
 
+/// Text channel, used to group a manage sets of messages.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Channel {
+    /// ID of the channel.
     pub id: ID,
-    pub server_id: ID,
+    /// ID of the Hub that the channel belongs to.
+    pub hub_id: ID,
+    /// Name of the channel.
     pub name: String,
+    /// Date the channel was created in milliseconds since Unix Epoch.
     pub created: u128,
 }
 
 impl Channel {
-    pub fn new(name: String, id: ID, server_id: ID) -> Self {
+    /// Creates a new channel object based on parameters.
+    pub fn new(name: String, id: ID, hub_id: ID) -> Self {
         Self {
             name,
             id,
-            server_id,
+            hub_id,
             created: crate::get_system_millis(),
         }
     }
 
+    /// Get the path of the channel's data folder, used for storing message files.
     pub fn get_folder(&self) -> String {
         format!(
             "{}{:x}/{:x}",
             HUB_DATA_FOLDER,
-            self.server_id.as_u128(),
+            self.hub_id.as_u128(),
             self.id.as_u128()
         )
     }
 
+    /// Creates the channel data folder.
     pub async fn create_dir(&self) -> Result<()> {
         tokio::fs::create_dir_all(self.get_folder()).await?;
         Ok(())
     }
 
+    /// Adds a message to the channel, writes it to the file corresponding to the day the message was sent, one file per day of messages, only created if a message is sent that day.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The message file does not exist and could not be created.
+    /// * Was unable to write to the message file.
     pub async fn add_message(&mut self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
         let mut file = OpenOptions::new()
@@ -55,6 +72,7 @@ impl Channel {
         Ok(())
     }
 
+    /// Gets the last messages sent, `max` indicates the maximum number of messages to return.
     pub async fn get_last_messages(&self, max: usize) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
@@ -96,6 +114,14 @@ impl Channel {
         result
     }
 
+    /// Gets a set of messages between two times given in milliseconds since Unix Epoch.
+    ///
+    /// # Arguments
+    ///
+    /// * `from` - The earliest send time a message can have to be included.
+    /// * `to` - The latest send time a message can have to be included.
+    /// * `invert` - If true messages are returned in order of newest to oldest if false, oldest to newest, search is also done in that order.
+    /// * `max` - The maximum number of messages to return.
     pub async fn get_messages(
         &self,
         from: u128,
@@ -113,15 +139,15 @@ impl Channel {
             }
             files.par_sort_by_key(|f| f.file_name());
             if invert {
-                files.reverse()
+                files.reverse() // Reverse the order of the list of files to search in the correct direction if `invert` is true.
             }
             let mut whole_file = String::new();
-            let div_from = from / 86400000;
-            let div_to = to / 86400000;
+            let div_from = from / 86400000; // Get the day that `from` corresponds to.
+            let div_to = to / 86400000; // Get the day that `to` corresponds to.
             for file in files.iter().filter(|f| {
                 if let Ok(fname) = f.file_name().into_string() {
                     if let Ok(n) = u128::from_str(&fname) {
-                        return n >= div_from && n <= div_to;
+                        return n >= div_from && n <= div_to; // Check that the file is of a day within the given `to` and `from` times.
                     }
                 }
                 false
@@ -134,7 +160,7 @@ impl Channel {
                             .filter_map(|l| {
                                 if let Some(created_str) = l.splitn(4, ',').skip(2).next() {
                                     if let Ok(created) = u128::from_str_radix(created_str, 16) {
-                                        if created >= from && created <= to {
+                                        if created >= from && created <= to { // Check that the message was created within the given `to` and `from` times.
                                             if let Ok(message) = l.parse::<Message>() {
                                                 return Some(message);
                                             }
@@ -145,9 +171,9 @@ impl Channel {
                             })
                             .collect();
                         if invert {
-                            filtered.reverse()
+                            filtered.reverse() // Invert the order of found messages for that file if `invert` is true.
                         }
-                        filtered.truncate(max - result.len());
+                        filtered.truncate(max - result.len()); // Remove any extra messages if `max` has been reached.
                         result.append(&mut filtered);
                         let len = result.len();
                         if len == max {
@@ -163,6 +189,7 @@ impl Channel {
         result
     }
 
+    /// Perform an operation on the raw string of all the lines of all the files in the channel's data directory.
     pub async fn on_all_raw_lines<F: FnMut(Lines) -> ()>(&self, mut action: F) {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut whole_file = String::new();
@@ -180,6 +207,7 @@ impl Channel {
         }
     }
 
+    /// Search for messages that contain a string, if `case_sensitive` is true than the search is case_sensitive, case sensitive search is marginally faster.
     pub async fn find_messages_containing(
         &self,
         string: String,
@@ -214,6 +242,7 @@ impl Channel {
         results
     }
 
+    /// Get the first message with the given ID.
     pub async fn get_message(&self, id: &ID) -> Option<Message> {
         let id = format!("{:X}", id.as_u128());
         let mut result: Option<Message> = None;
@@ -239,17 +268,23 @@ impl Channel {
         return result;
     }
 
+    /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
     pub async fn get_current_file(&mut self) -> String {
         let now = get_system_millis() / 86400000;
         format!("{}/{}", self.get_folder(), now)
     }
 }
 
+/// Represents a message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
+    /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
+    /// ID of the user that sent the message.
     pub sender: ID,
+    /// Date in milliseconds since Unix Epoch that the message was sent.
     pub created: u128,
+    /// The actual text of the message.
     pub content: String,
 }
 

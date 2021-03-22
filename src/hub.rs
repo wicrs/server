@@ -13,21 +13,32 @@ use crate::{
     ApiError, DataError, Result, ID,
 };
 
+/// Relative path of the folder in which Hub information files (`hub.json`) files are stored.
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
+/// Relative path of the folder in which Hub data files are stored (channel directories and messages).
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
+/// Represents a member of a hub that maps to a user.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
+    /// ID of the user that the hub member represents.
     pub user: ID,
+    /// Time in milliseconds since Unix Epoch that the user became a member of the hub.
     pub joined: u128,
+    /// ID of the hub that this hub member is in.
     pub hub: ID,
+    /// Name used by the hub member.
     pub nickname: String,
+    /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
+    /// Hub permission settings that the hub member has.
     pub hub_permissions: HubPermissions,
+    /// Mapping of channel permission settings the hub member has to the channel they apply to.
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
 impl HubMember {
+    /// Creates a new hub member based on a user and the ID of the hub they are part of.
     pub fn new(user: &User, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
@@ -40,12 +51,14 @@ impl HubMember {
         }
     }
 
+    /// Changes the nickname of the hub member or returns an error if [`check_name_validity`] fails.
     pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
         check_name_validity(&nickname)?;
         self.nickname = nickname;
         Ok(())
     }
 
+    /// Adds the hub member to a permission group.
     pub fn join_group(&mut self, group: &mut PermissionGroup) {
         if !self.groups.contains(&group.id) {
             self.groups.push(group.id.clone());
@@ -55,6 +68,7 @@ impl HubMember {
         }
     }
 
+    /// Removes the hub member from a permission group.
     pub fn leave_group(&mut self, group: &mut PermissionGroup) {
         if let Some(index) = self.groups.par_iter().position_any(|id| id == &group.id) {
             self.groups.remove(index);
@@ -64,10 +78,12 @@ impl HubMember {
         }
     }
 
+    /// Sets a hub permission for the hub member.
     pub fn set_permission(&mut self, permission: HubPermission, value: PermissionSetting) {
         self.hub_permissions.insert(permission, value);
     }
 
+    /// Sets a channel permission for the hub member in the specified channel.
     pub fn set_channel_permission(
         &mut self,
         channel: &ID,
@@ -81,6 +97,7 @@ impl HubMember {
         channel_permissions.insert(permission, value);
     }
 
+    /// Checks if the hub member has the `HubPermission::All` permission or if they inherit it from a permission group they are in.
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
             if value == &Some(true) {
@@ -90,11 +107,12 @@ impl HubMember {
         false
     }
 
+    /// Checks if the hub member has the given hub permission or if they inherit it from a permission group they are in.
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
-        if hub.owner == self.user {
+        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() {
+        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(value) = self.hub_permissions.get(&permission) {
@@ -119,16 +137,17 @@ impl HubMember {
         false
     }
 
+    /// Checks if the hub member has the given channel permission in the given channel or if they inherit it from a permission group they are in.
     pub fn has_channel_permission(
         &self,
         channel: &ID,
         permission: &ChannelPermission,
         hub: &Hub,
     ) -> bool {
-        if hub.owner == self.user {
+        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() {
+        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
@@ -165,17 +184,25 @@ impl HubMember {
     }
 }
 
+/// Represents a set of permissions that can be easily given to any hub member.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PermissionGroup {
+    /// ID of the group.
     pub id: ID,
+    /// Name of the group.
     pub name: String,
+    /// Array of the IDs of hub members who are members of the group.
     pub members: Vec<ID>,
+    /// Hub permission settings that the group has.
     pub hub_permissions: HubPermissions,
+    /// Mapping of channel permission settings the group has to the channel they apply to.
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
+    /// Time in milliseconds since Unix Epoch that the group was created.
     pub created: u128,
 }
 
 impl PermissionGroup {
+    /// Creates a new permission group given a name and an ID.
     pub fn new(name: String, id: ID) -> Self {
         Self {
             created: get_system_millis(),
@@ -187,18 +214,22 @@ impl PermissionGroup {
         }
     }
 
+    /// Adds a hub member to the group, maps to `HubMember::join_group`.
     pub fn add_member(&mut self, user: &mut HubMember) {
         user.join_group(self)
     }
 
+    /// Removes a hub member from the group, maps to `HubMember::leave_group`.
     pub fn remove_member(&mut self, user: &mut HubMember) {
         user.leave_group(self)
     }
 
+    /// Changes the setting of a hub permission for the group.
     pub fn set_permission(&mut self, permission: HubPermission, value: PermissionSetting) {
         self.hub_permissions.insert(permission, value);
     }
 
+    /// Changes the setting of a channel permission for a specific channel for the group.
     pub fn set_channel_permission(
         &mut self,
         channel_id: ID,
@@ -212,6 +243,7 @@ impl PermissionGroup {
         channel_permissions.insert(permission, value);
     }
 
+    /// Checks if the group has the `All` permission.
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
             if value == &Some(true) {
@@ -221,6 +253,7 @@ impl PermissionGroup {
         false
     }
 
+    /// Checks if the group has a permission.
     pub fn has_permission(&self, permission: &HubPermission) -> bool {
         if self.has_all_permissions() {
             return true;
@@ -233,6 +266,7 @@ impl PermissionGroup {
         return false;
     }
 
+    /// Checks if the group has a permission in a specific channel.
     pub fn has_channel_permission(&self, channel_id: &ID, permission: &ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
@@ -257,21 +291,33 @@ impl PermissionGroup {
     }
 }
 
+/// Represents a group of users, permission groups and channels.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hub {
+    /// Map of channels to their IDs.
     pub channels: HashMap<ID, Channel>,
+    /// Map of hub members to their corresponding user's IDs.
     pub members: HashMap<ID, HubMember>,
+    /// List of IDs of all users that are banned from the hub.
     pub bans: HashSet<ID>,
+    /// List of IDs of all the users who cannot send **any** messages in the hub.
     pub mutes: HashSet<ID>,
+    /// ID of the user who owns the hub, also the creator.
     pub owner: ID,
+    /// Map of permission groups to their IDs.
     pub groups: HashMap<ID, PermissionGroup>,
+    /// ID of the default permission group to be given to new hub members, for now this is always the "everyone" group.
     pub default_group: ID,
+    /// Name of the hub.
     pub name: String,
+    /// ID of the hub.
     pub id: ID,
+    /// Time the hub was created in milliseconds since Unix Epoch.
     pub created: u128,
 }
 
 impl Hub {
+    /// Creates a new hub given the ID of the user who should be the owner, the name and the ID the hub should have.
     pub fn new(name: String, id: ID, creator: &User) -> Self {
         let creator_id = creator.id.clone();
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
@@ -296,6 +342,17 @@ impl Hub {
         }
     }
 
+    /// Creates a new channel.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * Failed to pass [`check_name_validity`].
+    /// * The user it not in the hub.
+    /// * The user does not have permission create new channels.
+    /// * Any of the reasons outlined in [`Channel::create_dir`].
     pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
         check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
@@ -317,6 +374,8 @@ impl Hub {
         Ok(id)
     }
 
+    /// Gets a reference to the channel.
+    /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
     pub fn get_channel(&self, member_id: &ID, channel_id: &ID) -> Result<&Channel> {
         let member = self.get_member(member_id)?;
         check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
@@ -327,6 +386,8 @@ impl Hub {
         }
     }
 
+    /// Gets a mutable reference to the channel.
+    /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
     pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: &ID) -> Result<&mut Channel> {
         let member = self.get_member(member_id)?;
         check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
@@ -337,6 +398,7 @@ impl Hub {
         }
     }
 
+    /// Gets a reference to the hub member, returns an error if the member could not be found.
     pub fn get_member(&self, member_id: &ID) -> Result<HubMember> {
         if let Some(member) = self.members.get(member_id) {
             Ok(member.clone())
@@ -345,6 +407,7 @@ impl Hub {
         }
     }
 
+    /// Gets a mutable reference to the hub member, returns an error if the member could not be found.
     pub fn get_member_mut(&mut self, member_id: &ID) -> Result<&mut HubMember> {
         if let Some(member) = self.members.get_mut(member_id) {
             Ok(member)
@@ -353,6 +416,18 @@ impl Hub {
         }
     }
 
+    /// Renames a channel.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * Failed to pass [`check_name_validity`].
+    /// * The user it not in the hub.
+    /// * The user does not have permission to view the channel.
+    /// * The user does not have permission to configure (rename) the channel.
+    /// * The channel does not exist.
     pub async fn rename_channel(
         &mut self,
         user_id: &ID,
@@ -362,6 +437,7 @@ impl Hub {
         check_name_validity(&name)?;
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            check_permission!(user, channel_id, ChannelPermission::Configure, self);
             if let Some(channel) = self.channels.get_mut(channel_id) {
                 let old_name = channel.name.clone();
                 channel.name = name;
@@ -374,6 +450,17 @@ impl Hub {
         }
     }
 
+    /// Deletes a channel while checking that the given user has permission to view it and to delete it.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The user is not in the hub.
+    /// * The channel does not exist.
+    /// * THe user does not have permission to view the channel.
+    /// * The user does not have permission to delete the channel.
     pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result<()> {
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, HubPermission::DeleteChannel, self);
@@ -388,6 +475,19 @@ impl Hub {
         }
     }
 
+    /// Sends a message as a user while checking that the user has permission to view the given channel and to write to it.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The user is not in the hub.
+    /// * THe user is muted and cannot send messages.
+    /// * The channel does not exist.
+    /// * The user does not have permission to view the channel.
+    /// * The user does not have permission to send messages in the channel.
+    /// * The message could not be added to the channel for any of the reasons outlined in [`Channel::add_message`].
     pub async fn send_message(
         &mut self,
         user_id: &ID,
@@ -396,6 +496,7 @@ impl Hub {
     ) -> Result<ID> {
         if let Some(member) = self.members.get(&user_id) {
             if !self.mutes.contains(&user_id) {
+                check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
                 check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
                 if let Some(channel) = self.channels.get_mut(&channel_id) {
                     let id = new_id();
@@ -418,6 +519,26 @@ impl Hub {
         }
     }
 
+    /// Gets the file path to be used for storing the hub's data.
+    pub fn get_info_path(&self) -> String {
+        format!("{}{:x}.json", HUB_INFO_FOLDER, self.id.as_u128())
+    }
+
+    /// Gets the path of the directory in which channel folders should be stored.
+    pub fn get_data_path(&self) -> String {
+        format!("{}{:x}/", HUB_DATA_FOLDER, self.id.as_u128())
+    }
+
+    /// Saves the hub's data to disk.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The hub data could not be serialized.
+    /// * The hub info folder does not exist and could not be created.
+    /// * The data could not be written to the disk.
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
         if let Ok(json) = serde_json::to_string(self) {
@@ -428,14 +549,15 @@ impl Hub {
         }
     }
 
-    pub fn get_info_path(&self) -> String {
-        format!("{}{:x}.json", HUB_INFO_FOLDER, self.id.as_u128())
-    }
-
-    pub fn get_data_path(&self) -> String {
-        format!("{}{:x}/", HUB_DATA_FOLDER, self.id.as_u128())
-    }
-
+    /// Loads a hub's data given its ID.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * There is no hub with that ID.
+    /// * The hub's data file was corrupt and could not be deserialized.
     pub async fn load(id: &ID) -> Result<Self> {
         let filename = format!("{}{:x}.json", HUB_INFO_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
@@ -450,6 +572,14 @@ impl Hub {
         }
     }
 
+    /// Adds a user to a hub, creating and returning the resulting hub member.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just this case:
+    ///
+    /// * The default permission group could not be found.
     pub fn user_join(&mut self, user: &User) -> Result<HubMember> {
         let mut member = HubMember::new(user, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
@@ -461,6 +591,15 @@ impl Hub {
         }
     }
 
+    /// Removes the given user from the hub.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The user is not in the hub.
+    /// * One of the permission groups the user was in could not be found in the hub.
     pub fn user_leave(&mut self, user: &User) -> Result<()> {
         if let Some(member) = self.members.get_mut(&user.id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
@@ -475,6 +614,16 @@ impl Hub {
         }
     }
 
+    /// Kicks the given user from the hub, forcing them to leave.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The user could not be removed from the hub for any of the reasons outlined in [`Hub::user_leave`].
+    /// * The user's data failed to load for any of the reasons outlined in [`User::load`].
+    /// * The user's data failed to save for any of the reasons outlined in [`User::save`].
     pub async fn kick_user(&mut self, user_id: &ID) -> Result<()> {
         if self.members.contains_key(user_id) {
             let mut user = User::load(user_id).await?;
@@ -484,30 +633,41 @@ impl Hub {
             }
             user.save().await?;
             self.members.remove(&user_id);
-            Ok(())
-        } else {
-            Ok(())
         }
+        Ok(())
     }
 
+    /// Kicks the given user and adds them to the banned list.
+    ///
+    /// # Errors
+    ///
+    /// Possible errors outlined by [`Hub::kick_user`].
     pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
         self.kick_user(&user_id).await?;
         self.bans.insert(user_id);
         Ok(())
     }
 
+    /// Removes the given user from the banned lis.
     pub fn unban_user(&mut self, user_id: &ID) {
         self.bans.remove(user_id);
     }
 
+    /// Adds the given user to the mute list, preventing them from sending messages.
     pub fn mute_user(&mut self, user_id: ID) {
         self.mutes.insert(user_id);
     }
 
+    /// Removes the given user from the mutes list, allowing them to send messages.
     pub fn unmute_user(&mut self, user_id: &ID) {
         self.mutes.remove(user_id);
     }
 
+    /// Gets a list of the channels that the given user has permission to view.
+    ///
+    /// # Errors
+    ///
+    /// This function will only return an error if the given user is not in the hub.
     pub fn get_channels_for_user(&self, user_id: &ID) -> Result<HashMap<ID, Channel>> {
         let hub_im = self.clone();
         if let Some(user) = self.members.get(user_id) {
@@ -524,6 +684,12 @@ impl Hub {
         }
     }
 
+    /// Returns a hub object with only the items that the given user is allowed to view.
+    /// Only hides channels that the user does not have permission to view.
+    ///
+    /// # Errors
+    ///
+    /// Possible errors are outlined by [`Hub::get_channels_for_user`].
     pub fn strip(&self, user_id: &ID) -> Result<Self> {
         let mut hub = self.clone();
         hub.channels = self.get_channels_for_user(user_id)?;

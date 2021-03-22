@@ -24,6 +24,7 @@ use actix_web::{
 };
 use futures::future::{err, ok, Ready};
 
+/// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
 pub async fn server(bind_address: &str) -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
@@ -188,7 +189,7 @@ async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result
 
 #[post("/v2/invalidate_tokens")]
 async fn invalidate_tokens(user: UserWrapped) -> HttpResponse {
-    api::invalidate_tokens(AUTH.clone(), &user.0).await;
+    api::invalidate_tokens(AUTH.clone(), user.0).await;
     HttpResponse::NoContent().finish()
 }
 
@@ -198,8 +199,8 @@ async fn get_user(user: UserWrapped) -> Json<User> {
 }
 
 #[get("/v2/user/{id}")]
-async fn get_user_by_id(_user: UserWrapped, id: Path<ID>) -> Result<Json<GenericUser>> {
-    json_response!(api::get_user_stripped(id.0).await)
+async fn get_user_by_id(user: UserWrapped, id: Path<ID>) -> Result<Json<GenericUser>> {
+    json_response!(api::get_user_stripped(&user.0, id.0).await)
 }
 
 #[put("/v2/user/change_username/{name}")]

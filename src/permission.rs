@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display};
 
+/// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
 
+/// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum HubPermission {
     All,
@@ -28,8 +30,10 @@ impl Display for HubPermission {
     }
 }
 
+/// Map of hub permissions to permission settings.
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
+/// Permissions that only apply to channels, override hub permissions.
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum ChannelPermission {
     SendMessage,
@@ -40,6 +44,7 @@ pub enum ChannelPermission {
 }
 
 impl ChannelPermission {
+    /// Gets the equivalent `HubPermission` for a `ChannelPermission`.
     pub fn hub_equivalent(&self) -> HubPermission {
         match self {
             ChannelPermission::SendMessage => HubPermission::SendMessage,
@@ -57,4 +62,5 @@ impl Display for ChannelPermission {
     }
 }
 
+/// Map of channel permissions to permission settings.
 pub type ChannelPermissions = HashMap<ChannelPermission, PermissionSetting>;
