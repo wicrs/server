@@ -464,6 +464,25 @@ action_fns! {
 => (unmute_user, Unmute)
 }
 
+/// Creates a text channel in a hub.
+/// Returns the ID of the new channel if successful.
+///
+/// # Arguments
+///
+/// * `user` - User to check for permission to create the channel.
+/// * `hub_id` - ID of the hub in which the channel should be created.
+/// * `name` - Name for the new channel.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The user does not have permission to create new channels.
+/// * The channel could not be created for any of the reasons outlined by [`Hub::new_channel`].
 pub async fn create_channel<S: Into<String> + Clone>(
     user: &User,
     hub_id: &ID,
@@ -477,12 +496,47 @@ pub async fn create_channel<S: Into<String> + Clone>(
     Ok(channel_id)
 }
 
+/// Gets a channel's information.
+///
+/// # Arguments
+///
+/// * `user` - User that is requesting the information.
+/// * `hub_id` - ID of the hub the channel is in.
+/// * `channel_id` - ID of the channel to get.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The channel does not exist.
 pub async fn get_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result<Channel> {
     user.in_hub(hub_id)?;
     let hub = Hub::load(hub_id).await?;
     Ok(hub.get_channel(&user.id, channel_id)?.clone())
 }
 
+/// Renames a text channel in a hub.
+/// Returns the previous name of the channel if successful.
+///
+/// # Arguments
+///
+/// * `user` - User to check for permission to rename the channel.
+/// * `hub_id` - ID of the hub that has the channel.
+/// * `channel_id` - ID of the channel to be renamed.
+/// * `new_name` - New name for the channel.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The user does not have permission to rename channels.
+/// * The channel could not be renamed for any of the reasons outlined by [`Hub::rename_channel`].
 pub async fn rename_channel<S: Into<String> + Clone>(
     user: &User,
     hub_id: &ID,
@@ -499,6 +553,23 @@ pub async fn rename_channel<S: Into<String> + Clone>(
     Ok(old_name)
 }
 
+/// Deletes a text channel in a hub.
+///
+/// # Arguments
+///
+/// * `user` - User to check for permission to delete channels.
+/// * `hub_id` - ID of the hub that has the channel.
+/// * `channel_id` - ID of the channel to be deleted.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The user does not have permission to delete channels.
+/// * The channel could not be deleted for any of the reasons outlined by [`Hub::delete_channel`].
 pub async fn delete_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result<()> {
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
@@ -506,6 +577,25 @@ pub async fn delete_channel(user: &User, hub_id: &ID, channel_id: &ID) -> Result
     hub.save().await
 }
 
+/// Sends a message in a text channel in a hub.
+/// Returns the ID of the message if successful.
+///
+/// # Arguments
+///
+/// * `user` - User who is sending the message.
+/// * `hub_id` - ID of the hub where the message is being sent.
+/// * `channel_id` - ID of the channel where the message is being sent.
+/// * `message` - The actual message to be sent.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The message is too big (maximum size in bytes is determined by [`crate::MESSAGE_MAX_SIZE`]).
+/// * The message could not be sent for any of the reasons outlined by [`Hub::send_message`].
+/// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn send_message(
     user: &User,
     hub_id: &ID,
@@ -521,6 +611,24 @@ pub async fn send_message(
     }
 }
 
+/// Gets a message from a text channel in a hub.
+///
+/// # Arguments
+///
+/// * `user` - User who is requesting the message.
+/// * `hub_id` - ID of the hub where the message is located.
+/// * `channel_id` - ID of the channel where the message is located.
+/// * `message_id` - ID of the message to retreive.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The channel could not be found in the hub.
+/// * The message could not be found.
+/// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_message(
     user: &User,
     hub_id: &ID,
@@ -537,6 +645,29 @@ pub async fn get_message(
     }
 }
 
+/// Gets a set of messages between two times (both in milliseconds since Unix Epoch).
+/// If successful they are returned in an array. The array is orderd oldest message to newest
+/// unless the `invert` argument is `true` in which case the order is newest to oldest message.
+/// If there are no messages in the given time frame, an empty array is returned.
+///
+/// # Arguments
+///
+/// * `user` - User who is requesting the message.
+/// * `hub_id` - ID of the hub where the message is located.
+/// * `channel_id` - ID of the channel where the message is located.
+/// * `from` - Earliest time a message can be sent to be included in the results.
+/// * `to` - Latest time a message can be sent to be included in the results.
+/// * `invert` - If true the search is done from newest message to oldest message, if false the search is done from oldest message to newest message.
+/// * `max` - The maximum number of messages to retreive.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The channel could not be found in the hub.
+/// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_messages(
     user: &User,
     hub_id: &ID,
@@ -552,6 +683,25 @@ pub async fn get_messages(
     Ok(channel.get_messages(from, to, invert, max).await)
 }
 
+/// Sets a hub wide permission for a hub member.
+///
+/// # Arguments
+///
+/// * `user` - The user who is making the change.
+/// * `hub_id` - The hub in which the change is being made.
+/// * `member_id` - The hub member whose permissions are being changed.
+/// * `permission` - The permission whose setting is being changed.
+/// * `value` - The new setting for the permission.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons.
+///
+/// * The user making the change is not in the hub.
+/// * The user whose permission is being changed is not in the hub.
+/// * The user making the change does not have permission to do so.
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn set_member_hub_permission(
     user: &User,
     hub_id: &ID,
@@ -570,6 +720,26 @@ pub async fn set_member_hub_permission(
     hub.save().await
 }
 
+/// Sets a channel specific permission for a hub member.
+///
+/// # Arguments
+///
+/// * `user` - The user who is making the change.
+/// * `hub_id` - The hub in which the change is being made.
+/// * `member_id` - The hub member whose permissions are being changed.
+/// * `channel_id` - The channel that the change should apply to.
+/// * `permission` - The permission whose setting is being changed.
+/// * `value` - The new setting for the permission.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons.
+///
+/// * The user making the change is not in the hub.
+/// * The user whose permission is being changed is not in the hub.
+/// * The user making the change does not have permission to do so.
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn set_member_channel_permission(
     user: &User,
     hub_id: &ID,
