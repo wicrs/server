@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use thiserror::Error as ThisError;
+use tokio::sync::RwLock;
 
 use crate::{
     config::AuthConfigs, get_system_millis, user::User, ApiError, Result, ID, USER_AGENT_STRING,
@@ -18,7 +19,7 @@ use crate::{
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
-type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>; // HashMap<Hashed User ID, Vec<(Token Expiry Date, Hashed Token)>>
+type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, u128>>>>; // HashMap<Hashed User ID, HashMap<Hashed Token, Token Expiry Date>>
 type LoginSession = (u128, BasicClient); // (Login Start Time, Client)
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>; // HashMap<Login Secret, <LoginSession>>
 
@@ -116,7 +117,7 @@ impl Auth {
                 github_conf.client_id.clone(),
                 github_conf.client_secret.clone(),
             ))),
-            sessions: Arc::new(Mutex::new(Auth::load_tokens())),
+            sessions: Arc::new(RwLock::new(Auth::load_tokens())),
         }
     }
 
@@ -127,7 +128,7 @@ impl Auth {
                 "testing".to_string(),
                 "testing".to_string(),
             ))),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         };
         let account = User {
             id: ID::from_u128(0),
@@ -140,10 +141,12 @@ impl Auth {
         account.save().await.expect("Failed to save test account.");
         let token = "testtoken".to_string();
         let hashed = hash_auth(account.id.clone(), token.clone());
+        let mut map = HashMap::new();
+        map.insert(hashed.1, u128::MAX);
         auth.sessions
-            .lock()
+            .write()
             .await
-            .insert(hashed.0, vec![(u128::MAX, hashed.1)]);
+            .insert(hashed.0, map);
         (auth, account.id, token)
     }
 
@@ -152,7 +155,7 @@ impl Auth {
     /// # Errors
     ///
     /// Returns an error if the data could not be written to the disk.
-    fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<()> {
+    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>> ) -> Result<()> {
         std::fs::write(
             SESSION_FILE,
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
@@ -161,13 +164,13 @@ impl Auth {
     }
 
     /// Loads authentication tokens from disk and remover any that have expired.
-    fn load_tokens() -> HashMap<String, Vec<(u128, String)>> {
+    fn load_tokens() -> HashMap<String, HashMap<String, u128>> {
         if let Ok(read) = std::fs::read_to_string("data/sessions.json") {
-            if let Ok(mut map) = serde_json::from_str::<HashMap<String, Vec<(u128, String)>>>(&read)
+            if let Ok(mut map) = serde_json::from_str::<HashMap<String, HashMap<String, u128>>>(&read)
             {
-                let now = get_system_millis();
+                let mut now = get_system_millis();
                 for account in &mut map {
-                    account.1.retain(|t| t.0 > now);
+                    account.1.retain(|_, v| v > &mut now);
                 }
                 let _save = Auth::save_tokens(&map);
                 return map;
@@ -177,50 +180,43 @@ impl Auth {
     }
 
     /// Checks if a given token and user ID match and are authenticated.
-    pub async fn is_authenticated(manager: Arc<Mutex<Self>>, id: ID, token_str: String) -> bool {
+    pub async fn is_authenticated(manager: Arc<RwLock<Self>>, id: ID, token_str: String) -> bool {
         let sessions_arc;
-        let mut sessions_lock;
-        {
-            let lock = manager.lock().await;
-            sessions_arc = lock.sessions.clone();
-            sessions_lock = sessions_arc.lock().await;
-        }
+        let lock = manager.read().await;
+        sessions_arc = lock.sessions.clone();
+        let sessions_lock = sessions_arc.read().await;
         let hashed = hash_auth(id, token_str.clone());
-        if let Some(auth_tokens) = sessions_lock.get_mut(&hashed.0) {
-            let now = get_system_millis();
-            auth_tokens.retain(|t| t.0 > now);
-            for token in auth_tokens {
-                if token.1 == hashed.1 {
+        if let Some(map) = sessions_lock.get(&hashed.0) {
+            if let Some(expires) = map.get(&hashed.1) {
+                if expires > &get_system_millis() {
                     return true;
                 }
             }
-            false
-        } else {
-            false
         }
+        false
     }
 
     /// Invalidates any tokens that are for the given user ID.
-    pub async fn invalidate_tokens(manager: Arc<Mutex<Self>>, id: ID) {
+    pub async fn invalidate_tokens(manager: Arc<RwLock<Self>>, id: ID) {
         let sessions_arc;
         let mut sessions_lock;
         {
-            let lock = manager.lock().await;
+            let lock = manager.write().await;
             sessions_arc = lock.sessions.clone();
-            sessions_lock = sessions_arc.lock().await;
+            sessions_lock = sessions_arc.write().await;
         }
         sessions_lock.remove(hash_auth(id, String::new()).0.as_str());
         let _save = Auth::save_tokens(&sessions_lock);
     }
 
     /// Start the OAuth login process. Returns a redirect to the given OAuth service's page with the correct parameters.
-    pub async fn start_login(manager: Arc<Mutex<Self>>, service: Service) -> String {
+    pub async fn start_login(manager: Arc<RwLock<Self>>, service: Service) -> String {
         match service {
             Service::GitHub => {
                 let service_arc;
                 let service_lock;
                 {
-                    let lock = manager.lock().await;
+                    let lock = manager.write().await;
                     service_arc = lock.github.clone();
                     service_lock = service_arc.lock().await;
                 }
@@ -232,7 +228,7 @@ impl Auth {
     /// Handles the OAuth follow-up request.
     /// Possible errors ase usually caused by external services failing or behaving in unexpected ways.
     pub async fn handle_oauth(
-        manager: Arc<Mutex<Self>>,
+        manager: Arc<RwLock<Self>>,
         service: Service,
         query: AuthQuery,
     ) -> Result<IDToken> {
@@ -242,7 +238,7 @@ impl Auth {
                 let service_arc;
                 let service_lock;
                 {
-                    let lock = manager.lock().await;
+                    let lock = manager.write().await;
                     service_arc = lock.github.clone();
                     service_lock = service_arc.lock().await;
                 }
@@ -256,7 +252,7 @@ impl Auth {
     /// Finalizes login by adding the user ID + token and expiry time to the session map.
     /// This function will return an error if a new user's data fails to save for any of the reasons outlined in [`User::save`].
     async fn finalize_login(
-        manager: Arc<Mutex<Self>>,
+        manager: Arc<RwLock<Self>>,
         service: Service,
         id: &str,
         expires: u128,
@@ -280,15 +276,17 @@ impl Auth {
             let sessions_arc;
             let mut sessions_lock;
             {
-                let lock = manager.lock().await;
+                let lock = manager.write().await;
                 sessions_arc = lock.sessions.clone();
-                sessions_lock = sessions_arc.lock().await;
+                sessions_lock = sessions_arc.write().await;
             }
             let hashed = hash_auth(id.clone(), token.clone());
             if let Some(tokens) = sessions_lock.get_mut(&hashed.0) {
-                tokens.push((expires, hashed.1))
+                tokens.insert(hashed.1, expires);
             } else {
-                sessions_lock.insert(hashed.0, vec![(expires, hashed.1)]);
+                let mut map = HashMap::new();
+                map.insert(hashed.1, expires);
+                sessions_lock.insert(hashed.0, map);
             }
             let _write = Auth::save_tokens(&sessions_lock);
         }
@@ -395,7 +393,7 @@ impl GitHub {
 
     async fn handle_oauth(
         &self,
-        manager: Arc<Mutex<Auth>>,
+        manager: Arc<RwLock<Auth>>,
         state: String,
         code: String,
         expires: u128,

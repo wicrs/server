@@ -1,6 +1,5 @@
 use std::sync::Arc;
-
-use futures::lock::Mutex;
+use tokio::sync::RwLock;
 use wicrs_server::{auth::Auth, config};
 
 #[allow(unused_imports)]
@@ -12,7 +11,8 @@ pub mod httpapi;
 
 lazy_static! {
     pub static ref CONFIG: config::Config = config::load_config("config.json");
-    static ref AUTH: Arc<Mutex<Auth>> = Arc::new(Mutex::new(Auth::from_config(&CONFIG.auth_services)));
+    static ref AUTH: Arc<RwLock<Auth>> =
+        Arc::new(RwLock::new(Auth::from_config(&CONFIG.auth_services)));
 }
 
 #[actix_web::main]

@@ -189,7 +189,7 @@ async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result
 
 #[post("/v2/invalidate_tokens")]
 async fn invalidate_tokens(user: UserWrapped) -> HttpResponse {
-    api::invalidate_tokens(AUTH.clone(), &user.0).await;
+    api::invalidate_tokens(AUTH.clone(), user.0).await;
     HttpResponse::NoContent().finish()
 }
 

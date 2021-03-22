@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::lock::Mutex;
+use tokio::sync::RwLock;
 
 use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
@@ -16,20 +16,39 @@ use crate::{
 /// Start the OAuth login process. Returns a redirect to the given OAuth service's page with the correct parameters.
 ///
 /// # Arguments
-pub async fn start_login(auth_manager: Arc<Mutex<Auth>>, service: Service) -> String {
+///
+/// * `auth_manager` - The Authentication manager for the current server instance, wrapped in Arc<Lock>> so that it can be used by multiple threads.
+/// * `service` - The OAuth service to use for this login attempt.
+pub async fn start_login(auth_manager: Arc<RwLock<Auth>>, service: Service) -> String {
     Auth::start_login(auth_manager, service).await
 }
 
 /// Completes the OAuth login request.
+///
+/// # Arguments
+///
+/// * `auth_manager` - The Authentication manager for the current server instance, wrapped in Arc<RwLock>> so that it can be used by multiple threads.
+/// * `service` - The OAuth service used in the [`start_login`] step.
+/// * `query` - The OAuth query containing the `state` string and the OAuth `code` as well as an optional expiry time.
+///
+/// # Errors
+///
+/// This may fail for any of the reasons outlined in [`Auth::handle_oauth`].
 pub async fn complete_login(
-    auth_manager: Arc<Mutex<Auth>>,
+    auth_manager: Arc<RwLock<Auth>>,
     service: Service,
     query: AuthQuery,
 ) -> Result<IDToken> {
     Auth::handle_oauth(auth_manager, service, query).await
 }
 
-pub async fn invalidate_tokens(auth_manager: Arc<Mutex<Auth>>, user: &User) {
+/// Invalidates all of a user's authentication token sessions.
+///
+/// # Arguments
+///
+/// * `auth_manager` - The Authentication manager for the current server instance, wrapped in Arc<RwLock>> so that it can be used by multiple threads.
+/// * `user` - User whos tokens should be invalidated.
+pub async fn invalidate_tokens(auth_manager: Arc<RwLock<Auth>>, user: User) {
     Auth::invalidate_tokens(auth_manager, user.id).await
 }
 
