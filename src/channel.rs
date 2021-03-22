@@ -51,6 +51,14 @@ impl Channel {
     }
 
     /// Adds a message to the channel, writes it to the file corresponding to the day the message was sent, one file per day of messages, only created if a message is sent that day.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * The message file does not exist and could not be created.
+    /// * Was unable to write to the message file.
     pub async fn add_message(&mut self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
         let mut file = OpenOptions::new()

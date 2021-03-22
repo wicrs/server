@@ -11,7 +11,9 @@ use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use thiserror::Error as ThisError;
 
-use crate::{ApiError, ID, Result, USER_AGENT_STRING, config::AuthConfigs, get_system_millis, user::User};
+use crate::{
+    config::AuthConfigs, get_system_millis, user::User, ApiError, Result, ID, USER_AGENT_STRING,
+};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -19,6 +21,9 @@ use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, T
 type SessionMap = Arc<Mutex<HashMap<String, Vec<(u128, String)>>>>; // HashMap<Hashed User ID, Vec<(Token Expiry Date, Hashed Token)>>
 type LoginSession = (u128, BasicClient); // (Login Start Time, Client)
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>; // HashMap<Login Secret, <LoginSession>>
+
+/// Relative path to the file where sessions (user ID, auth token and expiry time triples) are stored.
+pub const SESSION_FILE: &str = "data/sessions.json";
 
 /// Represents supported OAuth services.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -56,14 +61,6 @@ impl FromStr for Service {
     }
 }
 
-/// Authentication handler.
-pub struct Auth {
-    /// GitHub specific OAuth handlers.
-    github: Arc<Mutex<GitHub>>,
-    /// List of authenticated session tokens and their corresponding user IDs, all values are hashed.
-    sessions: SessionMap,
-}
-
 /// Errors related to authentication.
 #[derive(Debug, PartialEq, Eq, Clone, ThisError)]
 pub enum AuthError {
@@ -96,6 +93,14 @@ pub struct IDToken {
     id: ID,
     /// Authentication token.
     token: String,
+}
+
+/// Authentication handler.
+pub struct Auth {
+    /// GitHub specific OAuth handlers.
+    github: Arc<Mutex<GitHub>>,
+    /// List of authenticated session tokens and their corresponding user IDs, all values are hashed.
+    sessions: SessionMap,
 }
 
 impl Auth {
@@ -143,9 +148,13 @@ impl Auth {
     }
 
     /// Saves current authenticated token sessions to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the data could not be written to the disk.
     fn save_tokens(sessions: &HashMap<String, Vec<(u128, String)>>) -> Result<()> {
         std::fs::write(
-            "data/sessions.json",
+            SESSION_FILE,
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
         )
         .map_err(|e| e.into())
@@ -221,6 +230,7 @@ impl Auth {
     }
 
     /// Handles the OAuth follow-up request.
+    /// Possible errors ase usually caused by external services failing or behaving in unexpected ways.
     pub async fn handle_oauth(
         manager: Arc<Mutex<Self>>,
         service: Service,
@@ -244,6 +254,7 @@ impl Auth {
     }
 
     /// Finalizes login by adding the user ID + token and expiry time to the session map.
+    /// This function will return an error if a new user's data fails to save for any of the reasons outlined in [`User::save`].
     async fn finalize_login(
         manager: Arc<Mutex<Self>>,
         service: Service,

@@ -32,6 +32,7 @@ pub struct AuthConfigs {
 }
 
 /// Load the configuration from `config.json`.
+/// This will cause the program to shutdown if the config file does not exist or if the data it contains is invalid.
 pub fn load_config(path: &str) -> Config {
     if let Ok(read) = std::fs::read_to_string(path) {
         if let Ok(config) = serde_json::from_str::<Config>(&read) {
