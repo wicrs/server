@@ -13,21 +13,32 @@ use crate::{
     ApiError, DataError, Result, ID,
 };
 
+/// Relative path of the folder in which Hub information files (`hub.json`) files are stored.
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
+/// Relative path of the folder in which Hub data files are stored (channel directories and messages).
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
+/// Represents a member of a hub that maps to a user.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
+    /// ID of the user that the hub member represents.
     pub user: ID,
+    /// Time in milliseconds since Unix Epoch that the user became a member of the hub.
     pub joined: u128,
+    /// ID of the hub that this hub member is in.
     pub hub: ID,
+    /// Name used by the hub member.
     pub nickname: String,
+    /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
+    /// Hub permission settings that the hub member has.
     pub hub_permissions: HubPermissions,
+    /// Mapping of channel permission settings the hub member has to the channel they apply to.
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
 impl HubMember {
+    /// Creates a new hub member based on a user and the ID of the hub they are part of.
     pub fn new(user: &User, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
@@ -40,12 +51,14 @@ impl HubMember {
         }
     }
 
+    /// Changes the nickname of the hub member while checking that it adheres to the rules set by `crate::is_valid_name`.
     pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
         check_name_validity(&nickname)?;
         self.nickname = nickname;
         Ok(())
     }
 
+    /// Adds the hub member to a permission group.
     pub fn join_group(&mut self, group: &mut PermissionGroup) {
         if !self.groups.contains(&group.id) {
             self.groups.push(group.id.clone());
@@ -55,6 +68,7 @@ impl HubMember {
         }
     }
 
+    /// Removes the hub member from a permission group.
     pub fn leave_group(&mut self, group: &mut PermissionGroup) {
         if let Some(index) = self.groups.par_iter().position_any(|id| id == &group.id) {
             self.groups.remove(index);
@@ -64,10 +78,12 @@ impl HubMember {
         }
     }
 
+    /// Sets a hub permission for the hub member.
     pub fn set_permission(&mut self, permission: HubPermission, value: PermissionSetting) {
         self.hub_permissions.insert(permission, value);
     }
 
+    /// Sets a channel permission for the hub member in the specified channel.
     pub fn set_channel_permission(
         &mut self,
         channel: &ID,
@@ -81,6 +97,7 @@ impl HubMember {
         channel_permissions.insert(permission, value);
     }
 
+    /// Checks if the hub member has the `HubPermission::All` permission or if they inherit it from a permission group they are in.
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
             if value == &Some(true) {
@@ -90,11 +107,12 @@ impl HubMember {
         false
     }
 
+    /// Checks if the hub member has the given hub permission or if they inherit it from a permission group they are in.
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
-        if hub.owner == self.user {
+        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() {
+        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(value) = self.hub_permissions.get(&permission) {
@@ -119,16 +137,17 @@ impl HubMember {
         false
     }
 
+    /// Checks if the hub member has the given channel permission in the given channel or if they inherit it from a permission group they are in.
     pub fn has_channel_permission(
         &self,
         channel: &ID,
         permission: &ChannelPermission,
         hub: &Hub,
     ) -> bool {
-        if hub.owner == self.user {
+        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() {
+        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(channel) = self.channel_permissions.get(channel) {
@@ -165,17 +184,25 @@ impl HubMember {
     }
 }
 
+/// Represents a set of permissions that can be easily given to any hub member.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PermissionGroup {
+    /// ID of the group.
     pub id: ID,
+    /// Name of the group.
     pub name: String,
+    /// Array of the IDs of hub members who are members of the group.
     pub members: Vec<ID>,
+    /// Hub permission settings that the group has.
     pub hub_permissions: HubPermissions,
+    /// Mapping of channel permission settings the group has to the channel they apply to.
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
+    /// Time in milliseconds since Unix Epoch that the group was created.
     pub created: u128,
 }
 
 impl PermissionGroup {
+    /// Creates a new permission group given a name and an ID.
     pub fn new(name: String, id: ID) -> Self {
         Self {
             created: get_system_millis(),
@@ -187,18 +214,22 @@ impl PermissionGroup {
         }
     }
 
+    /// Adds a hub member to the group, maps to `HubMember::join_group`.
     pub fn add_member(&mut self, user: &mut HubMember) {
         user.join_group(self)
     }
 
+    /// Removes a hub member from the group, maps to `HubMember::leave_group`.
     pub fn remove_member(&mut self, user: &mut HubMember) {
         user.leave_group(self)
     }
 
+    /// Changes the setting of a hub permission for the group.
     pub fn set_permission(&mut self, permission: HubPermission, value: PermissionSetting) {
         self.hub_permissions.insert(permission, value);
     }
 
+    /// Changes the setting of a channel permission for a specific channel for the group.
     pub fn set_channel_permission(
         &mut self,
         channel_id: ID,
@@ -212,6 +243,7 @@ impl PermissionGroup {
         channel_permissions.insert(permission, value);
     }
 
+    /// Checks if the group has the `All` permission.
     pub fn has_all_permissions(&self) -> bool {
         if let Some(value) = self.hub_permissions.get(&HubPermission::All) {
             if value == &Some(true) {
@@ -221,6 +253,7 @@ impl PermissionGroup {
         false
     }
 
+    /// Checks if the group has a permission.
     pub fn has_permission(&self, permission: &HubPermission) -> bool {
         if self.has_all_permissions() {
             return true;
@@ -233,6 +266,7 @@ impl PermissionGroup {
         return false;
     }
 
+    /// Checks if the group has a permission in a specific channel.
     pub fn has_channel_permission(&self, channel_id: &ID, permission: &ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
@@ -257,17 +291,28 @@ impl PermissionGroup {
     }
 }
 
+/// Represents a group of users, permission groups and channels.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hub {
+    /// Map of channels to their IDs.
     pub channels: HashMap<ID, Channel>,
+    /// Map of hub members to their corresponding user's IDs.
     pub members: HashMap<ID, HubMember>,
+    /// List of IDs of all users that are banned from the hub.
     pub bans: HashSet<ID>,
+    /// List of IDs of all the users who cannot send **any** messages in the hub.
     pub mutes: HashSet<ID>,
+    /// ID of the user who owns the hub, also the creator.
     pub owner: ID,
+    /// Map of permission groups to their IDs.
     pub groups: HashMap<ID, PermissionGroup>,
+    /// ID of the default permission group to be given to new hub members, for now this is always the "everyone" group.
     pub default_group: ID,
+    /// Name of the hub.
     pub name: String,
+    /// ID of the hub.
     pub id: ID,
+    /// Time the hub was created in milliseconds since Unix Epoch.
     pub created: u128,
 }
 
