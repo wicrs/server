@@ -110,10 +110,10 @@ impl Channel {
     ///
     /// # Arguments
     ///
-    /// - `from` earliest send time a message can have to be included.
-    /// - `to` latest send time a message can have to be included.
-    /// - `invert` if true messages are returned in order of newest to oldest if false, oldest to newest, search is also done in that order.
-    /// - `max` maximum number of messages to return.
+    /// * `from` - The earliest send time a message can have to be included.
+    /// * `to` - The latest send time a message can have to be included.
+    /// * `invert` - If true messages are returned in order of newest to oldest if false, oldest to newest, search is also done in that order.
+    /// * `max` - The maximum number of messages to return.
     pub async fn get_messages(
         &self,
         from: u128,

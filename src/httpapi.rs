@@ -199,8 +199,8 @@ async fn get_user(user: UserWrapped) -> Json<User> {
 }
 
 #[get("/v2/user/{id}")]
-async fn get_user_by_id(_user: UserWrapped, id: Path<ID>) -> Result<Json<GenericUser>> {
-    json_response!(api::get_user_stripped(id.0).await)
+async fn get_user_by_id(user: UserWrapped, id: Path<ID>) -> Result<Json<GenericUser>> {
+    json_response!(api::get_user_stripped(&user.0, id.0).await)
 }
 
 #[put("/v2/user/change_username/{name}")]

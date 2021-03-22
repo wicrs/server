@@ -46,4 +46,4 @@ Once this is done run the server by executing `cargo +nightly run` or `cargo +ni
 
 ## Developing and Contributing
 
-To contribute fork the GitHub repo and make your changes, for changes to be accepted your fork must pass all of the tests, to run the tests go to the root directory of the project and run `cargo +nightly test`. If you add any features make sure to add tests to ensure they work.
+To contribute fork the GitHub repo and make your changes, for changes to be accepted your fork must pass all of the tests, to run the tests go to the root directory of the project and run `cargo +nightly test`. If you add any features make sure to add tests to ensure they work, it is also important that you add documentation for any features you add and explain what they are for, if your PR addresses an issue, you probably do not need to explain your changes.

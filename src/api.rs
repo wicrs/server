@@ -13,10 +13,14 @@ use crate::{
     ApiError, Result, ID,
 };
 
+/// Start the OAuth login process. Returns a redirect to the given OAuth service's page with the correct parameters.
+///
+/// # Arguments
 pub async fn start_login(auth_manager: Arc<Mutex<Auth>>, service: Service) -> String {
     Auth::start_login(auth_manager, service).await
 }
 
+/// Completes the OAuth login request.
 pub async fn complete_login(
     auth_manager: Arc<Mutex<Auth>>,
     service: Service,
@@ -29,10 +33,10 @@ pub async fn invalidate_tokens(auth_manager: Arc<Mutex<Auth>>, user: &User) {
     Auth::invalidate_tokens(auth_manager, user.id).await
 }
 
-pub async fn get_user_stripped(id: ID) -> Result<GenericUser> {
+pub async fn get_user_stripped(user: &User, id: ID) -> Result<GenericUser> {
     User::load(&id)
         .await
-        .map(|u| User::to_generic(&u))
+        .map(|u| User::to_generic(&u, &user.id))
         .map_err(|_| ApiError::UserNotFound)
 }
 
@@ -221,9 +225,9 @@ pub async fn rename_channel<S: Into<String> + Clone>(
     check_name_validity(&new_name.clone().into())?;
     user.in_hub(hub_id)?;
     let mut hub = Hub::load(hub_id).await?;
-    let channel = hub.get_channel_mut(&user.id, channel_id)?;
-    let old_name = channel.name.clone();
-    channel.name = new_name.into();
+    let old_name = hub
+        .rename_channel(&user.id, channel_id, new_name.into())
+        .await?;
     hub.save().await?;
     Ok(old_name)
 }
