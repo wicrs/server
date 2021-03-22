@@ -144,6 +144,7 @@ pub fn is_valid_name(name: &str) -> bool {
 }
 
 /// Wraps `is_valid_name` to return a `Result<()>`.
+/// Returns an error if the given name is too long, too short, or contains characters not given in [`NAME_ALLOWED_CHARS`].
 pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
