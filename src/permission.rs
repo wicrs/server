@@ -44,6 +44,7 @@ pub enum ChannelPermission {
 }
 
 impl ChannelPermission {
+    /// Gets the equivalent `HubPermission` for a `ChannelPermission`.
     pub fn hub_equivalent(&self) -> HubPermission {
         match self {
             ChannelPermission::SendMessage => HubPermission::SendMessage,
