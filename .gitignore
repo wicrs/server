@@ -5,3 +5,4 @@
 /.vscode
 /.idea
 /send_message_wrk.lua
+/Cargo.lock

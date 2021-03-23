@@ -92,9 +92,9 @@ impl From<&AuthError> for StatusCode {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct IDToken {
     /// ID of a user.
-    id: ID,
+    pub id: ID,
     /// Authentication token.
-    token: String,
+    pub token: String,
 }
 
 /// Authentication handler.
