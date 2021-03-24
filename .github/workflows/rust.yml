@@ -23,8 +23,6 @@ jobs:
         toolchain: nightly
         override: true
     - uses: actions/checkout@v2
-    - name: Check
-      run: cargo check
     - name: Build
       run: cargo build
     - name: Test
