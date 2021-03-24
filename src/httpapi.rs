@@ -88,7 +88,7 @@ impl ResponseError for ApiErrorWrapped {
     fn error_response(&self) -> HttpResponse {
         let mut resp = HttpResponse::new(self.status_code());
         let mut buf = actix_web::web::BytesMut::new();
-        let _ = buf.write_fmt(format_args!("{}", self.0));
+        let _ = buf.write_fmt(format_args!("{}", serde_json::json!(self.0)));
         resp.headers_mut().insert(
             reqwest::header::CONTENT_TYPE,
             actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),

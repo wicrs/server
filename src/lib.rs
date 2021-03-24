@@ -5,6 +5,8 @@ use prelude::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize, Serializer};
+
 use thiserror::Error;
 
 use uuid::Uuid;
@@ -25,7 +27,11 @@ pub mod permission;
 pub mod user;
 
 /// Errors related to data processing.
-#[derive(Debug, PartialEq, Eq, Clone, Error)]
+#[derive(Debug, Error, Serialize, Deserialize)]
+#[serde(rename_all(
+    serialize = "SCREAMING_SNAKE_CASE",
+    deserialize = "SCREAMING_SNAKE_CASE"
+))]
 pub enum DataError {
     #[error("server was unable to write new data to disk")]
     WriteFile,
@@ -41,8 +47,23 @@ pub enum DataError {
     DeleteFailed,
 }
 
+fn io_error_serialize<S>(_err: &std::io::Error, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    ApiError::Other(
+        "IO Error".to_string(),
+        StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+    )
+    .serialize(s)
+}
+
 /// General errors that can occur when using the WICRS API.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Serialize, Deserialize)]
+#[serde(rename_all(
+    serialize = "SCREAMING_SNAKE_CASE",
+    deserialize = "SCREAMING_SNAKE_CASE"
+))]
 pub enum ApiError {
     #[error("user is muted")]
     Muted,
@@ -77,12 +98,14 @@ pub enum ApiError {
     #[error("unable to parse message, only UTF-8 is supported")]
     InvalidMessage,
     #[error("{0}")]
-    Other(String, StatusCode),
+    Other(String, u16),
     #[error(transparent)]
     Auth(#[from] auth::AuthError),
     #[error(transparent)]
     Data(#[from] DataError),
     #[error(transparent)]
+    #[serde(serialize_with = "io_error_serialize")]
+    #[serde(skip_deserializing)]
     Io(#[from] std::io::Error),
 }
 
@@ -105,7 +128,9 @@ impl From<&ApiError> for StatusCode {
             ApiError::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
             ApiError::MessageTooBig => Self::BAD_REQUEST,
             ApiError::InvalidMessage => Self::BAD_REQUEST,
-            ApiError::Other(_, code) => code.clone(),
+            ApiError::Other(_, code) => {
+                Self::from_u16(code.clone()).unwrap_or(Self::INTERNAL_SERVER_ERROR)
+            }
             ApiError::Auth(error) => error.into(),
             ApiError::Data(_) => Self::INTERNAL_SERVER_ERROR,
             ApiError::Io(_) => Self::INTERNAL_SERVER_ERROR,
@@ -147,7 +172,7 @@ pub fn is_valid_name(name: &str) -> bool {
 }
 
 /// Wraps `is_valid_name` to return a `Result<()>`.
-/// 
+///
 /// # Errors
 ///
 /// This function returns an error for any of the following reasons:

@@ -10,7 +10,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Sha3_256};
-use thiserror::Error as ThisError;
+use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -64,7 +64,11 @@ pub struct AuthQuery {
 }
 
 /// Errors related to authentication.
-#[derive(Debug, PartialEq, Eq, Clone, ThisError)]
+#[derive(Debug, Error, Serialize, Deserialize)]
+#[serde(rename_all(
+    serialize = "SCREAMING_SNAKE_CASE",
+    deserialize = "SCREAMING_SNAKE_CASE"
+))]
 pub enum AuthError {
     #[error("oauth service failed to respond")]
     NoResponse,
@@ -75,6 +79,7 @@ pub enum AuthError {
     #[error("invalid token")]
     InvalidToken,
     #[error("malformed ID Token string, should be ID^Token")]
+    #[serde(rename = "MALFORMED_ID_TOKEN")]
     MalformedIDToken,
 }
 
@@ -412,10 +417,7 @@ impl GitHub {
                 Err(error) => Err(AuthError::OauthRequest(format!("{:?}", error)).into()),
             }
         } else {
-            Err(ApiError::Other(
-                "Invalid session.".to_string(),
-                StatusCode::BAD_REQUEST,
-            ))
+            Err(ApiError::Other("Invalid session.".to_string(), 400))
         }
     }
 }
