@@ -242,7 +242,7 @@ async fn hub_member_is_muted(user: UserWrapped, path: Path<(ID, ID)>) -> Result<
     string_response!(api::user_muted(&user.0, &path.0 .0, &path.1).await)
 }
 
-#[get("/v2/hub/{hub_id}/{user_id}")]
+#[get("/v2/member/{hub_id}/{user_id}")]
 async fn get_hub_member(user: UserWrapped, path: Path<(ID, ID)>) -> Result<Json<HubMember>> {
     json_response!(api::get_hub_member(&user.0, &path.0 .0, &path.1).await)
 }
@@ -348,7 +348,7 @@ impl GetMessagesQuery {
     }
 }
 
-#[get("/v2/message/{hub_id}/{channel_id}/get")]
+#[get("/v2/message/{hub_id}/{channel_id}")]
 async fn get_messages(
     user: UserWrapped,
     path: Path<(ID, ID)>,
@@ -373,7 +373,7 @@ struct PermissionSettingQuery {
     pub setting: PermissionSetting,
 }
 
-#[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{hub_permission}")]
+#[put("/v2/member/set_hub_permission/{hub_id}/{member_id}/{hub_permission}")]
 async fn set_user_hub_permission(
     user: UserWrapped,
     path: Path<(ID, ID, HubPermission)>,
@@ -384,7 +384,7 @@ async fn set_user_hub_permission(
     )
 }
 
-#[put("/v2/member/{member_id}/set_hub_permission/{hub_id}/{channel_id}/{channel_permission}")]
+#[put("/v2/member/set_hub_permission/{hub_id}/{channel_id}/{member_id}/{channel_permission}")]
 async fn set_user_channel_permission(
     user: UserWrapped,
     path: Path<(ID, ID, ID, ChannelPermission)>,

@@ -1,7 +1,7 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 #![feature(in_band_lifetimes)]
 
-use prelude::{ChannelPermission, HubPermission};
+use permission::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -209,28 +209,6 @@ pub type ID = Uuid;
 /// Generates a new random ID.
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
-}
-
-/// Re-export important types, functions and constants.
-pub mod prelude {
-    pub use crate::api::*;
-    pub use crate::auth::{IDToken, Service};
-    pub use crate::channel::{Channel, Message};
-    pub use crate::check_name_validity;
-    pub use crate::hub::{Hub, HubMember, PermissionGroup};
-    pub use crate::is_valid_name;
-    pub use crate::new_id;
-    pub use crate::permission::{
-        ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
-    };
-    pub use crate::user::{get_id, GenericUser, User};
-    pub use crate::ApiError;
-    pub use crate::Result;
-    pub use crate::ID;
-    pub use crate::MAX_NAME_LENGTH;
-    pub use crate::MESSAGE_MAX_SIZE;
-    pub use crate::NAME_ALLOWED_CHARS;
-    pub use crate::USER_AGENT_STRING;
 }
 
 #[cfg(test)]
