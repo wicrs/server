@@ -306,7 +306,7 @@ async fn rename_channel(user: UserWrapped, path: Path<(ID, ID, String)>) -> Resu
         .or_else(|e| Err(ApiErrorWrapped(e)))
 }
 
-#[delete("/v2/channel/delete/{hub_id}/{channel_id}")]
+#[delete("/v2/channel/{hub_id}/{channel_id}")]
 async fn delete_channel(user: UserWrapped, path: Path<(ID, ID)>) -> Result<HttpResponse> {
     no_content!(api::delete_channel(&user.0, &path.0 .0, &path.1).await)
 }
