@@ -1,5 +1,6 @@
 use std::fmt::{Display, Write};
 
+use actix_web_actors::ws;
 use serde::Deserialize;
 
 use wicrs_server::{
@@ -15,13 +16,7 @@ use wicrs_server::{
 
 use crate::AUTH;
 
-use actix_web::{
-    delete, get,
-    http::header,
-    post, put,
-    web::{Bytes, Json, Path, Query},
-    App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
-};
+use actix_web::{App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError, delete, get, http::header, post, put, web::{self, Bytes, Json, Path, Query}};
 use futures::future::{err, ok, Ready};
 
 /// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
@@ -55,6 +50,11 @@ pub async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(rename_channel)
             .service(delete_channel)
             .service(send_message)
+            .service(get_message)
+            .service(get_messages)
+            .service(set_user_hub_permission)
+            .service(set_user_channel_permission)
+            .service(web::resource("/v2/websocket").route(web::get().to(get_websocket)))
     })
     .bind(bind_address)?
     .run()
@@ -401,4 +401,11 @@ async fn set_user_channel_permission(
         )
         .await
     )
+}
+
+async fn get_websocket(r: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
+    println!("{:?}", r);
+    let res = ws::start(crate::websocket::ChatSocket::new(), &r, stream);
+    println!("{:?}", res);
+    res
 }
