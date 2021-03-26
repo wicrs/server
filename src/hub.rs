@@ -109,10 +109,12 @@ impl HubMember {
 
     /// Checks if the hub member has the given hub permission or if they inherit it from a permission group they are in.
     pub fn has_permission(&self, permission: HubPermission, hub: &Hub) -> bool {
-        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
+        if hub.owner == self.user {
+            // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
+        if self.has_all_permissions() {
+            // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(value) = self.hub_permissions.get(&permission) {
@@ -144,10 +146,12 @@ impl HubMember {
         permission: &ChannelPermission,
         hub: &Hub,
     ) -> bool {
-        if hub.owner == self.user { // If the user is the owner of the hub they are all powerful.
+        if hub.owner == self.user {
+            // If the user is the owner of the hub they are all powerful.
             return true;
         }
-        if self.has_all_permissions() { // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
+        if self.has_all_permissions() {
+            // If the user has the `All` hub permission we do not need to check individual permissions, even for channels.
             return true;
         }
         if let Some(channel) = self.channel_permissions.get(channel) {

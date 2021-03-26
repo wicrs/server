@@ -64,7 +64,10 @@ impl FromStr for Commands {
                     Err(())
                 }
             }
-            s => {dbg!(s); Err(())},
+            s => {
+                dbg!(s);
+                Err(())
+            }
         }
     }
 }

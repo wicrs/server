@@ -160,7 +160,8 @@ impl Channel {
                             .filter_map(|l| {
                                 if let Some(created_str) = l.splitn(4, ',').skip(2).next() {
                                     if let Ok(created) = u128::from_str_radix(created_str, 16) {
-                                        if created >= from && created <= to { // Check that the message was created within the given `to` and `from` times.
+                                        if created >= from && created <= to {
+                                            // Check that the message was created within the given `to` and `from` times.
                                             if let Ok(message) = l.parse::<Message>() {
                                                 return Some(message);
                                             }

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Configuration object for WICRS Server.
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    /// Authentication services 
+    /// Authentication services
     pub auth_services: AuthConfigs,
     /// Address to listen on for HTTP requests. (`host:port`)
     pub address: String,

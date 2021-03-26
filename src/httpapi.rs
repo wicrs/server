@@ -16,7 +16,13 @@ use wicrs_server::{
 
 use crate::AUTH;
 
-use actix_web::{App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError, delete, get, http::header, post, put, web::{self, Bytes, Json, Path, Query}};
+use actix_web::{
+    delete, get,
+    http::header,
+    post, put,
+    web::{self, Bytes, Json, Path, Query},
+    App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
+};
 use futures::future::{err, ok, Ready};
 
 /// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
@@ -403,7 +409,10 @@ async fn set_user_channel_permission(
     )
 }
 
-async fn get_websocket(r: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
+async fn get_websocket(
+    r: HttpRequest,
+    stream: web::Payload,
+) -> Result<HttpResponse, actix_web::Error> {
     println!("{:?}", r);
     let res = ws::start(crate::websocket::ChatSocket::new(), &r, stream);
     println!("{:?}", res);
