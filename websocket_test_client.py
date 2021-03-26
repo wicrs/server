@@ -9,10 +9,15 @@ import aiohttp
 
 
 def start_client(loop, url):
-    name = input('Please enter your name: ')
+    auth = input('Enter your authentication details (ID:Token): ')
 
     # send request
     ws = yield from aiohttp.ClientSession().ws_connect(url, autoclose=False, autoping=False)
+
+    asyncio.create_task(ws.send_str('aut ' + auth))
+
+    hub_channel = input('Enter the ID of the hub and channel messages should be sent in (hub_id:channel_id): ')
+    asyncio.create_task(ws.send_str('sel ' + hub_channel))
 
     # input reader
     def stdin_callback():
@@ -20,7 +25,7 @@ def start_client(loop, url):
         if not line:
             loop.stop()
         else:
-            asyncio.create_task(ws.send_str(name + ': ' + line))
+            asyncio.create_task(ws.send_str('msg ' + line))
     loop.add_reader(sys.stdin.fileno(), stdin_callback)
 
     @asyncio.coroutine
