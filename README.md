@@ -32,13 +32,16 @@ Here is an example of what the contents of `config.json` should be:
             "client_secret": "$GITHUB_CLIENT_SECRET"
         }
     },
-    "address": "127.0.0.1:8080",
-    "show_version": true
+    "show_version": true,
+    "ws_client_timeout": 10000,
+    "ws_hb_interval": 1000
 }
 ```
 
 Make sure to replace `$GITHUB_CLIENT_ID` with the client ID and `$GITHUB_CLIENT_SECRET` with the client secret you got when you created the GitHub OAuth application.
 `address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`).
+The `ws_client_timeout` configuration option determines how long (in milliseconds) to wait before a client using websockets should be disconnected after their last hearbeat ping.
+The `ws_hb_interval` configuration option determines the interval between heartbeat pings sent to the client in milliseconds.
 
 Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
 

@@ -64,10 +64,7 @@ impl FromStr for Commands {
                     Err(())
                 }
             }
-            s => {
-                dbg!(s);
-                Err(())
-            }
+            _ => Err(()),
         }
     }
 }
@@ -110,7 +107,6 @@ impl ChatSocket {
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        println!("WS: {:?}", msg);
         match msg {
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
@@ -132,7 +128,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                                     token,
                                 )) {
                                     self.user = Some(id);
-                                    println!("auth done");
                                     ctx.text("AUTH_SUCCESS");
                                 } else {
                                     ctx.text("AUTH_FAILED");
