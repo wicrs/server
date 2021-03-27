@@ -1,11 +1,13 @@
 use std::{fmt::Display, str::FromStr, time::Instant};
 
-use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
+use actix::{Actor, ActorContext, AsyncContext, Message, StreamHandler};
 use actix_web_actors::ws;
-use wicrs_server::{auth::Auth, hub::Hub, ID};
+use wicrs_server::{api, auth::Auth, hub::Hub, ID};
 
 use crate::{CLIENT_TIMEOUT, HEARTBEAT_INTERVAL};
 
+#[derive(Message)]
+#[rtype(result = "()")]
 pub enum Commands {
     Authenticate(ID, String),
     SendMessage(String),
@@ -31,7 +33,7 @@ impl FromStr for Commands {
         match s.get(0..3) {
             Some("aut") => {
                 if let Some(id_token) = s.strip_prefix("aut ") {
-                    let mut split  = id_token.split(':');
+                    let mut split = id_token.split(':');
                     if let (Some(id), Some(token)) = (split.next(), split.next()) {
                         Ok(Self::Authenticate(
                             ID::from_str(id).map_err(|_| ())?,
@@ -53,7 +55,7 @@ impl FromStr for Commands {
             }
             Some("sel") => {
                 if let Some(hub_channel) = s.strip_prefix("sel ") {
-                    let mut split  = hub_channel.split(':');
+                    let mut split = hub_channel.split(':');
                     if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
                         Ok(Self::SelectLocation(
                             ID::from_str(hub).map_err(|_| ())?,
@@ -140,22 +142,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                         Commands::SendMessage(message) => {
                             if let Some(user) = &self.user {
                                 if let Some((hub, channel)) = &self.send_loc {
-                                    if message.as_bytes().len() < wicrs_server::MESSAGE_MAX_SIZE {
-                                        futures::executor::block_on(async move {
-                                            if let Ok(mut hub) = Hub::load(hub).await {
-                                                if let Err(err) =
-                                                    hub.send_message(user, channel, message).await
-                                                {
-                                                    ctx.text(serde_json::json!(err).to_string());
-                                                } else {
-                                                    ctx.text("SEND_SUCCESS");
-                                                }
-                                            } else {
-                                                ctx.text("HUB_NOT_FOUND");
-                                            }
-                                        })
+                                    if let Err(error) = futures::executor::block_on(api::send_message(
+                                        user, hub, channel, message,
+                                    )) {
+                                        
                                     } else {
-                                        ctx.text("MESSAGE_TOO_BIG");
+                                        ctx.text("SUCCESS")
                                     }
                                 } else {
                                     ctx.text("LOCATION_NOT_SELECTED");

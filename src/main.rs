@@ -10,6 +10,8 @@ extern crate lazy_static;
 pub mod httpapi;
 /// Definition of the WebSocket API.
 pub mod websocket;
+/// WICRS Server implementation that accepts commands.
+pub mod server;
 
 lazy_static! {
     pub static ref CONFIG: config::Config = config::load_config("config.json");
