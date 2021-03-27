@@ -31,7 +31,8 @@ impl FromStr for Commands {
         match s.get(0..3) {
             Some("aut") => {
                 if let Some(id_token) = s.strip_prefix("aut ") {
-                    if let Some((id, token)) = id_token.split_once(':') {
+                    let mut split  = id_token.split(':');
+                    if let (Some(id), Some(token)) = (split.next(), split.next()) {
                         Ok(Self::Authenticate(
                             ID::from_str(id).map_err(|_| ())?,
                             token.to_string(),
@@ -52,7 +53,8 @@ impl FromStr for Commands {
             }
             Some("sel") => {
                 if let Some(hub_channel) = s.strip_prefix("sel ") {
-                    if let Some((hub, channel)) = hub_channel.split_once(':') {
+                    let mut split  = hub_channel.split(':');
+                    if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
                         Ok(Self::SelectLocation(
                             ID::from_str(hub).map_err(|_| ())?,
                             ID::from_str(channel).map_err(|_| ())?,

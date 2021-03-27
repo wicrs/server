@@ -114,11 +114,10 @@ impl FromRequest for UserWrapped {
         let result = futures::executor::block_on(async {
             if let Some(header) = request.headers().get(header::AUTHORIZATION) {
                 if let Ok(header_str) = header.to_str() {
-                    if let Some(split) = header_str.split_once(':') {
-                        if let Ok(id) = ID::parse_str(split.0) {
-                            return if Auth::is_authenticated(AUTH.clone(), id, split.1.to_string())
-                                .await
-                            {
+                    let mut split = header_str.split(':');
+                    if let (Some(id), Some(token)) = (split.next(), split.next()) {
+                        if let Ok(id) = ID::parse_str(id) {
+                            return if Auth::is_authenticated(AUTH.clone(), id, token.into()).await {
                                 if let Ok(user) = User::load(&id).await {
                                     ok(UserWrapped(user))
                                 } else {

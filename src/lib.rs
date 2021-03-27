@@ -1,6 +1,3 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-#![feature(in_band_lifetimes)]
-
 use permission::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::time::{SystemTime, UNIX_EPOCH};
