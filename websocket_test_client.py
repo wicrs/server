@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""websocket cmd client for wssrv.py example."""
 import argparse
 import asyncio
 import signal
@@ -11,13 +10,13 @@ import aiohttp
 def start_client(loop, url):
     auth = input('Enter your authentication details (ID:Token): ')
 
-    # send request
     headers={"Authorization": auth}
     ws = yield from aiohttp.ClientSession(headers=headers).ws_connect(url, autoclose=False, autoping=False)
 
     hub_channel = input('Enter the ID of the hub and channel messages should be sent in (hub_id:channel_id): ')
 
-    # input reader
+    asyncio.create_task(ws.send_str('sub ' + hub_channel))
+
     def stdin_callback():
         line = sys.stdin.buffer.readline().decode('utf-8')
         if not line:
