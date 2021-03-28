@@ -497,21 +497,20 @@ impl Hub {
         user_id: &ID,
         channel_id: &ID,
         message: String,
-    ) -> Result<ID> {
+    ) -> Result<Message> {
         if let Some(member) = self.members.get(&user_id) {
             if !self.mutes.contains(&user_id) {
                 check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
                 check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
                 if let Some(channel) = self.channels.get_mut(&channel_id) {
-                    let id = new_id();
                     let message = Message {
-                        id: id.clone(),
+                        id: new_id(),
                         sender: member.user.clone(),
                         created: get_system_millis(),
                         content: message,
                     };
-                    channel.add_message(message).await?;
-                    Ok(id)
+                    channel.add_message(message.clone()).await?;
+                    Ok(message)
                 } else {
                     Err(ApiError::ChannelNotFound)
                 }

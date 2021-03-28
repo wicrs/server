@@ -1,34 +1,46 @@
-use std::fmt::{Display, Write};
+use std::{fmt::Write, sync::Arc, time::Duration};
 
+use actix::{Actor, Addr};
 use actix_web_actors::ws;
 use serde::Deserialize;
 
-use wicrs_server::{
+use crate::{
     api,
     auth::{Auth, AuthError, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
+    config::Config,
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
+    server::{Server, ClientMessage},
     user::{GenericUser, User},
-    ApiError, ID,
+    websocket::ChatSocket,
+    ApiError, Result, ID,
 };
-
-use crate::AUTH;
+use tokio::sync::RwLock;
 
 use actix_web::{
     delete, get,
     http::header,
     post, put,
-    web::{self, Bytes, Json, Path, Query},
+    web::{self, Bytes, Data, Json, Path, Query},
     App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
 };
 use futures::future::{err, ok, Ready};
 
 /// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
-pub async fn server(bind_address: &str) -> std::io::Result<()> {
-    HttpServer::new(|| {
+pub async fn server(config: Config) -> std::io::Result<()> {
+    let client_timeout = Duration::from_millis(config.ws_client_timeout.clone());
+    let heartbeat_interval = Duration::from_millis(config.ws_hb_interval.clone());
+    let auth = Arc::new(RwLock::new(Auth::from_config(&config.auth_services)));
+    let server = Server::new().start();
+    let address = config.address.clone();
+    HttpServer::new(move || {
         App::new()
+            .data(server.clone())
+            .data(config.clone())
+            .data(auth.clone())
+            .data((heartbeat_interval.clone(), client_timeout.clone()))
             .service(index)
             .service(login_start)
             .service(login_finish)
@@ -62,39 +74,22 @@ pub async fn server(bind_address: &str) -> std::io::Result<()> {
             .service(set_user_channel_permission)
             .service(web::resource("/v2/websocket").route(web::get().to(get_websocket)))
     })
-    .bind(bind_address)?
+    .bind(address)?
     .run()
     .await
 }
 
-#[derive(Debug)]
-struct ApiErrorWrapped(ApiError);
-
-impl Display for ApiErrorWrapped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}", self.0))
-    }
-}
-
-impl From<ApiError> for ApiErrorWrapped {
-    fn from(err: ApiError) -> Self {
-        Self(err)
-    }
-}
-
-type Result<T, E = ApiErrorWrapped> = std::result::Result<T, E>;
-
 struct UserID(ID);
 
-impl ResponseError for ApiErrorWrapped {
+impl ResponseError for ApiError {
     fn status_code(&self) -> reqwest::StatusCode {
-        (&self.0).into()
+        self.into()
     }
 
     fn error_response(&self) -> HttpResponse {
         let mut resp = HttpResponse::new(self.status_code());
         let mut buf = actix_web::web::BytesMut::new();
-        let _ = buf.write_fmt(format_args!("{}", serde_json::json!(self.0)));
+        let _ = buf.write_fmt(format_args!("{}", serde_json::json!(self)));
         resp.headers_mut().insert(
             reqwest::header::CONTENT_TYPE,
             actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),
@@ -104,7 +99,7 @@ impl ResponseError for ApiErrorWrapped {
 }
 
 impl FromRequest for UserID {
-    type Error = ApiErrorWrapped;
+    type Error = ApiError;
 
     type Future = Ready<Result<Self>>;
 
@@ -117,18 +112,30 @@ impl FromRequest for UserID {
                     let mut split = header_str.split(':');
                     if let (Some(id), Some(token)) = (split.next(), split.next()) {
                         if let Ok(id) = ID::parse_str(id) {
-                            return if Auth::is_authenticated(AUTH.clone(), id.clone(), token.into())
-                                .await
+                            return if let Some(auth) = request.app_data::<Data<Arc<RwLock<Auth>>>>()
                             {
-                                ok(UserID(id))
+                                if Auth::is_authenticated(
+                                    auth.get_ref().clone(),
+                                    id.clone(),
+                                    token.into(),
+                                )
+                                .await
+                                {
+                                    ok(UserID(id))
+                                } else {
+                                    err(AuthError::InvalidToken.into())
+                                }
                             } else {
-                                err(ApiErrorWrapped(AuthError::InvalidToken.into()))
+                                err(ApiError::Other(
+                                    "Failed to get the authenticator.".to_string(),
+                                    500,
+                                ))
                             };
                         }
                     }
                 }
             }
-            err(ApiErrorWrapped(AuthError::MalformedIDToken.into()))
+            err(AuthError::MalformedIDToken.into())
         });
         result
     }
@@ -148,27 +155,25 @@ impl FromRequest for UserID {
 macro_rules! no_content {
     ($op:expr) => {
         $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
-            .or_else(|e| Err(ApiErrorWrapped(e)))
+            .or_else(|e| Err(e))
     };
 }
 
 macro_rules! string_response {
     ($op:expr) => {
-        $op.and_then(|t| Ok(t.to_string()))
-            .or_else(|e| Err(ApiErrorWrapped(e)))
+        $op.and_then(|t| Ok(t.to_string())).or_else(|e| Err(e))
     };
 }
 
 macro_rules! json_response {
     ($op:expr) => {
-        $op.and_then(|t| Ok(Json(t)))
-            .or_else(|e| Err(ApiErrorWrapped(e)))
+        $op.and_then(|t| Ok(Json(t))).or_else(|e| Err(e))
     };
 }
 
 #[get("/")]
-async fn index() -> String {
-    if crate::CONFIG.show_version {
+async fn index(config: Data<Config>) -> String {
+    if config.show_version {
         format!(
             "WICRS server version {} is up and running!",
             env!("CARGO_PKG_VERSION")
@@ -179,20 +184,27 @@ async fn index() -> String {
 }
 
 #[get("/v2/login/{service}")]
-async fn login_start(service: Path<Service>) -> HttpResponse {
+async fn login_start(service: Path<Service>, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
     HttpResponse::Found()
-        .header("Location", api::start_login(AUTH.clone(), service.0).await)
+        .header(
+            "Location",
+            api::start_login(auth.get_ref().clone(), service.0).await,
+        )
         .finish()
 }
 
 #[get("/v2/auth/{service}")]
-async fn login_finish(service: Path<Service>, query: Query<AuthQuery>) -> Result<Json<IDToken>> {
-    json_response!(api::complete_login(AUTH.clone(), service.0, query.0).await)
+async fn login_finish(
+    service: Path<Service>,
+    query: Query<AuthQuery>,
+    auth: Data<Arc<RwLock<Auth>>>,
+) -> Result<Json<IDToken>> {
+    json_response!(api::complete_login(auth.get_ref().clone(), service.0, query.0).await)
 }
 
 #[post("/v2/invalidate_tokens")]
-async fn invalidate_tokens(user_id: UserID) -> HttpResponse {
-    api::invalidate_tokens(AUTH.clone(), user_id.0).await;
+async fn invalidate_tokens(user_id: UserID, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
+    api::invalidate_tokens(auth.get_ref().clone(), user_id.0).await;
     HttpResponse::NoContent().finish()
 }
 
@@ -210,7 +222,7 @@ async fn get_user_by_id(user_id: UserID, id: Path<ID>) -> Result<Json<GenericUse
 async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
     api::change_username(&user_id.0, name.0)
         .await
-        .or_else(|e| Err(ApiErrorWrapped(e)))
+        .or_else(|e| Err(e))
 }
 
 #[post("/v2/hub/create/{name}")]
@@ -232,7 +244,7 @@ async fn delete_hub(user_id: UserID, hub_id: Path<ID>) -> Result<HttpResponse> {
 async fn rename_hub(user_id: UserID, path: Path<(ID, String)>) -> Result<String> {
     api::rename_hub(&user_id.0, &path.0 .0, path.1.clone())
         .await
-        .or_else(|e| Err(ApiErrorWrapped(e)))
+        .or_else(|e| Err(e))
 }
 
 #[get("/v2/member/{hub_id}/{user_id}/is_banned")]
@@ -289,7 +301,7 @@ async fn unmute_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpRespon
 async fn change_nickname(user_id: UserID, path: Path<(ID, String)>) -> Result<String> {
     api::change_nickname(&user_id.0, &path.0 .0, path.1.clone())
         .await
-        .or_else(|e| Err(ApiErrorWrapped(e)))
+        .or_else(|e| Err(e))
 }
 
 #[post("/v2/channel/create/{hub_id}/{name}")]
@@ -306,7 +318,7 @@ async fn get_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<Json<Chann
 async fn rename_channel(user_id: UserID, path: Path<(ID, ID, String)>) -> Result<String> {
     api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone())
         .await
-        .or_else(|e| Err(ApiErrorWrapped(e)))
+        .or_else(|e| Err(e))
 }
 
 #[delete("/v2/channel/{hub_id}/{channel_id}")]
@@ -315,11 +327,11 @@ async fn delete_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpRes
 }
 
 #[post("/v2/message/send/{hub_id}/{channel_id}")]
-async fn send_message(user_id: UserID, path: Path<(ID, ID)>, message: Bytes) -> Result<String> {
+async fn send_message(user_id: UserID, path: Path<(ID, ID)>, message: Bytes, srv: Data<Addr<Server>>,) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
-        string_response!(api::send_message(&user_id.0, &path.0 .0, &path.1, message).await)
+        string_response!(srv.send(ClientMessage{ user_id: user_id.0, message: message, hub_id: path.0.0, channel_id: path.1}).await.map_err(|_| ApiError::Other("Unable to deliver message.".to_string(), 500))?)
     } else {
-        Err(ApiErrorWrapped(ApiError::InvalidMessage))
+        Err(ApiError::InvalidMessage)
     }
 }
 
@@ -408,9 +420,21 @@ async fn set_user_channel_permission(
 }
 
 async fn get_websocket(
+    user_id: UserID,
     r: HttpRequest,
     stream: web::Payload,
+    srv: Data<Addr<Server>>,
+    wshbt: Data<(Duration, Duration)>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let res = ws::start(crate::websocket::ChatSocket::new(), &r, stream);
+    let res = ws::start(
+        ChatSocket::new(
+            user_id.0,
+            wshbt.0.clone(),
+            wshbt.1.clone(),
+            srv.get_ref().clone(),
+        ),
+        &r,
+        stream,
+    );
     res
 }

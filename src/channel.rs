@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use tokio::{fs, prelude::*};
 
@@ -289,15 +289,15 @@ pub struct Message {
     pub content: String,
 }
 
-impl ToString for Message {
-    fn to_string(&self) -> String {
-        format!(
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
             "{:X},{:X},{:X},{}",
             self.id.as_u128(),
             self.sender.as_u128(),
             self.created,
             self.content.replace('\n', r#"\n"#)
-        )
+        ))
     }
 }
 

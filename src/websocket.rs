@@ -1,43 +1,78 @@
-use std::{fmt::Display, str::FromStr, time::Instant};
+use std::{
+    fmt::Display,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
-use actix::{Actor, ActorContext, AsyncContext, Message, StreamHandler};
+use crate::{
+    server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe},
+    ID,
+};
+use actix::{
+    fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
+    Message, StreamHandler, WrapFuture,
+};
 use actix_web_actors::ws;
-use wicrs_server::{api, auth::Auth, hub::Hub, ID};
-
-use crate::{CLIENT_TIMEOUT, HEARTBEAT_INTERVAL};
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub enum Commands {
-    Authenticate(ID, String),
-    SendMessage(String),
-    SelectLocation(ID, ID),
+pub enum ClientCommand {
+    SendMessage(String, ID, ID),
+    Subscribe(ID, ID),
+    Unsubscribe(ID, ID),
 }
 
-impl Display for Commands {
+impl Display for ClientCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Commands::Authenticate(id, token) => f.write_fmt(format_args!("aut {}:{}", id, token)),
-            Commands::SendMessage(message) => f.write_fmt(format_args!("msg {}", message)),
-            Commands::SelectLocation(hub, channel) => {
-                f.write_fmt(format_args!("sel {}:{}", hub, channel))
+            ClientCommand::SendMessage(message, hub, channel) => {
+                f.write_fmt(format_args!("msg {}:{} {}", hub, channel, message))
+            }
+            ClientCommand::Subscribe(hub, channel) => {
+                f.write_fmt(format_args!("sub {}:{}", hub, channel))
+            }
+            ClientCommand::Unsubscribe(hub, channel) => {
+                f.write_fmt(format_args!("uns {}:{}", hub, channel))
             }
         }
     }
 }
 
-impl FromStr for Commands {
+impl FromStr for ClientCommand {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.get(0..3) {
-            Some("aut") => {
-                if let Some(id_token) = s.strip_prefix("aut ") {
-                    let mut split = id_token.split(':');
-                    if let (Some(id), Some(token)) = (split.next(), split.next()) {
-                        Ok(Self::Authenticate(
-                            ID::from_str(id).map_err(|_| ())?,
-                            token.to_string(),
+            Some("msg") => {
+                if let Some(message) = s.strip_prefix("msg ") {
+                    let mut split_spc = message.splitn(2, ' ');
+                    if let (Some(loc), Some(msg)) = (split_spc.next(), split_spc.next()) {
+                        let mut split = loc.split(':');
+                        if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
+                            if let (Ok(hub_id), Ok(channel_id)) =
+                                (ID::parse_str(hub), ID::parse_str(channel))
+                            {
+                                Ok(Self::SendMessage(msg.to_string(), hub_id, channel_id))
+                            } else {
+                                Err(())
+                            }
+                        } else {
+                            Err(())
+                        }
+                    } else {
+                        Err(())
+                    }
+                } else {
+                    Err(())
+                }
+            }
+            Some("sub") => {
+                if let Some(hub_channel) = s.strip_prefix("sub ") {
+                    let mut split = hub_channel.split(':');
+                    if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
+                        Ok(Self::Subscribe(
+                            ID::from_str(hub).map_err(|_| ())?,
+                            ID::from_str(channel).map_err(|_| ())?,
                         ))
                     } else {
                         Err(())
@@ -46,18 +81,11 @@ impl FromStr for Commands {
                     Err(())
                 }
             }
-            Some("msg") => {
-                if let Some(message) = s.strip_prefix("msg ") {
-                    Ok(Self::SendMessage(message.to_string()))
-                } else {
-                    Err(())
-                }
-            }
-            Some("sel") => {
-                if let Some(hub_channel) = s.strip_prefix("sel ") {
+            Some("uns") => {
+                if let Some(hub_channel) = s.strip_prefix("uns ") {
                     let mut split = hub_channel.split(':');
                     if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
-                        Ok(Self::SelectLocation(
+                        Ok(Self::Unsubscribe(
                             ID::from_str(hub).map_err(|_| ())?,
                             ID::from_str(channel).map_err(|_| ())?,
                         ))
@@ -75,8 +103,10 @@ impl FromStr for Commands {
 
 pub struct ChatSocket {
     hb: Instant,
-    user: Option<ID>,
-    send_loc: Option<(ID, ID)>,
+    user: ID,
+    addr: Addr<Server>,
+    hb_interval: Duration,
+    hb_timeout: Duration,
 }
 
 impl Actor for ChatSocket {
@@ -84,26 +114,46 @@ impl Actor for ChatSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
+        let addr = ctx.address();
+        self.addr
+            .send(Connect {
+                addr: addr.recipient(),
+                user_id: self.user.clone(),
+            })
+            .into_actor(self)
+            .then(|_, _, _| fut::ready(()))
+            .wait(ctx);
+    }
+}
+
+impl Handler<server::Message> for ChatSocket {
+    type Result = ();
+
+    fn handle(&mut self, msg: server::Message, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(format!(
+            "msg {}:{} {}",
+            msg.hub_id, msg.channel_id, msg.message
+        ))
     }
 }
 
 impl ChatSocket {
-    pub fn new() -> Self {
+    pub fn new(user: ID, hb_interval: Duration, hb_timeout: Duration, addr: Addr<Server>) -> Self {
         Self {
             hb: Instant::now(),
-            send_loc: None,
-            user: None,
+            user,
+            hb_interval,
+            hb_timeout,
+            addr,
         }
     }
     fn hb(&self, ctx: &mut <Self as Actor>::Context) {
-        ctx.run_interval(HEARTBEAT_INTERVAL.clone(), |act, ctx| {
-            // check client heartbeats
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT.clone() {
-                println!("Websocket Client heartbeat failed, disconnecting!");
+        let timeout = self.hb_timeout.clone();
+        ctx.run_interval(self.hb_interval.clone(), move |act, ctx| {
+            if Instant::now().duration_since(act.hb) > timeout {
                 ctx.stop();
                 return;
             }
-
             ctx.ping(b"");
         });
     }
@@ -120,45 +170,29 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
-                if let Ok(command) = Commands::from_str(&text) {
+                if let Ok(command) = ClientCommand::from_str(&text) {
                     match command {
-                        Commands::Authenticate(id, token) => {
-                            if self.user.is_some() {
-                                ctx.text("ALREADY_AUTHENTICATED");
-                            } else {
-                                if futures::executor::block_on(Auth::is_authenticated(
-                                    crate::AUTH.clone(),
-                                    id.clone(),
-                                    token,
-                                )) {
-                                    self.user = Some(id);
-                                    ctx.text("AUTH_SUCCESS");
-                                } else {
-                                    ctx.text("AUTH_FAILED");
-                                    ctx.close(None)
-                                }
-                            }
+                        ClientCommand::SendMessage(message, hub, channel) => {
+                            self.addr.do_send(ClientMessage {
+                                user_id: self.user.clone(),
+                                message: message,
+                                hub_id: hub,
+                                channel_id: channel,
+                            })
                         }
-                        Commands::SendMessage(message) => {
-                            if let Some(user) = &self.user {
-                                if let Some((hub, channel)) = &self.send_loc {
-                                    if let Err(error) = futures::executor::block_on(api::send_message(
-                                        user, hub, channel, message,
-                                    )) {
-                                        
-                                    } else {
-                                        ctx.text("SUCCESS")
-                                    }
-                                } else {
-                                    ctx.text("LOCATION_NOT_SELECTED");
-                                }
-                            } else {
-                                ctx.text("AUTHENTICATION_REQUIRED");
-                            }
+                        ClientCommand::Subscribe(hub, channel) => {
+                            self.addr.do_send(Subscribe {
+                                user_id: self.user.clone(),
+                                hub_id: hub,
+                                channel_id: channel,
+                            });
                         }
-                        Commands::SelectLocation(hub, channel) => {
-                            self.send_loc = Some((hub, channel));
-                            ctx.text("SELECTION_UPDATED");
+                        ClientCommand::Unsubscribe(hub, channel) => {
+                            self.addr.do_send(Unsubscribe {
+                                user_id: self.user.clone(),
+                                hub_id: hub,
+                                channel_id: channel,
+                            });
                         }
                     }
                 } else {

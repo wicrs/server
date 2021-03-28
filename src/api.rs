@@ -83,10 +83,7 @@ pub async fn get_user_stripped(user_id: &ID, id: ID) -> Result<GenericUser> {
 ///
 /// * The modified user data could not be saved for any of the reasons outlined in [`User::save`].
 /// * The user's name could not be changed for any of the reasons outlined in [`User::change_username`].
-pub async fn change_username<S: Into<String> + Clone>(
-    user_id: &ID,
-    new_name: S,
-) -> Result<String> {
+pub async fn change_username<S: Into<String> + Clone>(user_id: &ID, new_name: S) -> Result<String> {
     let name: String = new_name.into();
     check_name_validity(&name)?;
     let mut user = User::load(user_id).await?;
@@ -602,7 +599,7 @@ pub async fn send_message(
     hub_id: &ID,
     channel_id: &ID,
     message: String,
-) -> Result<ID> {
+) -> Result<Message> {
     if message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
         let mut hub = Hub::load(hub_id).await?;
         hub.send_message(user_id, channel_id, message).await

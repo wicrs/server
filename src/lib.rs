@@ -20,9 +20,14 @@ pub mod config;
 pub mod hub;
 /// Permissions are defined here.
 pub mod permission;
+/// Server implementation.
+pub mod server;
 /// User management.
 pub mod user;
-
+/// Definition of the WebSocket API.
+pub mod websocket;
+/// Definition of the HTTP API.
+pub mod httpapi;
 /// Errors related to data processing.
 #[derive(Debug, Error, Serialize, Deserialize)]
 #[serde(rename_all(
@@ -56,7 +61,8 @@ where
 }
 
 /// General errors that can occur when using the WICRS API.
-#[derive(Debug, Error, Serialize, Deserialize)]
+#[derive(Debug, Error, Serialize, Deserialize, actix::Message)]
+#[rtype(result = "()")]
 #[serde(rename_all(
     serialize = "SCREAMING_SNAKE_CASE",
     deserialize = "SCREAMING_SNAKE_CASE"

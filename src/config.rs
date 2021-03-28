@@ -3,7 +3,7 @@ use std::process::exit;
 use serde::{Deserialize, Serialize};
 
 /// Configuration object for WICRS Server.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     /// Authentication services
     pub auth_services: AuthConfigs,
@@ -18,7 +18,7 @@ pub struct Config {
 }
 
 /// Configuration for a generic OAuth service.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AuthConfig {
     /// Whether or not this OAuth service should be used.
     pub enabled: bool,
@@ -29,7 +29,7 @@ pub struct AuthConfig {
 }
 
 /// OAuth service configurations.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AuthConfigs {
     /// GitHub OAuth config.
     pub github: Option<AuthConfig>,
