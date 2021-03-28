@@ -56,7 +56,6 @@ To contribute fork the GitHub repo and make your changes, for changes to be acce
 This project adheres to [Semantic Versioning](http://semver.org/). However until 1.0.0 comes there
 will be the following rules:
 
- - Any API/ABI breaking changes will be notified in the changelog explicitly and results in minor
-   version bumping.
- - API extending features results in patch version bumping.
- - Non-breaking bug fixes and performance improving results in patch version bumping.
+- Any API/ABI breaking changes will be notified in the changelog explicitly and results in minor version bumping.
+- API extending features results in patch version bumping.
+- Non-breaking bug fixes and performance improving results in patch version bumping.

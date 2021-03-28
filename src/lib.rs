@@ -28,6 +28,7 @@ pub mod user;
 pub mod websocket;
 /// Definition of the HTTP API.
 pub mod httpapi;
+
 /// Errors related to data processing.
 #[derive(Debug, Error, Serialize, Deserialize)]
 #[serde(rename_all(
