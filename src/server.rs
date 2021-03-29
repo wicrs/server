@@ -29,6 +29,22 @@ pub struct Unsubscribe {
 
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
+pub struct StartTyping {
+    pub user_id: ID,
+    pub hub_id: ID,
+    pub channel_id: ID,
+}
+
+#[derive(Message, Clone)]
+#[rtype(result = "()")]
+pub struct StopTyping {
+    pub user_id: ID,
+    pub hub_id: ID,
+    pub channel_id: ID,
+}
+
+#[derive(Message, Clone)]
+#[rtype(result = "()")]
 pub struct Disconnect {
     pub user_id: ID,
 }

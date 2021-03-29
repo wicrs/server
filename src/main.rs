@@ -1,6 +1,6 @@
 use std::process::exit;
 
-use wicrs_server::{config::Config, httpapi::server};
+use wicrs_server::{config::Config, httpapi::server, websocket::ClientCommand, ID};
 
 fn load_config(path: &str) -> Config {
     if let Ok(read) = std::fs::read_to_string(path) {
@@ -19,5 +19,9 @@ fn load_config(path: &str) -> Config {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = load_config("config.json");
+    println!(
+        "{}",
+        ClientCommand::SendMessage("Hello!".to_string(), ID::nil(), ID::nil())
+    );
     server(config).await
 }

@@ -1,104 +1,45 @@
 use std::{
-    fmt::Display,
     str::FromStr,
     time::{Duration, Instant},
 };
 
-use crate::{
-    server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe},
-    ID,
-};
+use crate::{ApiError, ID, channel, server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe}};
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
     Message, StreamHandler, WrapFuture,
 };
 use actix_web_actors::ws;
+use parse_display::{Display, FromStr};
 
-#[derive(Message)]
+#[derive(Message, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
 #[rtype(result = "()")]
 pub enum ClientCommand {
+    #[display("{}({1}:{2},\"{0}\")")]
     SendMessage(String, ID, ID),
+    #[display("{}({0}:{1})")]
     Subscribe(ID, ID),
+    #[display("{}({0}:{1})")]
     Unsubscribe(ID, ID),
+    StartTyping,
+    StopTyping,
 }
 
-impl Display for ClientCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ClientCommand::SendMessage(message, hub, channel) => {
-                f.write_fmt(format_args!("msg {}:{} {}", hub, channel, message))
-            }
-            ClientCommand::Subscribe(hub, channel) => {
-                f.write_fmt(format_args!("sub {}:{}", hub, channel))
-            }
-            ClientCommand::Unsubscribe(hub, channel) => {
-                f.write_fmt(format_args!("uns {}:{}", hub, channel))
-            }
-        }
-    }
-}
-
-impl FromStr for ClientCommand {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.get(0..3) {
-            Some("msg") => {
-                if let Some(message) = s.strip_prefix("msg ") {
-                    let mut split_spc = message.splitn(2, ' ');
-                    if let (Some(loc), Some(msg)) = (split_spc.next(), split_spc.next()) {
-                        let mut split = loc.split(':');
-                        if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
-                            if let (Ok(hub_id), Ok(channel_id)) =
-                                (ID::parse_str(hub), ID::parse_str(channel))
-                            {
-                                Ok(Self::SendMessage(msg.to_string(), hub_id, channel_id))
-                            } else {
-                                Err(())
-                            }
-                        } else {
-                            Err(())
-                        }
-                    } else {
-                        Err(())
-                    }
-                } else {
-                    Err(())
-                }
-            }
-            Some("sub") => {
-                if let Some(hub_channel) = s.strip_prefix("sub ") {
-                    let mut split = hub_channel.split(':');
-                    if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
-                        Ok(Self::Subscribe(
-                            ID::from_str(hub).map_err(|_| ())?,
-                            ID::from_str(channel).map_err(|_| ())?,
-                        ))
-                    } else {
-                        Err(())
-                    }
-                } else {
-                    Err(())
-                }
-            }
-            Some("uns") => {
-                if let Some(hub_channel) = s.strip_prefix("uns ") {
-                    let mut split = hub_channel.split(':');
-                    if let (Some(hub), Some(channel)) = (split.next(), split.next()) {
-                        Ok(Self::Unsubscribe(
-                            ID::from_str(hub).map_err(|_| ())?,
-                            ID::from_str(channel).map_err(|_| ())?,
-                        ))
-                    } else {
-                        Err(())
-                    }
-                } else {
-                    Err(())
-                }
-            }
-            _ => Err(()),
-        }
-    }
+#[derive(Message, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
+#[rtype(result = "()")]
+pub enum ServerCommand {
+    #[display("{}({0})")]
+    Error(ApiError),
+    InvalidCommand,
+    #[display("{}({0}:{1},\"{2}\")")]
+    ChatMessage(ID, ID, channel::Message),
+    #[display("{}({0})")]
+    HubUpdated(ID),
+    #[display("{}({0})")]
+    UserTyping(ID),
+    #[display("{}({0})")]
+    UserStopTyping(ID),
 }
 
 pub struct ChatSocket {
@@ -130,10 +71,7 @@ impl Handler<server::Message> for ChatSocket {
     type Result = ();
 
     fn handle(&mut self, msg: server::Message, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(format!(
-            "msg {}:{} {}",
-            msg.hub_id, msg.channel_id, msg.message
-        ))
+        ctx.text(ServerCommand::ChatMessage(msg.hub_id, msg.channel_id, msg.message).to_string())
     }
 }
 
@@ -170,6 +108,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
+                println!("WS TEXT: {}", text);
                 if let Ok(command) = ClientCommand::from_str(&text) {
                     match command {
                         ClientCommand::SendMessage(message, hub, channel) => {
@@ -194,9 +133,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                                 channel_id: channel,
                             });
                         }
+                        ClientCommand::StartTyping => {}
+                        ClientCommand::StopTyping => {}
                     }
                 } else {
-                    ctx.text("INVALID_COMMAND");
+                    ctx.text(ServerCommand::InvalidCommand.to_string());
                 }
             }
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),

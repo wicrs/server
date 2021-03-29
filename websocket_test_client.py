@@ -15,14 +15,14 @@ def start_client(loop, url):
 
     hub_channel = input('Enter the ID of the hub and channel messages should be sent in (hub_id:channel_id): ')
 
-    asyncio.create_task(ws.send_str('sub ' + hub_channel))
+    asyncio.create_task(ws.send_str('SUBSCRIBE(' + hub_channel + ')'))
 
     def stdin_callback():
         line = sys.stdin.buffer.readline().decode('utf-8')
         if not line:
             loop.stop()
         else:
-            asyncio.create_task(ws.send_str('msg ' + hub_channel + ' ' + line))
+            asyncio.create_task(ws.send_str('SEND_MESSAGE(' + hub_channel + ',"' + line.strip() + '")'))
     loop.add_reader(sys.stdin.fileno(), stdin_callback)
 
     @asyncio.coroutine
@@ -31,13 +31,11 @@ def start_client(loop, url):
             msg = yield from ws.receive()
 
             if msg.type == aiohttp.WSMsgType.TEXT:
-                print('Text: ', msg.data.strip())
+                print(msg.data.strip())
             elif msg.type == aiohttp.WSMsgType.BINARY:
                 print('Binary: ', msg.data)
             elif msg.type == aiohttp.WSMsgType.PING:
                 asyncio.create_task(ws.pong())
-            elif msg.type == aiohttp.WSMsgType.PONG:
-                print('Pong received')
             else:
                 if msg.type == aiohttp.WSMsgType.CLOSE:
                     yield from ws.close()

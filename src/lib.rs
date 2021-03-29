@@ -1,10 +1,11 @@
+use auth::AuthError;
 use permission::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize, Serializer};
+use parse_display::{Display, FromStr};
 
-use thiserror::Error;
+use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
 
@@ -16,6 +17,8 @@ pub mod auth;
 pub mod channel;
 /// Various objects for storing configuration.
 pub mod config;
+/// Definition of the HTTP API.
+pub mod httpapi;
 /// Hubs, permission management, channel management and member management.
 pub mod hub;
 /// Permissions are defined here.
@@ -26,91 +29,75 @@ pub mod server;
 pub mod user;
 /// Definition of the WebSocket API.
 pub mod websocket;
-/// Definition of the HTTP API.
-pub mod httpapi;
 
 /// Errors related to data processing.
-#[derive(Debug, Error, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
 #[serde(rename_all(
     serialize = "SCREAMING_SNAKE_CASE",
     deserialize = "SCREAMING_SNAKE_CASE"
 ))]
 pub enum DataError {
-    #[error("server was unable to write new data to disk")]
     WriteFile,
-    #[error("server was unable to parse some data")]
     Deserialize,
-    #[error("server could not create a directory")]
     Directory,
-    #[error("server failed to read requested data from disk")]
     ReadFile,
-    #[error("server could not serialize some data")]
     Serialize,
-    #[error("server was unable to delete the data")]
     DeleteFailed,
 }
 
-fn io_error_serialize<S>(_err: &std::io::Error, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    ApiError::Other(
-        "IO Error".to_string(),
-        StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-    )
-    .serialize(s)
-}
-
 /// General errors that can occur when using the WICRS API.
-#[derive(Debug, Error, Serialize, Deserialize, actix::Message)]
+#[derive(Debug, Serialize, Deserialize, actix::Message, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
 #[rtype(result = "()")]
 #[serde(rename_all(
     serialize = "SCREAMING_SNAKE_CASE",
     deserialize = "SCREAMING_SNAKE_CASE"
 ))]
 pub enum ApiError {
-    #[error("user is muted")]
     Muted,
-    #[error("user is banned")]
     Banned,
-    #[error("hub does not exist")]
     HubNotFound,
-    #[error("channel does not exist")]
     ChannelNotFound,
-    #[error("user does not have the {0} hub permission")]
+    #[display("{}({0})")]
     MissingHubPermission(HubPermission),
-    #[error("user does not have the {0} channel permission")]
+    #[display("{}({0})")]
     MissingChannelPermission(ChannelPermission),
-    #[error("user not in hub")]
     NotInHub,
-    #[error("user does not exist")]
     UserNotFound,
-    #[error("member does not exist")]
     MemberNotFound,
-    #[error("message does not exist")]
     MessageNotFound,
-    #[error("not authenticated")]
     NotAuthenticated,
-    #[error("group does not exist")]
     GroupNotFound,
-    #[error("name is not valid, too long or invalid characters")]
     InvalidName,
-    #[error("server did something unexpected")]
     UnexpectedServerArg,
-    #[error("message is too big, maximum is {} bytes", MESSAGE_MAX_SIZE)]
     MessageTooBig,
-    #[error("unable to parse message, only UTF-8 is supported")]
     InvalidMessage,
-    #[error("{0}")]
-    Other(String, u16),
-    #[error(transparent)]
-    Auth(#[from] auth::AuthError),
-    #[error(transparent)]
-    Data(#[from] DataError),
-    #[error(transparent)]
-    #[serde(serialize_with = "io_error_serialize")]
-    #[serde(skip_deserializing)]
-    Io(#[from] std::io::Error),
+    MessageSendFailed,
+    CannotAuthenticate,
+    Io,
+    #[display("{}({0})")]
+    Auth(AuthError),
+    #[display("{}({0})")]
+    Data(DataError),
+}
+
+impl From<AuthError> for ApiError {
+    fn from(err: AuthError) -> Self {
+        Self::Auth(err)
+    }
+}
+
+impl From<DataError> for ApiError {
+    fn from(err: DataError) -> Self {
+        Self::Data(err)
+    }
+}
+
+impl From<std::io::Error> for ApiError {
+    fn from(_: std::io::Error) -> Self {
+        Self::Io
+    }
 }
 
 impl From<&ApiError> for StatusCode {
@@ -131,13 +118,12 @@ impl From<&ApiError> for StatusCode {
             ApiError::UserNotFound => Self::NOT_FOUND,
             ApiError::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
             ApiError::MessageTooBig => Self::BAD_REQUEST,
+            ApiError::CannotAuthenticate => Self::INTERNAL_SERVER_ERROR,
             ApiError::InvalidMessage => Self::BAD_REQUEST,
-            ApiError::Other(_, code) => {
-                Self::from_u16(code.clone()).unwrap_or(Self::INTERNAL_SERVER_ERROR)
-            }
+            ApiError::MessageSendFailed => Self::INTERNAL_SERVER_ERROR,
             ApiError::Auth(error) => error.into(),
             ApiError::Data(_) => Self::INTERNAL_SERVER_ERROR,
-            ApiError::Io(_) => Self::INTERNAL_SERVER_ERROR,
+            ApiError::Io => Self::INTERNAL_SERVER_ERROR,
         }
     }
 }

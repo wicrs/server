@@ -10,12 +10,11 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Sha3_256};
-use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::{
-    config::AuthConfigs, get_system_millis, user::User, ApiError, Result, ID, USER_AGENT_STRING,
-};
+use parse_display::{Display, FromStr};
+
+use crate::{config::AuthConfigs, get_system_millis, user::User, Result, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -64,30 +63,26 @@ pub struct AuthQuery {
 }
 
 /// Errors related to authentication.
-#[derive(Debug, Error, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
 #[serde(rename_all(
     serialize = "SCREAMING_SNAKE_CASE",
     deserialize = "SCREAMING_SNAKE_CASE"
 ))]
 pub enum AuthError {
-    #[error("oauth service failed to respond")]
     NoResponse,
-    #[error("unable to parse response of oauth service")]
     BadJson,
-    #[error("{0}")]
-    OauthRequest(String),
-    #[error("invalid token")]
+    OAuthExchangeFailed,
     InvalidToken,
-    #[error("malformed ID Token string, should be ID^Token")]
-    #[serde(rename = "MALFORMED_ID_TOKEN")]
-    MalformedIDToken,
+    InvalidSession,
+    MalformedIdToken,
 }
 
 impl From<&AuthError> for StatusCode {
     fn from(error: &AuthError) -> Self {
         match error {
             AuthError::InvalidToken => Self::UNAUTHORIZED,
-            AuthError::MalformedIDToken => Self::BAD_REQUEST,
+            AuthError::MalformedIdToken => Self::BAD_REQUEST,
             _ => StatusCode::BAD_GATEWAY,
         }
     }
@@ -414,10 +409,10 @@ impl GitHub {
                     let email = self.get_email(&token).await?;
                     Auth::finalize_login(manager, Service::GitHub, &id, expires, email).await
                 }
-                Err(error) => Err(AuthError::OauthRequest(format!("{:?}", error)).into()),
+                Err(_) => Err(AuthError::OAuthExchangeFailed.into()),
             }
         } else {
-            Err(ApiError::Other("Invalid session.".to_string(), 400))
+            Err(AuthError::InvalidSession.into())
         }
     }
 }

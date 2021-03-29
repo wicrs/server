@@ -12,7 +12,7 @@ use crate::{
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
-    server::{Server, ClientMessage},
+    server::{ClientMessage, Server},
     user::{GenericUser, User},
     websocket::ChatSocket,
     ApiError, Result, ID,
@@ -89,7 +89,7 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         let mut resp = HttpResponse::new(self.status_code());
         let mut buf = actix_web::web::BytesMut::new();
-        let _ = buf.write_fmt(format_args!("{}", serde_json::json!(self)));
+        let _ = buf.write_fmt(format_args!("{}", self));
         resp.headers_mut().insert(
             reqwest::header::CONTENT_TYPE,
             actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),
@@ -126,16 +126,13 @@ impl FromRequest for UserID {
                                     err(AuthError::InvalidToken.into())
                                 }
                             } else {
-                                err(ApiError::Other(
-                                    "Failed to get the authenticator.".to_string(),
-                                    500,
-                                ))
+                                err(ApiError::CannotAuthenticate)
                             };
                         }
                     }
                 }
             }
-            err(AuthError::MalformedIDToken.into())
+            err(AuthError::MalformedIdToken.into())
         });
         result
     }
@@ -327,9 +324,22 @@ async fn delete_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpRes
 }
 
 #[post("/v2/message/send/{hub_id}/{channel_id}")]
-async fn send_message(user_id: UserID, path: Path<(ID, ID)>, message: Bytes, srv: Data<Addr<Server>>,) -> Result<String> {
+async fn send_message(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    message: Bytes,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
-        string_response!(srv.send(ClientMessage{ user_id: user_id.0, message: message, hub_id: path.0.0, channel_id: path.1}).await.map_err(|_| ApiError::Other("Unable to deliver message.".to_string(), 500))?)
+        string_response!(srv
+            .send(ClientMessage {
+                user_id: user_id.0,
+                message: message,
+                hub_id: path.0 .0,
+                channel_id: path.1
+            })
+            .await
+            .map_err(|_| ApiError::MessageSendFailed)?)
     } else {
         Err(ApiError::InvalidMessage)
     }

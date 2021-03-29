@@ -1,11 +1,12 @@
+use parse_display::{Display, FromStr};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
 /// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
 pub enum HubPermission {
     All,
     ViewChannels,
@@ -24,17 +25,11 @@ pub enum HubPermission {
     Unban,
 }
 
-impl Display for HubPermission {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:?}", self))
-    }
-}
-
 /// Map of hub permissions to permission settings.
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
 pub enum ChannelPermission {
     SendMessage,
     ReadMessage,
@@ -53,12 +48,6 @@ impl ChannelPermission {
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
             ChannelPermission::All => HubPermission::All,
         }
-    }
-}
-
-impl Display for ChannelPermission {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:?}", self))
     }
 }
 
