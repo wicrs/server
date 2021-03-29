@@ -59,7 +59,7 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&mut self, message: Message) -> Result<()> {
+    pub async fn add_message(&self, message: Message) -> Result<()> {
         let message_string = &message.to_string();
         let mut file = OpenOptions::new()
             .write(true)
@@ -270,7 +270,7 @@ impl Channel {
     }
 
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
-    pub async fn get_current_file(&mut self) -> String {
+    pub async fn get_current_file(&self) -> String {
         let now = get_system_millis() / 86400000;
         format!("{}/{}", self.get_folder(), now)
     }

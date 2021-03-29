@@ -502,7 +502,7 @@ impl Hub {
             if !self.mutes.contains(&user_id) {
                 check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
                 check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
-                if let Some(channel) = self.channels.get_mut(&channel_id) {
+                if let Some(channel) = self.channels.get(&channel_id) {
                     let message = Message {
                         id: new_id(),
                         sender: member.user.clone(),

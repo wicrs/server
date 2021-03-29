@@ -5,3 +5,4 @@
 /.vscode
 /.idea
 /Cargo.lock
+/test_index
