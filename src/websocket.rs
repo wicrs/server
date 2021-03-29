@@ -3,7 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{ApiError, ID, channel, server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe}};
+use crate::{
+    channel,
+    server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe},
+    ApiError, ID,
+};
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
     Message, StreamHandler, WrapFuture,
