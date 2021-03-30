@@ -13,7 +13,7 @@ def start_client(loop, url):
     headers={"Authorization": auth}
     ws = yield from aiohttp.ClientSession(headers=headers).ws_connect(url, autoclose=False, autoping=False)
 
-    hub_channel = input('Enter the ID of the hub and channel messages should be sent in (hub_id:channel_id): ')
+    hub_channel = input('Enter the ID of the hub and channel messages should be sent in (hub_id,channel_id): ')
 
     asyncio.create_task(ws.send_str('SUBSCRIBE(' + hub_channel + ')'))
 

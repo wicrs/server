@@ -5,45 +5,59 @@ use std::{
 
 use crate::{
     channel,
-    server::{self, ClientMessage, Connect, Server, Subscribe, Unsubscribe},
+    server::{Connect, SendMessage, Server, ServerClientMessage, Subscribe, Unsubscribe},
     ApiError, ID,
 };
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
-    Message, StreamHandler, WrapFuture,
+    StreamHandler, WrapFuture,
 };
 use actix_web_actors::ws;
 use parse_display::{Display, FromStr};
 
-#[derive(Message, Display, FromStr)]
+#[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-#[rtype(result = "()")]
-pub enum ClientCommand {
-    #[display("{}({1}:{2},\"{0}\")")]
-    SendMessage(String, ID, ID),
-    #[display("{}({0}:{1})")]
+pub enum ClientMessage {
+    #[display("{}({0},{1},\"{2}\")")]
+    SendMessage(ID, ID, String),
+    #[display("{}({0},{1})")]
     Subscribe(ID, ID),
-    #[display("{}({0}:{1})")]
+    #[display("{}({0},{1})")]
     Unsubscribe(ID, ID),
     StartTyping,
     StopTyping,
 }
 
-#[derive(Message, Display, FromStr)]
+#[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-#[rtype(result = "()")]
-pub enum ServerCommand {
+pub enum ServerMessage {
     #[display("{}({0})")]
     Error(ApiError),
     InvalidCommand,
-    #[display("{}({0}:{1},\"{2}\")")]
+    #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, channel::Message),
     #[display("{}({0})")]
     HubUpdated(ID),
-    #[display("{}({0})")]
-    UserTyping(ID),
-    #[display("{}({0})")]
-    UserStopTyping(ID),
+    #[display("{}({0},{1},{2})")]
+    UserStartedTyping(ID, ID, ID),
+    #[display("{}({0},{1},{2})")]
+    UserStoppedTyping(ID, ID, ID),
+}
+
+impl From<ServerClientMessage> for ServerMessage {
+    fn from(message: ServerClientMessage) -> Self {
+        match message {
+            ServerClientMessage::NewMessage(hub_id, channel_id, message) => {
+                ServerMessage::ChatMessage(hub_id, channel_id, message)
+            }
+            ServerClientMessage::TypingStart(hub_id, channel_id, user_id) => {
+                ServerMessage::UserStartedTyping(hub_id, channel_id, user_id)
+            }
+            ServerClientMessage::TypingStop(hub_id, channel_id, user_id) => {
+                ServerMessage::UserStoppedTyping(hub_id, channel_id, user_id)
+            }
+        }
+    }
 }
 
 pub struct ChatSocket {
@@ -71,11 +85,11 @@ impl Actor for ChatSocket {
     }
 }
 
-impl Handler<server::Message> for ChatSocket {
+impl Handler<ServerClientMessage> for ChatSocket {
     type Result = ();
 
-    fn handle(&mut self, msg: server::Message, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(ServerCommand::ChatMessage(msg.hub_id, msg.channel_id, msg.message).to_string())
+    fn handle(&mut self, msg: ServerClientMessage, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(ServerMessage::from(msg).to_string())
     }
 }
 
@@ -113,35 +127,35 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
             }
             Ok(ws::Message::Text(text)) => {
                 println!("WS TEXT: {}", text);
-                if let Ok(command) = ClientCommand::from_str(&text) {
+                if let Ok(command) = ClientMessage::from_str(&text) {
                     match command {
-                        ClientCommand::SendMessage(message, hub, channel) => {
-                            self.addr.do_send(ClientMessage {
+                        ClientMessage::SendMessage(hub, channel, message) => {
+                            self.addr.do_send(SendMessage {
                                 user_id: self.user.clone(),
                                 message: message,
                                 hub_id: hub,
                                 channel_id: channel,
                             })
                         }
-                        ClientCommand::Subscribe(hub, channel) => {
+                        ClientMessage::Subscribe(hub, channel) => {
                             self.addr.do_send(Subscribe {
                                 user_id: self.user.clone(),
                                 hub_id: hub,
                                 channel_id: channel,
                             });
                         }
-                        ClientCommand::Unsubscribe(hub, channel) => {
+                        ClientMessage::Unsubscribe(hub, channel) => {
                             self.addr.do_send(Unsubscribe {
                                 user_id: self.user.clone(),
                                 hub_id: hub,
                                 channel_id: channel,
                             });
                         }
-                        ClientCommand::StartTyping => {}
-                        ClientCommand::StopTyping => {}
+                        ClientMessage::StartTyping => {}
+                        ClientMessage::StopTyping => {}
                     }
                 } else {
-                    ctx.text(ServerCommand::InvalidCommand.to_string());
+                    ctx.text(ServerMessage::InvalidCommand.to_string());
                 }
             }
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),

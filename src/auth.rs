@@ -65,24 +65,20 @@ pub struct AuthQuery {
 /// Errors related to authentication.
 #[derive(Debug, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-#[serde(rename_all(
-    serialize = "SCREAMING_SNAKE_CASE",
-    deserialize = "SCREAMING_SNAKE_CASE"
-))]
 pub enum AuthError {
     NoResponse,
     BadJson,
     OAuthExchangeFailed,
     InvalidToken,
     InvalidSession,
-    MalformedIdToken,
+    MalformedIDToken,
 }
 
 impl From<&AuthError> for StatusCode {
     fn from(error: &AuthError) -> Self {
         match error {
             AuthError::InvalidToken => Self::UNAUTHORIZED,
-            AuthError::MalformedIdToken => Self::BAD_REQUEST,
+            AuthError::MalformedIDToken => Self::BAD_REQUEST,
             _ => StatusCode::BAD_GATEWAY,
         }
     }

@@ -12,7 +12,7 @@ use crate::{
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
-    server::{ClientMessage, Server},
+    server::{SendMessage, Server},
     user::{GenericUser, User},
     websocket::ChatSocket,
     ApiError, Result, ID,
@@ -132,7 +132,7 @@ impl FromRequest for UserID {
                     }
                 }
             }
-            err(AuthError::MalformedIdToken.into())
+            err(AuthError::MalformedIDToken.into())
         });
         result
     }
@@ -332,7 +332,7 @@ async fn send_message(
 ) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
         string_response!(srv
-            .send(ClientMessage {
+            .send(SendMessage {
                 user_id: user_id.0,
                 message: message,
                 hub_id: path.0 .0,

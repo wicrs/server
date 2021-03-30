@@ -33,10 +33,6 @@ pub mod websocket;
 /// Errors related to data processing.
 #[derive(Debug, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-#[serde(rename_all(
-    serialize = "SCREAMING_SNAKE_CASE",
-    deserialize = "SCREAMING_SNAKE_CASE"
-))]
 pub enum DataError {
     WriteFile,
     Deserialize,
@@ -47,13 +43,8 @@ pub enum DataError {
 }
 
 /// General errors that can occur when using the WICRS API.
-#[derive(Debug, Serialize, Deserialize, actix::Message, Display, FromStr)]
+#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-#[rtype(result = "()")]
-#[serde(rename_all(
-    serialize = "SCREAMING_SNAKE_CASE",
-    deserialize = "SCREAMING_SNAKE_CASE"
-))]
 pub enum ApiError {
     Muted,
     Banned,
@@ -75,6 +66,8 @@ pub enum ApiError {
     InvalidMessage,
     MessageSendFailed,
     CannotAuthenticate,
+    AlreadyTyping,
+    NotTyping,
     Io,
     #[display("{}({0})")]
     Auth(AuthError),
@@ -121,6 +114,8 @@ impl From<&ApiError> for StatusCode {
             ApiError::CannotAuthenticate => Self::INTERNAL_SERVER_ERROR,
             ApiError::InvalidMessage => Self::BAD_REQUEST,
             ApiError::MessageSendFailed => Self::INTERNAL_SERVER_ERROR,
+            ApiError::AlreadyTyping => Self::CONFLICT,
+            ApiError::NotTyping => Self::CONFLICT,
             ApiError::Auth(error) => error.into(),
             ApiError::Data(_) => Self::INTERNAL_SERVER_ERROR,
             ApiError::Io => Self::INTERNAL_SERVER_ERROR,

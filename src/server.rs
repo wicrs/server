@@ -1,10 +1,10 @@
-use crate::{api, hub::Hub, Result, ID};
+use crate::{api, channel, hub::Hub, ApiError, Result, ID};
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Message, Clone)]
 #[rtype(result = "Result<ID>")]
-pub struct ClientMessage {
+pub struct SendMessage {
     pub user_id: ID,
     pub message: String,
     pub hub_id: ID,
@@ -28,7 +28,7 @@ pub struct Unsubscribe {
 }
 
 #[derive(Message, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<()>")]
 pub struct StartTyping {
     pub user_id: ID,
     pub hub_id: ID,
@@ -36,7 +36,7 @@ pub struct StartTyping {
 }
 
 #[derive(Message, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<()>")]
 pub struct StopTyping {
     pub user_id: ID,
     pub hub_id: ID,
@@ -47,26 +47,28 @@ pub struct StopTyping {
 #[rtype(result = "()")]
 pub struct Disconnect {
     pub user_id: ID,
+    pub addr: Recipient<ServerClientMessage>,
 }
 
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub struct Connect {
     pub user_id: ID,
-    pub addr: Recipient<Message>,
+    pub addr: Recipient<ServerClientMessage>,
 }
 
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
-pub struct Message {
-    pub message: crate::channel::Message,
-    pub hub_id: ID,
-    pub channel_id: ID,
+pub enum ServerClientMessage {
+    NewMessage(ID, ID, channel::Message),
+    TypingStart(ID, ID, ID),
+    TypingStop(ID, ID, ID),
 }
 
 pub struct Server {
     subscribed: HashMap<(ID, ID), HashSet<ID>>, // HashMap<(HubID, ChannelID), Vec<UserID>>
-    sessions: HashMap<ID, Recipient<Message>>,  // HashMap<UserID, UserSession>
+    sessions: HashMap<ID, HashSet<Recipient<ServerClientMessage>>>, // HashMap<UserID, UserSession>
+    typing: HashSet<ID>,
 }
 
 impl Server {
@@ -74,6 +76,19 @@ impl Server {
         Self {
             subscribed: HashMap::new(),
             sessions: HashMap::new(),
+            typing: HashSet::new(),
+        }
+    }
+
+    async fn send_message(&self, message: ServerClientMessage, hub_id: ID, channel_id: ID) {
+        if let Some(subscribed) = self.subscribed.get(&(hub_id, channel_id)) {
+            for user_id in subscribed {
+                if let Some(sessions) = self.sessions.get(user_id) {
+                    for connection in sessions {
+                        let _ = connection.do_send(message.clone());
+                    }
+                }
+            }
         }
     }
 }
@@ -82,11 +97,61 @@ impl Actor for Server {
     type Context = Context<Self>;
 }
 
+impl Handler<StartTyping> for Server {
+    type Result = Result<()>;
+
+    fn handle(&mut self, msg: StartTyping, _: &mut Self::Context) -> Self::Result {
+        if self.typing.contains(&msg.user_id) {
+            return Err(ApiError::AlreadyTyping);
+        } else {
+            futures::executor::block_on(async {
+                let hub = Hub::load(&msg.hub_id).await?;
+                hub.get_channel(&msg.user_id, &msg.channel_id)?;
+                self.send_message(
+                    ServerClientMessage::TypingStart(
+                        msg.hub_id.clone(),
+                        msg.channel_id.clone(),
+                        msg.user_id.clone(),
+                    ),
+                    msg.hub_id,
+                    msg.channel_id,
+                )
+                .await;
+                Ok(())
+            })
+        }
+    }
+}
+
+impl Handler<StopTyping> for Server {
+    type Result = Result<()>;
+
+    fn handle(&mut self, msg: StopTyping, _: &mut Self::Context) -> Self::Result {
+        if self.typing.remove(&msg.user_id) {
+            futures::executor::block_on(self.send_message(
+                ServerClientMessage::TypingStop(
+                    msg.hub_id.clone(),
+                    msg.channel_id.clone(),
+                    msg.user_id.clone(),
+                ),
+                msg.hub_id,
+                msg.channel_id,
+            ));
+            Ok(())
+        } else {
+            Err(ApiError::AlreadyTyping)
+        }
+    }
+}
+
 impl Handler<Connect> for Server {
     type Result = ();
 
     fn handle(&mut self, msg: Connect, _: &mut Self::Context) -> Self::Result {
-        self.sessions.insert(msg.user_id, msg.addr);
+        self.sessions
+            .entry(msg.user_id)
+            .or_insert_with(|| HashSet::new())
+            .insert(msg.addr);
     }
 }
 
@@ -94,7 +159,9 @@ impl Handler<Disconnect> for Server {
     type Result = ();
 
     fn handle(&mut self, msg: Disconnect, _: &mut Self::Context) -> Self::Result {
-        self.sessions.remove(&msg.user_id);
+        if let Some(set) = self.sessions.get_mut(&msg.user_id) {
+            set.remove(&msg.addr);
+        }
     }
 }
 
@@ -131,29 +198,21 @@ impl Handler<Unsubscribe> for Server {
     }
 }
 
-impl Handler<ClientMessage> for Server {
+impl Handler<SendMessage> for Server {
     type Result = Result<ID>;
 
-    fn handle(&mut self, msg: ClientMessage, _: &mut Self::Context) -> Self::Result {
-        let message = futures::executor::block_on(api::send_message(
-            &msg.user_id,
-            &msg.hub_id,
-            &msg.channel_id,
-            msg.message,
-        ))?;
-        let id = message.id.clone();
-        if let Some(subscribed) = self.subscribed.get(&(msg.hub_id, msg.channel_id)) {
-            let message = Message {
-                message: message,
-                hub_id: msg.hub_id,
-                channel_id: msg.channel_id,
-            };
-            for user_id in subscribed {
-                if let Some(session) = self.sessions.get(user_id) {
-                    let _ = session.do_send(message.clone());
-                }
-            }
-        }
-        Ok(id)
+    fn handle(&mut self, msg: SendMessage, _: &mut Self::Context) -> Self::Result {
+        futures::executor::block_on(async {
+            let message =
+                api::send_message(&msg.user_id, &msg.hub_id, &msg.channel_id, msg.message).await?;
+            let id = message.id.clone();
+            self.send_message(
+                ServerClientMessage::NewMessage(msg.hub_id, msg.channel_id, message),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
+            Ok(id)
+        })
     }
 }
