@@ -5,7 +5,10 @@ use std::{
 
 use crate::{
     channel,
-    server::{Connect, SendMessage, Server, ServerClientMessage, Subscribe, Unsubscribe},
+    server::{
+        Connect, SendMessage, Server, ServerClientMessage, StartTyping, StopTyping, Subscribe,
+        Unsubscribe,
+    },
     ApiError, ID,
 };
 use actix::{
@@ -24,8 +27,10 @@ pub enum ClientMessage {
     Subscribe(ID, ID),
     #[display("{}({0},{1})")]
     Unsubscribe(ID, ID),
-    StartTyping,
-    StopTyping,
+    #[display("{}({0},{1})")]
+    StartTyping(ID, ID),
+    #[display("{}({0},{1})")]
+    StopTyping(ID, ID),
 }
 
 #[derive(Display, FromStr)]
@@ -151,8 +156,20 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                                 channel_id: channel,
                             });
                         }
-                        ClientMessage::StartTyping => {}
-                        ClientMessage::StopTyping => {}
+                        ClientMessage::StartTyping(hub, channel) => {
+                            self.addr.do_send(StartTyping {
+                                user_id: self.user.clone(),
+                                hub_id: hub,
+                                channel_id: channel,
+                            });
+                        }
+                        ClientMessage::StopTyping(hub, channel) => {
+                            self.addr.do_send(StopTyping {
+                                user_id: self.user.clone(),
+                                hub_id: hub,
+                                channel_id: channel,
+                            });
+                        }
                     }
                 } else {
                     ctx.text(ServerMessage::InvalidCommand.to_string());
