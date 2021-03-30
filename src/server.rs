@@ -1,4 +1,4 @@
-use crate::{api, channel, hub::Hub, ApiError, Result, ID};
+use crate::{api, channel, hub::Hub, Error, Result, ID};
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -102,7 +102,7 @@ impl Handler<StartTyping> for Server {
 
     fn handle(&mut self, msg: StartTyping, _: &mut Self::Context) -> Self::Result {
         if self.typing.contains(&msg.user_id) {
-            return Err(ApiError::AlreadyTyping);
+            return Err(Error::AlreadyTyping);
         } else {
             futures::executor::block_on(async {
                 let hub = Hub::load(&msg.hub_id).await?;
@@ -139,7 +139,7 @@ impl Handler<StopTyping> for Server {
             ));
             Ok(())
         } else {
-            Err(ApiError::AlreadyTyping)
+            Err(Error::AlreadyTyping)
         }
     }
 }

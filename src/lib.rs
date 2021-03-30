@@ -1,12 +1,5 @@
-use auth::AuthError;
-use permission::{ChannelPermission, HubPermission};
-use reqwest::StatusCode;
+pub use error::{Result, Error};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use parse_display::{Display, FromStr};
-
-use serde::{Deserialize, Serialize};
-
 use uuid::Uuid;
 
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
@@ -17,6 +10,8 @@ pub mod auth;
 pub mod channel;
 /// Various objects for storing configuration.
 pub mod config;
+/// Errors
+pub mod error;
 /// Definition of the HTTP API.
 pub mod httpapi;
 /// Hubs, permission management, channel management and member management.
@@ -29,101 +24,6 @@ pub mod server;
 pub mod user;
 /// Definition of the WebSocket API.
 pub mod websocket;
-
-/// Errors related to data processing.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
-pub enum DataError {
-    WriteFile,
-    Deserialize,
-    Directory,
-    ReadFile,
-    Serialize,
-    DeleteFailed,
-}
-
-/// General errors that can occur when using the WICRS API.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
-pub enum ApiError {
-    Muted,
-    Banned,
-    HubNotFound,
-    ChannelNotFound,
-    #[display("{}({0})")]
-    MissingHubPermission(HubPermission),
-    #[display("{}({0})")]
-    MissingChannelPermission(ChannelPermission),
-    NotInHub,
-    UserNotFound,
-    MemberNotFound,
-    MessageNotFound,
-    NotAuthenticated,
-    GroupNotFound,
-    InvalidName,
-    UnexpectedServerArg,
-    MessageTooBig,
-    InvalidMessage,
-    MessageSendFailed,
-    CannotAuthenticate,
-    AlreadyTyping,
-    NotTyping,
-    Io,
-    #[display("{}({0})")]
-    Auth(AuthError),
-    #[display("{}({0})")]
-    Data(DataError),
-}
-
-impl From<AuthError> for ApiError {
-    fn from(err: AuthError) -> Self {
-        Self::Auth(err)
-    }
-}
-
-impl From<DataError> for ApiError {
-    fn from(err: DataError) -> Self {
-        Self::Data(err)
-    }
-}
-
-impl From<std::io::Error> for ApiError {
-    fn from(_: std::io::Error) -> Self {
-        Self::Io
-    }
-}
-
-impl From<&ApiError> for StatusCode {
-    fn from(error: &ApiError) -> Self {
-        match error {
-            ApiError::NotAuthenticated => Self::UNAUTHORIZED,
-            ApiError::InvalidName => Self::BAD_REQUEST,
-            ApiError::Banned => Self::FORBIDDEN,
-            ApiError::ChannelNotFound => Self::NOT_FOUND,
-            ApiError::GroupNotFound => Self::NOT_FOUND,
-            ApiError::HubNotFound => Self::NOT_FOUND,
-            ApiError::MemberNotFound => Self::NOT_FOUND,
-            ApiError::MessageNotFound => Self::NOT_FOUND,
-            ApiError::Muted => Self::FORBIDDEN,
-            ApiError::MissingChannelPermission(_) => Self::FORBIDDEN,
-            ApiError::MissingHubPermission(_) => Self::FORBIDDEN,
-            ApiError::NotInHub => Self::NOT_FOUND,
-            ApiError::UserNotFound => Self::NOT_FOUND,
-            ApiError::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
-            ApiError::MessageTooBig => Self::BAD_REQUEST,
-            ApiError::CannotAuthenticate => Self::INTERNAL_SERVER_ERROR,
-            ApiError::InvalidMessage => Self::BAD_REQUEST,
-            ApiError::MessageSendFailed => Self::INTERNAL_SERVER_ERROR,
-            ApiError::AlreadyTyping => Self::CONFLICT,
-            ApiError::NotTyping => Self::CONFLICT,
-            ApiError::Auth(error) => error.into(),
-            ApiError::Data(_) => Self::INTERNAL_SERVER_ERROR,
-            ApiError::Io => Self::INTERNAL_SERVER_ERROR,
-        }
-    }
-}
-
-pub type Result<T, E = ApiError> = std::result::Result<T, E>;
 
 /// String to identify the version of the library, used for external requests.
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
@@ -169,7 +69,7 @@ pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
     } else {
-        Err(ApiError::InvalidName)
+        Err(Error::InvalidName)
     }
 }
 
@@ -178,12 +78,12 @@ pub fn check_name_validity(name: &str) -> Result<()> {
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {
         if !$member.has_permission($perm, &$hub) {
-            return Err(ApiError::MissingHubPermission($perm));
+            return Err(Error::MissingHubPermission($perm));
         }
     };
     ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
         if !$member.has_channel_permission($channel, &$perm, &$hub) {
-            return Err(ApiError::MissingChannelPermission($perm));
+            return Err(Error::MissingChannelPermission($perm));
         }
     };
 }

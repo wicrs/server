@@ -9,7 +9,7 @@ use crate::{
         Connect, SendMessage, Server, ServerClientMessage, StartTyping, StopTyping, Subscribe,
         Unsubscribe,
     },
-    ApiError, ID,
+    Error, ID,
 };
 use actix::{
     fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
@@ -37,7 +37,7 @@ pub enum ClientMessage {
 #[display(style = "SNAKE_CASE")]
 pub enum ServerMessage {
     #[display("{}({0})")]
-    Error(ApiError),
+    Error(Error),
     InvalidCommand,
     #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, channel::Message),

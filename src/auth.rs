@@ -1,20 +1,19 @@
-use std::{collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
+use parse_display::{Display, FromStr};
 use base64::URL_SAFE_NO_PAD;
 use futures::lock::Mutex;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-use reqwest::{
-    header::{AUTHORIZATION, USER_AGENT},
-    StatusCode,
-};
+use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use tokio::sync::RwLock;
 
-use parse_display::{Display, FromStr};
-
-use crate::{config::AuthConfigs, get_system_millis, user::User, Result, ID, USER_AGENT_STRING};
+use crate::{
+    config::AuthConfigs, error::AuthError, get_system_millis, user::User, Result, ID,
+    USER_AGENT_STRING,
+};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -27,28 +26,9 @@ type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>; // HashMap<Log
 pub const SESSION_FILE: &str = "data/sessions.json";
 
 /// Represents supported OAuth services.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Display, FromStr)]
 pub enum Service {
     GitHub,
-}
-
-impl FromStr for Service {
-    type Err = ();
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "github" => Ok(Self::GitHub),
-            _ => Err(()),
-        }
-    }
-}
-
-impl Display for Service {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            &Self::GitHub => "GitHub",
-        })
-    }
 }
 
 /// Parameters for authentication finish queries.
@@ -60,28 +40,6 @@ pub struct AuthQuery {
     pub code: String,
     /// Optional expiry date in milliseconds from Unix Epoch for the token returned after the authentication is complete.
     pub expires: Option<u128>,
-}
-
-/// Errors related to authentication.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
-pub enum AuthError {
-    NoResponse,
-    BadJson,
-    OAuthExchangeFailed,
-    InvalidToken,
-    InvalidSession,
-    MalformedIDToken,
-}
-
-impl From<&AuthError> for StatusCode {
-    fn from(error: &AuthError) -> Self {
-        match error {
-            AuthError::InvalidToken => Self::UNAUTHORIZED,
-            AuthError::MalformedIDToken => Self::BAD_REQUEST,
-            _ => StatusCode::BAD_GATEWAY,
-        }
-    }
 }
 
 /// Combination of a user ID and an authentication token.

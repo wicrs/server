@@ -6,16 +6,17 @@ use serde::Deserialize;
 
 use crate::{
     api,
-    auth::{Auth, AuthError, AuthQuery, IDToken, Service},
+    auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     config::Config,
+    error::{Error, AuthError},
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
     server::{SendMessage, Server},
     user::{GenericUser, User},
     websocket::ChatSocket,
-    ApiError, Result, ID,
+    Result, ID,
 };
 use tokio::sync::RwLock;
 
@@ -81,7 +82,7 @@ pub async fn server(config: Config) -> std::io::Result<()> {
 
 struct UserID(ID);
 
-impl ResponseError for ApiError {
+impl ResponseError for Error {
     fn status_code(&self) -> reqwest::StatusCode {
         self.into()
     }
@@ -99,7 +100,7 @@ impl ResponseError for ApiError {
 }
 
 impl FromRequest for UserID {
-    type Error = ApiError;
+    type Error = Error;
 
     type Future = Ready<Result<Self>>;
 
@@ -126,7 +127,7 @@ impl FromRequest for UserID {
                                     err(AuthError::InvalidToken.into())
                                 }
                             } else {
-                                err(ApiError::CannotAuthenticate)
+                                err(Error::CannotAuthenticate)
                             };
                         }
                     }
@@ -339,9 +340,9 @@ async fn send_message(
                 channel_id: path.1
             })
             .await
-            .map_err(|_| ApiError::MessageSendFailed)?)
+            .map_err(|_| Error::MessageSendFailed)?)
     } else {
-        Err(ApiError::InvalidMessage)
+        Err(Error::InvalidMessage)
     }
 }
 

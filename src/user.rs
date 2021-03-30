@@ -8,8 +8,12 @@ use sha3::{
 };
 
 use crate::{
-    auth::Service, check_name_validity, get_system_millis, hub::Hub, ApiError, DataError, Result,
-    ID,
+    auth::Service,
+    check_name_validity,
+    error::{Error, DataError},
+    get_system_millis,
+    hub::Hub,
+    Result, ID,
 };
 
 const USER_FOLDER: &str = "data/users/";
@@ -95,7 +99,7 @@ impl User {
     pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
         let mut hub = Hub::load(hub_id).await?;
         if hub.bans.contains(&self.id) {
-            Err(ApiError::Banned)
+            Err(Error::Banned)
         } else {
             hub.user_join(&self)?;
             hub.save().await?;
@@ -109,7 +113,7 @@ impl User {
         if self.in_hubs.contains(hub_id) {
             Ok(())
         } else {
-            Err(ApiError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
@@ -132,7 +136,7 @@ impl User {
             self.in_hubs.remove(index);
             Ok(())
         } else {
-            Err(ApiError::NotInHub)
+            Err(Error::NotInHub)
         }
     }
 
@@ -157,7 +161,7 @@ impl User {
         let filename = format!("{}{:x}.json", USER_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
-            return Err(ApiError::UserNotFound);
+            return Err(Error::UserNotFound);
         }
         let json = tokio::fs::read_to_string(path).await?;
         serde_json::from_str(&json).map_err(|_| DataError::Deserialize.into())

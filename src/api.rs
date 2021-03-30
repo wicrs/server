@@ -6,11 +6,12 @@ use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     check_name_validity, check_permission,
+    error::Error,
     hub::{Hub, HubMember},
     new_id,
     permission::{ChannelPermission, HubPermission, PermissionSetting},
     user::{GenericUser, User},
-    ApiError, Result, ID,
+    Result, ID,
 };
 
 /// Start the OAuth login process. Returns a redirect to the given OAuth service's page with the correct parameters.
@@ -66,7 +67,7 @@ pub async fn get_user_stripped(user_id: &ID, id: ID) -> Result<GenericUser> {
     User::load(&id)
         .await
         .map(|u| User::to_generic(&u, user_id))
-        .map_err(|_| ApiError::UserNotFound)
+        .map_err(|_| Error::UserNotFound)
 }
 
 /// Changes a user's username.
@@ -265,7 +266,7 @@ pub async fn user_banned(actor_id: &ID, hub_id: &ID, user_id: &ID) -> Result<boo
     if hub.members.contains_key(actor_id) {
         Ok(hub.bans.contains(user_id))
     } else {
-        Err(ApiError::NotInHub)
+        Err(Error::NotInHub)
     }
 }
 
@@ -289,7 +290,7 @@ pub async fn user_muted(actor_id: &ID, hub_id: &ID, user_id: &ID) -> Result<bool
     if hub.members.contains_key(actor_id) {
         Ok(hub.mutes.contains(user_id))
     } else {
-        Err(ApiError::NotInHub)
+        Err(Error::NotInHub)
     }
 }
 
@@ -362,7 +363,7 @@ async fn hub_user_op(actor_id: &ID, hub_id: &ID, user_id: &ID, op: HubPermission
         HubPermission::Unban => hub.unban_user(user_id),
         HubPermission::Mute => hub.mute_user(user_id.clone()),
         HubPermission::Unmute => hub.unmute_user(user_id),
-        _ => return Err(ApiError::UnexpectedServerArg),
+        _ => return Err(Error::UnexpectedServerArg),
     }
     hub.save().await
 }
@@ -604,7 +605,7 @@ pub async fn send_message(
         let mut hub = Hub::load(hub_id).await?;
         hub.send_message(user_id, channel_id, message).await
     } else {
-        Err(ApiError::MessageTooBig)
+        Err(Error::MessageTooBig)
     }
 }
 
@@ -637,7 +638,7 @@ pub async fn get_message(
     if let Some(message) = channel.get_message(message_id).await {
         Ok(message)
     } else {
-        Err(ApiError::MessageNotFound)
+        Err(Error::MessageNotFound)
     }
 }
 
