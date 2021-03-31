@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channel::{Channel, Message},
     check_name_validity, check_permission,
-    error::{Error, DataError},
+    error::{DataError, Error},
     get_system_millis, new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,

@@ -1,4 +1,4 @@
-pub use error::{Result, Error};
+use error::{Error, Result};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 

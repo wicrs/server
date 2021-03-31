@@ -9,7 +9,7 @@ use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     config::Config,
-    error::{Error, AuthError},
+    error::{AuthError, Error},
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},

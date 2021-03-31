@@ -10,7 +10,7 @@ use sha3::{
 use crate::{
     auth::Service,
     check_name_validity,
-    error::{Error, DataError},
+    error::{DataError, Error},
     get_system_millis,
     hub::Hub,
     Result, ID,

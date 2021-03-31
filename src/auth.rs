@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
-use parse_display::{Display, FromStr};
 use base64::URL_SAFE_NO_PAD;
 use futures::lock::Mutex;
+use parse_display::{Display, FromStr};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
