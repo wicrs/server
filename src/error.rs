@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Errors related to data processing.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum DataError {
     WriteFile,
@@ -18,7 +18,7 @@ pub enum DataError {
 }
 
 /// Errors related to authentication.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum AuthError {
     NoResponse,
@@ -40,7 +40,7 @@ impl From<&AuthError> for StatusCode {
 }
 
 /// General errors that can occur when using the WICRS API.
-#[derive(Debug, Serialize, Deserialize, Display, FromStr)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum Error {
     Muted,

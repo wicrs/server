@@ -53,14 +53,15 @@ impl From<ServerClientMessage> for ServerMessage {
     fn from(message: ServerClientMessage) -> Self {
         match message {
             ServerClientMessage::NewMessage(hub_id, channel_id, message) => {
-                ServerMessage::ChatMessage(hub_id, channel_id, message)
+                Self::ChatMessage(hub_id, channel_id, message)
             }
             ServerClientMessage::TypingStart(hub_id, channel_id, user_id) => {
-                ServerMessage::UserStartedTyping(hub_id, channel_id, user_id)
+                Self::UserStartedTyping(hub_id, channel_id, user_id)
             }
             ServerClientMessage::TypingStop(hub_id, channel_id, user_id) => {
-                ServerMessage::UserStoppedTyping(hub_id, channel_id, user_id)
+                Self::UserStoppedTyping(hub_id, channel_id, user_id)
             }
+            ServerClientMessage::Error(err) => Self::Error(err),
         }
     }
 }
