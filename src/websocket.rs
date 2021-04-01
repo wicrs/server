@@ -5,10 +5,7 @@ use std::{
 
 use crate::{
     channel,
-    server::{
-        Connect, SendMessage, Server, ServerClientMessage, StartTyping, StopTyping, Subscribe,
-        Unsubscribe,
-    },
+    server::{ClientCommand, ClientServerMessage, Response, Server, ServerMessage, ServerResponse},
     Error, ID,
 };
 use actix::{
@@ -35,33 +32,37 @@ pub enum ClientMessage {
 
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-pub enum ServerMessage {
+pub enum ServerClientMessage {
     #[display("{}({0})")]
     Error(Error),
     InvalidCommand,
+    CommandFailed,
+    #[display("{}({0})")]
+    CommandSent(u128),
     #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, channel::Message),
     #[display("{}({0})")]
     HubUpdated(ID),
+    #[display("{}({0}{1})")]
+    Result(u128, Response),
     #[display("{}({0},{1},{2})")]
     UserStartedTyping(ID, ID, ID),
     #[display("{}({0},{1},{2})")]
     UserStoppedTyping(ID, ID, ID),
 }
 
-impl From<ServerClientMessage> for ServerMessage {
-    fn from(message: ServerClientMessage) -> Self {
+impl From<ServerMessage> for ServerClientMessage {
+    fn from(message: ServerMessage) -> Self {
         match message {
-            ServerClientMessage::NewMessage(hub_id, channel_id, message) => {
+            ServerMessage::NewMessage(hub_id, channel_id, message) => {
                 Self::ChatMessage(hub_id, channel_id, message)
             }
-            ServerClientMessage::TypingStart(hub_id, channel_id, user_id) => {
+            ServerMessage::TypingStart(hub_id, channel_id, user_id) => {
                 Self::UserStartedTyping(hub_id, channel_id, user_id)
             }
-            ServerClientMessage::TypingStop(hub_id, channel_id, user_id) => {
+            ServerMessage::TypingStop(hub_id, channel_id, user_id) => {
                 Self::UserStoppedTyping(hub_id, channel_id, user_id)
             }
-            ServerClientMessage::Error(err) => Self::Error(err),
         }
     }
 }
@@ -81,21 +82,26 @@ impl Actor for ChatSocket {
         self.hb(ctx);
         let addr = ctx.address();
         self.addr
-            .send(Connect {
-                addr: addr.recipient(),
-                user_id: self.user.clone(),
-            })
+            .send(ClientCommand::Connect(self.user.clone(), addr.recipient()).into())
             .into_actor(self)
             .then(|_, _, _| fut::ready(()))
             .wait(ctx);
     }
 }
 
-impl Handler<ServerClientMessage> for ChatSocket {
+impl Handler<ServerResponse> for ChatSocket {
     type Result = ();
 
-    fn handle(&mut self, msg: ServerClientMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(ServerMessage::from(msg).to_string())
+    fn handle(&mut self, msg: ServerResponse, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(ServerClientMessage::Result(msg.responding_to, msg.message).to_string());
+    }
+}
+
+impl Handler<ServerMessage> for ChatSocket {
+    type Result = ();
+
+    fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(ServerClientMessage::from(msg).to_string())
     }
 }
 
@@ -132,52 +138,89 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
-                println!("WS TEXT: {}", text);
                 if let Ok(command) = ClientMessage::from_str(&text) {
                     match command {
                         ClientMessage::SendMessage(hub, channel, message) => {
-                            self.addr.do_send(SendMessage {
-                                user_id: self.user.clone(),
-                                message: message,
-                                hub_id: hub,
-                                channel_id: channel,
-                            })
+                            let id = rand::random();
+                            let message = ClientServerMessage {
+                                client_addr: Some(ctx.address().recipient()),
+                                message_id: id,
+                                command: ClientCommand::SendMessage(
+                                    self.user.clone(),
+                                    hub,
+                                    channel,
+                                    message,
+                                ),
+                            };
+                            if let Ok(_) = self.addr.try_send(message) {
+                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                            } else {
+                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                            }
                         }
                         ClientMessage::Subscribe(hub, channel) => {
-                            self.addr.do_send(Subscribe {
-                                user_id: self.user.clone(),
-                                hub_id: hub,
-                                channel_id: channel,
-                            });
+                            let id = rand::random();
+                            let message = ClientServerMessage {
+                                client_addr: Some(ctx.address().recipient()),
+                                message_id: id,
+                                command: ClientCommand::Subscribe(self.user.clone(), hub, channel),
+                            };
+                            if let Ok(_) = self.addr.try_send(message) {
+                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                            } else {
+                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                            }
                         }
                         ClientMessage::Unsubscribe(hub, channel) => {
-                            self.addr.do_send(Unsubscribe {
-                                user_id: self.user.clone(),
-                                hub_id: hub,
-                                channel_id: channel,
-                            });
+                            if let Ok(_) = self.addr.try_send(
+                                ClientCommand::Unsubscribe(self.user.clone(), hub, channel).into(),
+                            ) {
+                                ctx.text(ServerClientMessage::CommandSent(0).to_string());
+                            } else {
+                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                            }
                         }
                         ClientMessage::StartTyping(hub, channel) => {
-                            self.addr.do_send(StartTyping {
-                                user_id: self.user.clone(),
-                                hub_id: hub,
-                                channel_id: channel,
-                            });
+                            let id = rand::random();
+                            let message = ClientServerMessage {
+                                client_addr: Some(ctx.address().recipient()),
+                                message_id: id,
+                                command: ClientCommand::StartTyping(
+                                    self.user.clone(),
+                                    hub,
+                                    channel,
+                                ),
+                            };
+                            if let Ok(_) = self.addr.try_send(message) {
+                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                            } else {
+                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                            }
                         }
                         ClientMessage::StopTyping(hub, channel) => {
-                            self.addr.do_send(StopTyping {
-                                user_id: self.user.clone(),
-                                hub_id: hub,
-                                channel_id: channel,
-                            });
+                            if let Ok(_) = self.addr.try_send(
+                                ClientCommand::StopTyping(self.user.clone(), hub, channel).into(),
+                            ) {
+                                ctx.text(ServerClientMessage::CommandSent(0).to_string());
+                            } else {
+                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                            }
                         }
                     }
                 } else {
-                    ctx.text(ServerMessage::InvalidCommand.to_string());
+                    ctx.text(ServerClientMessage::InvalidCommand.to_string());
                 }
             }
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
             Ok(ws::Message::Close(reason)) => {
+                self.addr
+                    .send(
+                        ClientCommand::Disconnect(self.user.clone(), ctx.address().recipient())
+                            .into(),
+                    )
+                    .into_actor(self)
+                    .then(|_, _, _| fut::ready(()))
+                    .wait(ctx);
                 ctx.close(reason);
                 ctx.stop();
             }
