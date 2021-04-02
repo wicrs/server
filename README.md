@@ -2,6 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/wicrs_server.svg)](https://crates.io/crates/wicrs_server)
 [![docs.rs](https://docs.rs/wicrs_server/badge.svg)](https://docs.rs/wicrs_server)
+[![Discord](https://img.shields.io/discord/822858421064958033?label=discord)](https://discord.gg/dAbjENCdfJ)
 
 A server for handling chat rooms and messaging groups written in rust.
 
