@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -72,10 +71,10 @@ impl HubMember {
 
     /// Removes the hub member from a permission group.
     pub fn leave_group(&mut self, group: &mut PermissionGroup) {
-        if let Some(index) = self.groups.par_iter().position_any(|id| id == &group.id) {
+        if let Some(index) = self.groups.iter().position(|id| id == &group.id) {
             self.groups.remove(index);
         }
-        if let Some(index) = group.members.par_iter().position_any(|id| id == &self.user) {
+        if let Some(index) = group.members.iter().position(|id| id == &self.user) {
             group.members.remove(index);
         }
     }
@@ -633,7 +632,7 @@ impl Hub {
         if self.members.contains_key(user_id) {
             let mut user = User::load(user_id).await?;
             self.user_leave(&user)?;
-            if let Some(index) = user.in_hubs.par_iter().position_any(|id| id == &self.id) {
+            if let Some(index) = user.in_hubs.iter().position(|id| id == &self.id) {
                 user.in_hubs.remove(index);
             }
             user.save().await?;

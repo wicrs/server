@@ -75,6 +75,7 @@ pub enum ServerNotification {
 pub struct Server {
     subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
     subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
+    subscribed: HashMap<Recipient<ServerMessage>, (HashSet<(ID, ID)>, HashSet<ID>)>,
 }
 
 impl Server {
@@ -82,6 +83,7 @@ impl Server {
         Self {
             subscribed_channels: HashMap::new(),
             subscribed_hubs: HashMap::new(),
+            subscribed: HashMap::new(),
         }
     }
 
@@ -121,12 +123,19 @@ impl Handler<ClientServerMessage> for Server {
     fn handle(&mut self, msg: ClientServerMessage, ctx: &mut Self::Context) -> Self::Result {
         match msg.command.clone() {
             ClientCommand::Disconnect(addr) => {
-                for channel_subscribers in self.subscribed_channels.values_mut() {
-                    channel_subscribers.remove(&addr);
+                if let Some((channels, hubs)) = self.subscribed.get(&addr) {
+                    for channel in channels {
+                        self.subscribed_channels
+                            .get_mut(channel)
+                            .and_then(|s| Some(s.remove(&addr)));
+                    }
+                    for hub in hubs {
+                        self.subscribed_hubs
+                            .get_mut(hub)
+                            .and_then(|s| Some(s.remove(&addr)));
+                    }
                 }
-                for hub_subscribers in self.subscribed_hubs.values_mut() {
-                    hub_subscribers.remove(&addr);
-                }
+                self.subscribed.remove(&addr);
             }
             ClientCommand::SubscribeChannel(user_id, hub_id, channel_id, addr) => {
                 futures::executor::block_on(async {
@@ -150,6 +159,11 @@ impl Handler<ClientServerMessage> for Server {
                                     &crate::permission::ChannelPermission::ReadMessage,
                                     &hub,
                                 ) {
+                                    self.subscribed
+                                        .entry(addr.clone())
+                                        .or_default()
+                                        .0
+                                        .insert((hub_id.clone(), channel_id.clone()));
                                     self.subscribed_channels
                                         .entry((hub_id, channel_id))
                                         .or_default()
@@ -182,7 +196,44 @@ impl Handler<ClientServerMessage> for Server {
                 });
             }
             ClientCommand::UnsubscribeChannel(hub_id, channel_id, recipient) => {
+                if let Some(subs) = self.subscribed.get_mut(&recipient) {
+                    subs.0.remove(&(hub_id, channel_id));
+                }
                 if let Some(entry) = self.subscribed_channels.get_mut(&(hub_id, channel_id)) {
+                    entry.remove(&recipient);
+                }
+            }
+            ClientCommand::SubscribeHub(user_id, hub_id, addr) => {
+                futures::executor::block_on(async {
+                    let result = if let Err(error) = Hub::load(&hub_id)
+                        .await
+                        .and_then(|hub| hub.get_member(&user_id))
+                    {
+                        Response::Error(error)
+                    } else {
+                        self.subscribed
+                            .entry(addr.clone())
+                            .or_default()
+                            .1
+                            .insert(hub_id.clone());
+                        self.subscribed_hubs.entry(hub_id).or_default().insert(addr);
+                        Response::Success
+                    };
+                    if let Some(addr) = msg.client_addr {
+                        let _ = addr
+                            .send(ServerResponse {
+                                responding_to: msg.message_id,
+                                message: result,
+                            })
+                            .await;
+                    }
+                });
+            }
+            ClientCommand::UnsubscribeHub(hub_id, recipient) => {
+                if let Some(subs) = self.subscribed.get_mut(&recipient) {
+                    subs.1.remove(&hub_id);
+                }
+                if let Some(entry) = self.subscribed_hubs.get_mut(&hub_id) {
                     entry.remove(&recipient);
                 }
             }
@@ -265,32 +316,6 @@ impl Handler<ClientServerMessage> for Server {
                 }
                 .into_actor(self)
                 .spawn(ctx);
-            }
-            ClientCommand::SubscribeHub(user_id, hub_id, addr) => {
-                futures::executor::block_on(async {
-                    let result = if let Err(error) = Hub::load(&hub_id)
-                        .await
-                        .and_then(|hub| hub.get_member(&user_id))
-                    {
-                        Response::Error(error)
-                    } else {
-                        self.subscribed_hubs.entry(hub_id).or_default().insert(addr);
-                        Response::Success
-                    };
-                    if let Some(addr) = msg.client_addr {
-                        let _ = addr
-                            .send(ServerResponse {
-                                responding_to: msg.message_id,
-                                message: result,
-                            })
-                            .await;
-                    }
-                });
-            }
-            ClientCommand::UnsubscribeHub(hub_id, recipient) => {
-                if let Some(entry) = self.subscribed_hubs.get_mut(&hub_id) {
-                    entry.remove(&recipient);
-                }
             }
         }
     }

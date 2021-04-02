@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use base64::URL_SAFE_NO_PAD;
 use futures::lock::Mutex;
 use parse_display::{Display, FromStr};
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,7 +121,7 @@ impl Auth {
                 serde_json::from_str::<HashMap<String, HashMap<String, u128>>>(&read)
             {
                 let now = get_system_millis();
-                map.par_iter_mut()
+                map.iter_mut()
                     .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
                 let _save = Auth::save_tokens(&map);
                 return map;
@@ -242,7 +241,7 @@ impl Auth {
             }
             let now = get_system_millis();
             sessions_lock
-                .par_iter_mut()
+                .iter_mut()
                 .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
             let _write = Auth::save_tokens(&sessions_lock);
         }

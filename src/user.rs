@@ -1,6 +1,5 @@
 use std::io::Read;
 
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use serde::{Deserialize, Serialize};
 use sha3::{
     digest::{ExtendableOutput, Update},
@@ -129,7 +128,7 @@ impl User {
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
     pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
-        if let Some(index) = self.in_hubs.par_iter().position_any(|id| id == hub_id) {
+        if let Some(index) = self.in_hubs.iter().position(|id| id == hub_id) {
             let mut hub = Hub::load(hub_id).await?;
             hub.user_leave(&self)?;
             hub.save().await?;

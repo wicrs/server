@@ -43,7 +43,7 @@ pub enum ServerClientMessage {
     ChatMessage(ID, ID, channel::Message),
     #[display("{}({0})")]
     HubUpdated(ID),
-    #[display("{}({0}{1})")]
+    #[display("{}({0},{1})")]
     Result(u128, Response),
     #[display("{}({0},{1},{2})")]
     UserStartedTyping(ID, ID, ID),
@@ -81,6 +81,13 @@ impl Actor for ChatSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
+    }
+
+    fn stopped(&mut self, ctx: &mut Self::Context) {
+        self.addr
+            .do_send(ClientServerMessage::from(ClientCommand::Disconnect(
+                ctx.address().recipient(),
+            )));
     }
 }
 
