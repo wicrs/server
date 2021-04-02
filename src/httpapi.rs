@@ -332,27 +332,15 @@ async fn send_message(
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
-        let receiver = crate::server::ResponseReceiver::new().start();
+        let message = api::send_message(&user_id.0, &path.0 .0, &path.1, message).await?;
         let _ = srv
-            .send(crate::server::ClientServerMessage {
-                client_addr: Some(receiver.clone().recipient()),
-                message_id: 0,
-                command: crate::server::ClientCommand::SendMessage(
-                    user_id.0, path.0 .0, path.1, message,
-                ),
-            })
-            .await
-            .map_err(|_| Error::MessageSendFailed)?;
-        let resp = string_response!(match receiver
-            .send(crate::server::GetResponse)
-            .await
-            .map_err(|_| Error::MessageSendFailed)?
-        {
-            crate::server::Response::Error(err) => Err(err),
-            crate::server::Response::Id(id) => Ok(id),
-            _ => Err(Error::MessageSendFailed),
-        });
-        resp
+            .send(crate::server::ServerNotification::NewMessage(
+                path.0 .0,
+                path.1,
+                message.clone(),
+            ))
+            .await;
+        string_response!(Ok(message.id))
     } else {
         Err(Error::InvalidMessage)
     }

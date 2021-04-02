@@ -577,7 +577,7 @@ pub async fn delete_channel(user_id: &ID, hub_id: &ID, channel_id: &ID) -> Resul
 }
 
 /// Sends a message in a text channel in a hub.
-/// Returns the ID of the message if successful.
+/// Returns the message if successful.
 ///
 /// # Arguments
 ///

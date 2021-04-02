@@ -63,6 +63,7 @@ impl From<ServerMessage> for ServerClientMessage {
             ServerMessage::TypingStop(hub_id, channel_id, user_id) => {
                 Self::UserStoppedTyping(hub_id, channel_id, user_id)
             }
+            ServerMessage::HubUpdated(hub_id) => Self::HubUpdated(hub_id),
         }
     }
 }
@@ -80,12 +81,6 @@ impl Actor for ChatSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
-        let addr = ctx.address();
-        self.addr
-            .send(ClientCommand::Connect(self.user.clone(), addr.recipient()).into())
-            .into_actor(self)
-            .then(|_, _, _| fut::ready(()))
-            .wait(ctx);
     }
 }
 
@@ -163,7 +158,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                             let message = ClientServerMessage {
                                 client_addr: Some(ctx.address().recipient()),
                                 message_id: id,
-                                command: ClientCommand::Subscribe(self.user.clone(), hub, channel),
+                                command: ClientCommand::SubscribeChannel(
+                                    self.user.clone(),
+                                    hub,
+                                    channel,
+                                    ctx.address().recipient(),
+                                ),
                             };
                             if let Ok(_) = self.addr.try_send(message) {
                                 ctx.text(ServerClientMessage::CommandSent(id).to_string());
@@ -172,9 +172,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                             }
                         }
                         ClientMessage::Unsubscribe(hub, channel) => {
-                            if let Ok(_) = self.addr.try_send(
-                                ClientCommand::Unsubscribe(self.user.clone(), hub, channel).into(),
-                            ) {
+                            if let Ok(_) = self.addr.try_send(ClientServerMessage::from(
+                                ClientCommand::UnsubscribeChannel(
+                                    hub,
+                                    channel,
+                                    ctx.address().recipient(),
+                                ),
+                            )) {
                                 ctx.text(ServerClientMessage::CommandSent(0).to_string());
                             } else {
                                 ctx.text(ServerClientMessage::CommandFailed.to_string());
@@ -198,9 +202,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                             }
                         }
                         ClientMessage::StopTyping(hub, channel) => {
-                            if let Ok(_) = self.addr.try_send(
-                                ClientCommand::StopTyping(self.user.clone(), hub, channel).into(),
-                            ) {
+                            if let Ok(_) = self.addr.try_send(ClientServerMessage::from(
+                                ClientCommand::StopTyping(self.user.clone(), hub, channel),
+                            )) {
                                 ctx.text(ServerClientMessage::CommandSent(0).to_string());
                             } else {
                                 ctx.text(ServerClientMessage::CommandFailed.to_string());
@@ -214,10 +218,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
             Ok(ws::Message::Close(reason)) => {
                 self.addr
-                    .send(
-                        ClientCommand::Disconnect(self.user.clone(), ctx.address().recipient())
-                            .into(),
-                    )
+                    .send(ClientServerMessage::from(ClientCommand::Disconnect(
+                        ctx.address().recipient(),
+                    )))
                     .into_actor(self)
                     .then(|_, _, _| fut::ready(()))
                     .wait(ctx);

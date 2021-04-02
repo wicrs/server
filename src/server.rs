@@ -1,10 +1,7 @@
 use crate::{api, channel, hub::Hub, Error, ID};
 use actix::prelude::*;
 use parse_display::{Display, FromStr};
-use std::{
-    collections::{HashMap, HashSet},
-    task::{Poll, Waker},
-};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
@@ -29,67 +26,14 @@ impl From<ClientCommand> for ClientServerMessage {
 
 #[derive(Clone)]
 pub enum ClientCommand {
-    Connect(ID, Recipient<ServerMessage>),
-    Disconnect(ID, Recipient<ServerMessage>),
-    Subscribe(ID, ID, ID),
-    Unsubscribe(ID, ID, ID),
+    Disconnect(Recipient<ServerMessage>),
+    SubscribeHub(ID, ID, Recipient<ServerMessage>),
+    UnsubscribeHub(ID, Recipient<ServerMessage>),
+    SubscribeChannel(ID, ID, ID, Recipient<ServerMessage>),
+    UnsubscribeChannel(ID, ID, Recipient<ServerMessage>),
     StartTyping(ID, ID, ID),
     StopTyping(ID, ID, ID),
     SendMessage(ID, ID, ID, String),
-}
-
-#[derive(Message, Clone)]
-#[rtype(result = "Response")]
-pub struct GetResponse;
-pub struct ResponseReceiver {
-    response: Option<Response>,
-    waker: Option<Waker>,
-}
-impl ResponseReceiver {
-    pub fn new() -> Self {
-        Self {
-            response: None,
-            waker: None,
-        }
-    }
-}
-impl Actor for ResponseReceiver {
-    type Context = Context<Self>;
-}
-impl Handler<ServerResponse> for ResponseReceiver {
-    type Result = ();
-
-    fn handle(&mut self, msg: ServerResponse, _: &mut Self::Context) -> Self::Result {
-        self.response = Some(msg.message);
-        println!("response populated");
-        if let Some(waker) = &self.waker {
-            waker.wake_by_ref();
-        }
-    }
-}
-impl Handler<GetResponse> for ResponseReceiver {
-    type Result = Response;
-
-    fn handle(&mut self, _: GetResponse, _: &mut Self::Context) -> Self::Result {
-        println!("response requested");
-        futures::executor::block_on(self)
-    }
-}
-impl Future for ResponseReceiver {
-    type Output = Response;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        println!("receiver polled");
-        if let Some(response) = self.response.clone() {
-            Poll::Ready(response)
-        } else {
-            self.waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
 }
 
 #[derive(Message, Clone)]
@@ -101,7 +45,8 @@ pub struct ServerResponse {
     pub message: Response,
 }
 
-#[derive(MessageResponse, Clone, Display, FromStr)]
+#[derive(MessageResponse, Clone, Display, FromStr, Message)]
+#[rtype(result = "()")]
 #[display(style = "SNAKE_CASE")]
 pub enum Response {
     #[display("{}({0})")]
@@ -115,37 +60,52 @@ pub enum Response {
 #[rtype(result = "()")]
 pub enum ServerMessage {
     NewMessage(ID, ID, channel::Message),
+    HubUpdated(ID),
     TypingStart(ID, ID, ID),
     TypingStop(ID, ID, ID),
 }
 
+#[derive(Message, Clone)]
+#[rtype(result = "()")]
+pub enum ServerNotification {
+    NewMessage(ID, ID, channel::Message),
+    HubUpdated(ID),
+}
+
 pub struct Server {
-    subscribed: HashMap<(ID, ID), HashSet<ID>>, // HashMap<(HubID, ChannelID), Vec<UserID>>
-    sessions: HashMap<ID, HashSet<Recipient<ServerMessage>>>, // HashMap<UserID, UserSession>
+    subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
+    subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
 }
 
 impl Server {
     pub fn new() -> Self {
         Self {
-            subscribed: HashMap::new(),
-            sessions: HashMap::new(),
+            subscribed_channels: HashMap::new(),
+            subscribed_hubs: HashMap::new(),
         }
     }
 
-    async fn send_message(
-        subscribed: HashMap<(ID, ID), HashSet<ID>>,
-        sessions: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
+    async fn send_hub(
+        subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
+        message: ServerMessage,
+        hub_id: ID,
+    ) {
+        if let Some(subscribed) = subscribed_hubs.get(&hub_id) {
+            for connection in subscribed {
+                let _ = connection.do_send(message.clone());
+            }
+        }
+    }
+
+    async fn send_channel(
+        subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
         message: ServerMessage,
         hub_id: ID,
         channel_id: ID,
     ) {
-        if let Some(subscribed) = subscribed.get(&(hub_id, channel_id)) {
-            for user_id in subscribed {
-                if let Some(sessions) = sessions.get(user_id) {
-                    for connection in sessions {
-                        let _ = connection.do_send(message.clone());
-                    }
-                }
+        if let Some(subscribed) = subscribed_channels.get(&(hub_id, channel_id)) {
+            for connection in subscribed {
+                let _ = connection.do_send(message.clone());
             }
         }
     }
@@ -160,58 +120,54 @@ impl Handler<ClientServerMessage> for Server {
 
     fn handle(&mut self, msg: ClientServerMessage, ctx: &mut Self::Context) -> Self::Result {
         match msg.command.clone() {
-            ClientCommand::Connect(user_id, addr) => {
-                self.sessions
-                    .entry(user_id)
-                    .or_insert_with(|| HashSet::new())
-                    .insert(addr);
-            }
-            ClientCommand::Disconnect(user_id, addr) => {
-                if let Some(set) = self.sessions.get_mut(&user_id) {
-                    set.remove(&addr);
+            ClientCommand::Disconnect(addr) => {
+                for channel_subscribers in self.subscribed_channels.values_mut() {
+                    channel_subscribers.remove(&addr);
+                }
+                for hub_subscribers in self.subscribed_hubs.values_mut() {
+                    hub_subscribers.remove(&addr);
                 }
             }
-            ClientCommand::Subscribe(user_id, hub_id, channel_id) => {
-                let subscribed = self.subscribed.clone();
-                let sessions = self.sessions.clone();
-                async move {
-                    let result = if let Err(err) = {
-                        let result = Hub::load(&hub_id)
-                            .await
-                            .and_then(|hub| {
-                                if let Ok(member) = hub.get_member(&user_id) {
-                                    Ok((hub, member))
-                                } else {
-                                    Err(Error::MemberNotFound)
-                                }
-                            })
-                            .and_then(|(hub, user)| {
+            ClientCommand::SubscribeChannel(user_id, hub_id, channel_id, addr) => {
+                futures::executor::block_on(async {
+                    let result = Hub::load(&hub_id)
+                        .await
+                        .and_then(|hub| {
+                            if let Ok(member) = hub.get_member(&user_id) {
+                                Ok((hub, member))
+                            } else {
+                                Err(Error::MemberNotFound)
+                            }
+                        })
+                        .and_then(|(hub, user)| {
+                            if user.has_channel_permission(
+                                &channel_id,
+                                &crate::permission::ChannelPermission::ViewChannel,
+                                &hub,
+                            ) {
                                 if user.has_channel_permission(
                                     &channel_id,
-                                    &crate::permission::ChannelPermission::SendMessage,
+                                    &crate::permission::ChannelPermission::ReadMessage,
                                     &hub,
                                 ) {
-                                    Ok(Self::send_message(
-                                        subscribed,
-                                        sessions,
-                                        ServerMessage::TypingStart(hub_id, channel_id, user_id),
-                                        hub_id,
-                                        channel_id,
-                                    ))
+                                    self.subscribed_channels
+                                        .entry((hub_id, channel_id))
+                                        .or_default()
+                                        .insert(addr);
+                                    Ok(())
                                 } else {
                                     Err(Error::MissingChannelPermission(
-                                        crate::permission::ChannelPermission::SendMessage,
+                                        crate::permission::ChannelPermission::ReadMessage,
                                     ))
                                 }
-                            });
-                        if let Ok(fut) = result {
-                            fut.await;
-                            Ok(())
-                        } else {
-                            Err(result.err().unwrap())
-                        }
-                    } {
-                        Response::Error(err)
+                            } else {
+                                Err(Error::MissingChannelPermission(
+                                    crate::permission::ChannelPermission::ViewChannel,
+                                ))
+                            }
+                        });
+                    let response = if let Err(error) = result {
+                        Response::Error(error)
                     } else {
                         Response::Success
                     };
@@ -219,31 +175,27 @@ impl Handler<ClientServerMessage> for Server {
                         let _ = addr
                             .send(ServerResponse {
                                 responding_to: msg.message_id,
-                                message: result,
+                                message: response,
                             })
                             .await;
                     }
-                }
-                .into_actor(self)
-                .spawn(ctx);
+                });
             }
-            ClientCommand::Unsubscribe(user_id, hub_id, channel_id) => {
-                if let Some(entry) = self.subscribed.get_mut(&(hub_id, channel_id)) {
-                    entry.remove(&user_id);
+            ClientCommand::UnsubscribeChannel(hub_id, channel_id, recipient) => {
+                if let Some(entry) = self.subscribed_channels.get_mut(&(hub_id, channel_id)) {
+                    entry.remove(&recipient);
                 }
             }
             ClientCommand::StartTyping(user_id, hub_id, channel_id) => {
-                let subscribed = self.subscribed.clone();
-                let sessions = self.sessions.clone();
+                let subscribed = self.subscribed_channels.clone();
                 async move {
                     let result = if let Err(err) = {
                         let result = Hub::load(&hub_id)
                             .await
                             .and_then(|hub| hub.get_channel(&user_id, &channel_id).map(|_| ()))
                             .and_then(|_| {
-                                Ok(Self::send_message(
+                                Ok(Self::send_channel(
                                     subscribed,
-                                    sessions,
                                     ServerMessage::TypingStart(hub_id, channel_id, user_id),
                                     hub_id,
                                     channel_id,
@@ -273,11 +225,9 @@ impl Handler<ClientServerMessage> for Server {
                 .spawn(ctx);
             }
             ClientCommand::StopTyping(user_id, hub_id, channel_id) => {
-                let subscribed = self.subscribed.clone();
-                let sessions = self.sessions.clone();
-                Self::send_message(
+                let subscribed = self.subscribed_channels.clone();
+                Self::send_channel(
                     subscribed,
-                    sessions,
                     ServerMessage::TypingStop(hub_id, channel_id, user_id),
                     hub_id,
                     channel_id,
@@ -286,16 +236,14 @@ impl Handler<ClientServerMessage> for Server {
                 .spawn(ctx);
             }
             ClientCommand::SendMessage(user_id, hub_id, channel_id, message) => {
-                let subscribed = self.subscribed.clone();
-                let sessions = self.sessions.clone();
+                let subscribed = self.subscribed_channels.clone();
                 async move {
                     let res = {
                         let send = api::send_message(&user_id, &hub_id, &channel_id, message).await;
                         if let Ok(message) = send {
                             let id = message.id.clone();
-                            Self::send_message(
+                            Self::send_channel(
                                 subscribed,
-                                sessions,
                                 ServerMessage::NewMessage(hub_id, channel_id, message),
                                 hub_id,
                                 channel_id,
@@ -315,6 +263,60 @@ impl Handler<ClientServerMessage> for Server {
                             .await;
                     }
                 }
+                .into_actor(self)
+                .spawn(ctx);
+            }
+            ClientCommand::SubscribeHub(user_id, hub_id, addr) => {
+                futures::executor::block_on(async {
+                    let result = if let Err(error) = Hub::load(&hub_id)
+                        .await
+                        .and_then(|hub| hub.get_member(&user_id))
+                    {
+                        Response::Error(error)
+                    } else {
+                        self.subscribed_hubs.entry(hub_id).or_default().insert(addr);
+                        Response::Success
+                    };
+                    if let Some(addr) = msg.client_addr {
+                        let _ = addr
+                            .send(ServerResponse {
+                                responding_to: msg.message_id,
+                                message: result,
+                            })
+                            .await;
+                    }
+                });
+            }
+            ClientCommand::UnsubscribeHub(hub_id, recipient) => {
+                if let Some(entry) = self.subscribed_hubs.get_mut(&hub_id) {
+                    entry.remove(&recipient);
+                }
+            }
+        }
+    }
+}
+
+impl Handler<ServerNotification> for Server {
+    type Result = ();
+
+    fn handle(&mut self, msg: ServerNotification, ctx: &mut Self::Context) -> Self::Result {
+        match msg {
+            ServerNotification::NewMessage(hub_id, channel_id, message) => {
+                Self::send_channel(
+                    self.subscribed_channels.clone(),
+                    ServerMessage::NewMessage(hub_id, channel_id, message),
+                    hub_id,
+                    channel_id,
+                )
+                .into_actor(self)
+                .spawn(ctx);
+            }
+            ServerNotification::HubUpdated(hub_id) => {
+                Self::send_hub(
+                    self.subscribed_hubs.clone(),
+                    ServerMessage::HubUpdated(hub_id),
+                    hub_id,
+                )
                 .into_actor(self)
                 .spawn(ctx);
             }
