@@ -85,6 +85,7 @@ pub enum ServerMessage {
 pub enum ServerNotification {
     NewMessage(ID, ID, channel::Message),
     HubUpdated(ID),
+    Stop,
 }
 
 #[derive(Clone)]
@@ -225,6 +226,23 @@ impl Actor for Server {
             }
             .actfuture(),
         );
+    }
+
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+        let indexes = self.indexes.clone();
+        ctx.wait(async move {
+            for index_arc in indexes.read().await.values() {
+                println!("Saving...");
+                let arc = index_arc.clone();
+                if index_arc.3.load(Ordering::Relaxed) {
+                    let mut writer = arc.1.lock().await;
+                    if let Ok(_) = writer.prepare_commit() {
+                        let _ = writer.commit();
+                    }
+                }
+            }
+        }.actfuture());
+        Running::Stop
     }
 }
 
@@ -497,6 +515,9 @@ impl Handler<ServerNotification> for Server {
                 )
                 .into_actor(self)
                 .spawn(ctx);
+            }
+            ServerNotification::Stop => {
+                ctx.stop();
             }
         }
     }
