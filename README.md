@@ -35,7 +35,8 @@ Here is an example of what the contents of `config.json` should be:
     },
     "show_version": true,
     "ws_client_timeout": 10000,
-    "ws_hb_interval": 1000
+    "ws_hb_interval": 1000,
+    "tantivy_commit_interval": 10000
 }
 ```
 

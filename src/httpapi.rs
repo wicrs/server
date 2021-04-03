@@ -34,7 +34,10 @@ pub async fn server(config: Config) -> std::io::Result<()> {
     let client_timeout = Duration::from_millis(config.ws_client_timeout.clone());
     let heartbeat_interval = Duration::from_millis(config.ws_hb_interval.clone());
     let auth = Arc::new(RwLock::new(Auth::from_config(&config.auth_services)));
-    let server = Server::new().start();
+    let server = Server::new(Duration::from_millis(
+        config.tantivy_commit_interval.clone(),
+    ))
+    .start();
     let address = config.address.clone();
     HttpServer::new(move || {
         App::new()
@@ -333,13 +336,11 @@ async fn send_message(
 ) -> Result<String> {
     if let Ok(message) = String::from_utf8(message.to_vec()) {
         let message = api::send_message(&user_id.0, &path.0 .0, &path.1, message).await?;
-        let _ = srv
-            .send(crate::server::ServerNotification::NewMessage(
-                path.0 .0,
-                path.1,
-                message.clone(),
-            ))
-            .await;
+        tokio::spawn(srv.send(crate::server::ServerNotification::NewMessage(
+            path.0 .0,
+            path.1,
+            message.clone(),
+        )));
         string_response!(Ok(message.id))
     } else {
         Err(Error::InvalidMessage)

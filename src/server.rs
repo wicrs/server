@@ -1,7 +1,22 @@
-use crate::{api, channel, hub::Hub, Error, ID};
+use crate::{api, channel, error::DataError, hub::Hub, Error, Result, ID};
 use actix::prelude::*;
+use futures::lock::Mutex;
 use parse_display::{Display, FromStr};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tantivy::{
+    directory::MmapDirectory,
+    doc,
+    schema::{Field, Schema, FAST, STORED, TEXT},
+    Index, IndexReader, IndexWriter, ReloadPolicy,
+};
+use tokio::sync::RwLock;
 
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
@@ -72,19 +87,92 @@ pub enum ServerNotification {
     HubUpdated(ID),
 }
 
+#[derive(Clone)]
+struct MessageSchemaFields {
+    content: Field,
+    created: Field,
+    id: Field,
+    sender: Field,
+}
+
 pub struct Server {
     subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
     subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
     subscribed: HashMap<Recipient<ServerMessage>, (HashSet<(ID, ID)>, HashSet<ID>)>,
+    indexes:
+        Arc<RwLock<HashMap<(ID, ID), Arc<(Index, Mutex<IndexWriter>, IndexReader, AtomicBool)>>>>,
+    schema: Schema,
+    schema_fields: MessageSchemaFields,
+    tantivy_commit_rate: Duration,
 }
 
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(commit_rate: Duration) -> Self {
+        let mut schema_builder = Schema::builder();
+        schema_builder.add_text_field("content", TEXT);
+        schema_builder.add_date_field("created", FAST);
+        schema_builder.add_i64_field("id", STORED);
+        schema_builder.add_i64_field("sender", FAST);
+        let schema = schema_builder.build();
         Self {
             subscribed_channels: HashMap::new(),
             subscribed_hubs: HashMap::new(),
             subscribed: HashMap::new(),
+            indexes: Arc::new(RwLock::new(HashMap::new())),
+            schema: schema.clone(),
+            tantivy_commit_rate: commit_rate,
+            schema_fields: MessageSchemaFields {
+                content: schema
+                    .get_field("content")
+                    .expect("Failed to create a Tantivy schema correctly."),
+                created: schema
+                    .get_field("created")
+                    .expect("Failed to create a Tantivy schema correctly."),
+                id: schema
+                    .get_field("id")
+                    .expect("Failed to create a Tantivy schema correctly."),
+                sender: schema
+                    .get_field("sender")
+                    .expect("Failed to create a Tantivy schema correctly."),
+            },
         }
+    }
+
+    fn get_index_arc(
+        &mut self,
+        hub_id: &ID,
+        channel_id: &ID,
+    ) -> Result<Arc<(Index, Mutex<IndexWriter>, IndexReader, AtomicBool)>> {
+        let indexes = futures::executor::block_on(self.indexes.read());
+        let index_arc = if let Some(get) = indexes.get(&(hub_id.clone(), channel_id.clone())) {
+            get.clone()
+        } else {
+            drop(indexes);
+            let dir_string = format!(
+                "{}/{:x}/{:x}/index",
+                crate::hub::HUB_DATA_FOLDER,
+                hub_id.as_u128(),
+                channel_id.as_u128()
+            );
+            let dir_path = std::path::Path::new(&dir_string);
+            if !dir_path.is_dir() {
+                std::fs::create_dir_all(dir_path)?;
+            }
+            let dir = MmapDirectory::open(dir_path).map_err(|_| DataError::Directory)?;
+            let index = Index::open_or_create(dir, self.schema.clone())
+                .map_err(|_| DataError::Directory)?;
+            let reader = index
+                .reader_builder()
+                .reload_policy(ReloadPolicy::OnCommit)
+                .try_into()
+                .map_err(|_| DataError::Directory)?;
+            let writer = index.writer(50_000_000).map_err(|_| DataError::Directory)?;
+            let index_arc = Arc::new((index, Mutex::new(writer), reader, AtomicBool::new(false)));
+            futures::executor::block_on(self.indexes.write())
+                .insert((hub_id.clone(), channel_id.clone()), index_arc.clone());
+            index_arc
+        };
+        Ok(index_arc)
     }
 
     async fn send_hub(
@@ -115,6 +203,29 @@ impl Server {
 
 impl Actor for Server {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let interval = self.tantivy_commit_rate.clone();
+        let indexes = self.indexes.clone();
+        ctx.spawn(
+            async move {
+                loop {
+                    tokio::time::delay_for(interval.clone()).await;
+                    for index_arc in indexes.read().await.values() {
+                        let arc = index_arc.clone();
+                        if index_arc.3.load(Ordering::Relaxed) {
+                            let mut writer = arc.1.lock().await;
+                            if let Ok(_) = writer.prepare_commit() {
+                                let _ = writer.commit();
+                                index_arc.3.store(false, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                }
+            }
+            .actfuture(),
+        );
+    }
 }
 
 impl Handler<ClientServerMessage> for Server {
@@ -288,34 +399,55 @@ impl Handler<ClientServerMessage> for Server {
             }
             ClientCommand::SendMessage(user_id, hub_id, channel_id, message) => {
                 let subscribed = self.subscribed_channels.clone();
-                async move {
-                    let res = {
-                        let send = api::send_message(&user_id, &hub_id, &channel_id, message).await;
-                        if let Ok(message) = send {
-                            let id = message.id.clone();
-                            Self::send_channel(
-                                subscribed,
-                                ServerMessage::NewMessage(hub_id, channel_id, message),
-                                hub_id,
-                                channel_id,
-                            )
-                            .await;
-                            Response::Id(id)
-                        } else {
-                            Response::Error(send.err().unwrap())
+                let MessageSchemaFields {
+                    content,
+                    created,
+                    id,
+                    sender,
+                } = self.schema_fields.clone();
+                if let Ok(index_arc) = self.get_index_arc(&hub_id, &channel_id) {
+                    async move {
+                        let res = {
+                            let send =
+                                api::send_message(&user_id, &hub_id, &channel_id, message).await;
+                            if let Ok(message) = send {
+                                let msg_id = message.id.clone();
+                                tokio::spawn(async move {
+                                    {
+                                        let writer = index_arc.1.lock().await;
+                                        writer.add_document(doc!(
+                                            id => message.id.as_u128() as i64,
+                                            sender => message.sender.as_u128() as i64,
+                                            created => message.created.clone() as i64,
+                                            content => message.content.clone(),
+                                        ));
+                                        index_arc.3.store(true, Ordering::Relaxed);
+                                    }
+                                    Self::send_channel(
+                                        subscribed,
+                                        ServerMessage::NewMessage(hub_id, channel_id, message),
+                                        hub_id,
+                                        channel_id,
+                                    )
+                                    .await;
+                                });
+                                Response::Id(msg_id)
+                            } else {
+                                Response::Error(send.err().unwrap())
+                            }
+                        };
+                        if let Some(addr) = msg.client_addr {
+                            let _ = addr
+                                .send(ServerResponse {
+                                    responding_to: msg.message_id,
+                                    message: res,
+                                })
+                                .await;
                         }
-                    };
-                    if let Some(addr) = msg.client_addr {
-                        let _ = addr
-                            .send(ServerResponse {
-                                responding_to: msg.message_id,
-                                message: res,
-                            })
-                            .await;
                     }
+                    .into_actor(self)
+                    .spawn(ctx);
                 }
-                .into_actor(self)
-                .spawn(ctx);
             }
         }
     }
@@ -327,6 +459,27 @@ impl Handler<ServerNotification> for Server {
     fn handle(&mut self, msg: ServerNotification, ctx: &mut Self::Context) -> Self::Result {
         match msg {
             ServerNotification::NewMessage(hub_id, channel_id, message) => {
+                let MessageSchemaFields {
+                    content,
+                    created,
+                    id,
+                    sender,
+                } = self.schema_fields.clone();
+                if let Ok(index_arc) = self.get_index_arc(&hub_id, &channel_id) {
+                    let message = message.clone();
+                    async move {
+                        let writer = index_arc.1.lock().await;
+                        writer.add_document(doc!(
+                            id => message.id.as_u128() as i64,
+                            sender => message.sender.as_u128() as i64,
+                            created => message.created.clone() as i64,
+                            content => message.content.clone(),
+                        ));
+                        index_arc.3.store(true, Ordering::Relaxed);
+                    }
+                    .into_actor(self)
+                    .spawn(ctx);
+                }
                 Self::send_channel(
                     self.subscribed_channels.clone(),
                     ServerMessage::NewMessage(hub_id, channel_id, message),
