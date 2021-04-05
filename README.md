@@ -15,7 +15,7 @@ Then clone the git repo, then to build:
 ```bash
 git clone https://github.com/wicrs/server.git wicrs_server
 cd wicrs_server
-cargo build # to build the release version run cargo +nightly build --release
+cargo build # to build the release version run cargo build --release
 ```
 
 ## Setup
