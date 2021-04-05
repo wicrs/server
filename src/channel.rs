@@ -165,6 +165,7 @@ impl Channel {
         &self,
         string: String,
         case_sensitive: bool,
+        max: usize,
     ) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         let mut search = string;
@@ -191,6 +192,44 @@ impl Channel {
                         })
                         .collect::<Vec<Message>>();
                     result.append(&mut filtered);
+                    let len = result.len();
+                    if len == max {
+                        return result;
+                    } else if result.len() > max {
+                        result.truncate(max);
+                        return result;
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Gets all messages that were sent after the message with the given ID.
+    pub async fn get_all_messages_after(&self, id: &ID, max: usize) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            for file in files.iter() {
+                if let Ok(file) = fs::File::open(file.path()).await {
+                    let mut iter =
+                        bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
+                            .into_iter();
+                    if let Some(_) = iter.position(|m| &m.id == id) {
+                        result.append(&mut iter.collect());
+                        let len = result.len();
+                        if len == max {
+                            return result;
+                        } else if result.len() > max {
+                            result.truncate(max);
+                            return result;
+                        }
+                    }
                 }
             }
         }
