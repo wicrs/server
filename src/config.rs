@@ -14,7 +14,7 @@ pub struct Config {
     /// How long before lack of client response causes a timeout (in milliseconds)
     pub ws_client_timeout: u64,
     /// How long to wait before commiting new messages to the tantivy search engine in milliseconds, this takes a lot of time, which is why it should be done only periodically
-    pub tantivy_commit_interval: u64,
+    pub tantivy_commit_threshold: u8,
 }
 
 /// Configuration for a generic OAuth service.

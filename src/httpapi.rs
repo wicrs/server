@@ -34,10 +34,7 @@ pub async fn server(config: Config) -> std::io::Result<()> {
     let client_timeout = Duration::from_millis(config.ws_client_timeout.clone());
     let heartbeat_interval = Duration::from_millis(config.ws_hb_interval.clone());
     let auth = Arc::new(RwLock::new(Auth::from_config(&config.auth_services)));
-    let server = Server::new(Duration::from_millis(
-        config.tantivy_commit_interval.clone(),
-    ))
-    .start();
+    let server = Server::new(config.tantivy_commit_threshold).start();
     let address = config.address.clone();
     HttpServer::new(move || {
         App::new()
