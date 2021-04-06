@@ -6,10 +6,12 @@ use std::{
     io::Write,
 };
 use tantivy::{
+    collector::TopDocs,
     directory::MmapDirectory,
     doc,
+    query::QueryParser,
     schema::{Field, Schema, FAST, STORED, TEXT},
-    Index, IndexReader, IndexWriter, ReloadPolicy,
+    Index, IndexReader, IndexWriter, LeasedItem, ReloadPolicy, Searcher,
 };
 
 #[derive(Message, Clone)]
@@ -98,6 +100,15 @@ struct NewMessageForIndex {
     message: channel::Message,
 }
 
+#[derive(Message)]
+#[rtype(result = "Result<Vec<ID>>")]
+struct SearchMessageIndex {
+    hub_id: ID,
+    channel_id: ID,
+    limit: usize,
+    query: String,
+}
+
 struct MessageServer {
     indexes: HashMap<(ID, ID), Index>,
     index_writers: HashMap<(ID, ID), IndexWriter>,
@@ -181,6 +192,22 @@ impl MessageServer {
         Ok(())
     }
 
+    fn get_reader(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&IndexReader> {
+        let key = (hub_id.clone(), channel_id.clone());
+        if !self.index_readers.contains_key(&key) {
+            self.setup_index(hub_id, channel_id)?;
+        }
+        if let Some(reader) = self.index_readers.get(&key) {
+            Ok(reader)
+        } else {
+            Err(DataError::Directory.into())
+        }
+    }
+
+    fn get_searcher(&mut self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
+        Ok(self.get_reader(hub_id, channel_id)?.searcher())
+    }
+
     fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
         let key = (hub_id.clone(), channel_id.clone());
         if !self.index_writers.contains_key(&key) {
@@ -205,6 +232,44 @@ impl Actor for MessageServer {
             }
         }
         Running::Stop
+    }
+}
+
+impl Handler<SearchMessageIndex> for MessageServer {
+    type Result = Result<Vec<ID>>;
+
+    fn handle(&mut self, msg: SearchMessageIndex, _: &mut Self::Context) -> Self::Result {
+        {
+            let pending = self.pending_messages.clone();
+            if let Some((pending, message_id)) = pending.get(&(msg.hub_id, msg.channel_id)) {
+                if pending != &0 {
+                    let _ = self.get_writer(&msg.hub_id, &msg.channel_id)?.commit();
+                    Self::log_last_message(&msg.hub_id, &msg.channel_id, message_id)?;
+                }
+                self.pending_messages.insert((msg.hub_id.clone(), msg.channel_id.clone()), (0, message_id.clone()));
+            }
+        }
+        let searcher = self.get_searcher(&msg.hub_id, &msg.channel_id)?;
+        let query_parser =
+            QueryParser::for_index(searcher.index(), vec![self.schema_fields.content.clone()]);
+        let query = query_parser
+            .parse_query(&msg.query)
+            .map_err(|_| DataError::Directory)?;
+        let top_docs = searcher
+            .search(&query, &TopDocs::with_limit(msg.limit))
+            .map_err(|_| DataError::Directory)?;
+        let mut result = Vec::new();
+        for (_score, doc_address) in top_docs {
+            let retrieved_doc = searcher
+                .doc(doc_address)
+                .map_err(|_| DataError::Directory)?;
+            if let Some(value) = retrieved_doc.get_first(self.schema_fields.id.clone()) {
+                if let Some(num) = value.i64_value() {
+                    result.push(ID::from_u128(num as u128));
+                }
+            }
+        }
+        Ok(result)
     }
 }
 
