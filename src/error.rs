@@ -29,6 +29,7 @@ pub enum IndexError {
     Search,
     GetDoc,
     Commit,
+    Reload,
 }
 
 /// Errors related to authentication.

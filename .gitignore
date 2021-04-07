@@ -2,7 +2,7 @@
 /data
 .DS_Store
 /config.json
-/.vscode
+.vscode
 /.idea
 /Cargo.lock
 /test_index

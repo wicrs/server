@@ -8,7 +8,7 @@ use actix::prelude::*;
 use parse_display::{Display, FromStr};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
+    io::{Read, Write},
 };
 use tantivy::{
     collector::TopDocs,
@@ -165,8 +165,26 @@ impl MessageServer {
         );
         let log_path = std::path::Path::new(&log_path_string);
         let mut log_file = std::fs::File::create(log_path)?;
-        log_file.write(message_id.as_bytes())?;
+        log_file.write(
+            bincode::serialize(&message_id.as_u128())
+                .map_err(|_| DataError::Serialize)?
+                .as_slice(),
+        )?;
         log_file.flush()?;
+        Ok(())
+    }
+
+    fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result<()> {
+        let log_path_string = format!(
+            "{}/{:x}/{:x}/log",
+            crate::hub::HUB_DATA_FOLDER,
+            hub_id.as_u128(),
+            channel_id.as_u128()
+        );
+        let log_path = std::path::Path::new(&log_path_string);
+        if !log_path.is_file() {
+            std::fs::File::create(log_path)?.write(&message_id.as_u128().to_ne_bytes())?;
+        }
         Ok(())
     }
 
@@ -189,10 +207,57 @@ impl MessageServer {
             .reload_policy(ReloadPolicy::OnCommit)
             .try_into()
             .map_err(|_| IndexError::CreateReader)?;
-        let writer = index
+        let mut writer = index
             .writer(50_000_000)
             .map_err(|_| IndexError::CreateWriter)?;
         let key = (hub_id.clone(), channel_id.clone());
+        let log_path_string = format!(
+            "{}/{:x}/{:x}/log",
+            crate::hub::HUB_DATA_FOLDER,
+            hub_id.as_u128(),
+            channel_id.as_u128()
+        );
+        let log_path = std::path::Path::new(&log_path_string);
+        if log_path.is_file() {
+            let mut buf: [u8; 16] = [0; 16];
+            std::fs::File::open(log_path)?.read_exact(&mut buf)?;
+            let last_id = ID::from_u128(u128::from_le_bytes(buf));
+            let filename = format!("{}{:x}.json", crate::hub::HUB_INFO_FOLDER, hub_id.as_u128());
+            let path = std::path::Path::new(&filename);
+            if !path.exists() {
+                return Err(Error::HubNotFound);
+            }
+            let json = std::fs::read_to_string(path)?;
+            let hub = serde_json::from_str::<Hub>(&json).map_err(|_| DataError::Deserialize)?;
+            if let Some(channel) = hub.channels.get(channel_id) {
+                let messages = channel.get_all_messages_from(&last_id);
+                let last_id =if let Some(last) = messages.last() {
+                    Some(last.id.clone())
+                } else {
+                    None
+                };
+                let MessageSchemaFields {
+                    content,
+                    created,
+                    id,
+                    sender,
+                } = self.schema_fields.clone();
+
+                for message in messages {
+                    writer.add_document(doc!(
+                        id => bincode::serialize(&message.id).map_err(|_| DataError::Serialize)?,
+                        sender => bincode::serialize(&message.sender).map_err(|_| DataError::Serialize)?,
+                        created => message.created as i64,
+                        content => message.content,
+                    ));
+                }
+                writer.commit().map_err(|_| IndexError::Commit)?;
+                if let Some(last_id) = last_id {
+                    Self::log_last_message(&hub_id, &channel_id, &last_id)?;
+                }
+                reader.reload().map_err(|_| IndexError::Reload)?;
+            }
+        }
         self.indexes.insert(key.clone(), index);
         self.index_readers.insert(key.clone(), reader);
         self.index_writers.insert(key.clone(), writer);
@@ -315,9 +380,12 @@ impl Handler<NewMessageForIndex> for MessageServer {
                 } else {
                     Err(IndexError::Commit)?
                 }
+            } else {
+                Self::log_if_nologs(&msg.hub_id, &msg.channel_id, &msg.message.id)?;
             }
         } else {
             new_pending = 1;
+            Self::log_if_nologs(&msg.hub_id, &msg.channel_id, &msg.message.id)?;
         }
         drop(writer);
         let _ = self

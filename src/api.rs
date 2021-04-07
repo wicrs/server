@@ -666,7 +666,7 @@ pub async fn get_messages_after(
 ) -> Result<Vec<Message>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
-    Ok(channel.get_all_messages_after(from, max).await)
+    Ok(channel.get_messages_after(from, max).await)
 }
 
 /// Gets a set of messages between two times (both in milliseconds since Unix Epoch).

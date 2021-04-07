@@ -206,7 +206,7 @@ impl Channel {
     }
 
     /// Gets all messages that were sent after the message with the given ID.
-    pub async fn get_all_messages_after(&self, id: &ID, max: usize) -> Vec<Message> {
+    pub async fn get_messages_after(&self, id: &ID, max: usize) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -229,6 +229,35 @@ impl Channel {
                             result.truncate(max);
                             return result;
                         }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Unlimited version of [`get_messages_after`] for internal use.
+    pub(crate) fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = std::fs::read_dir(self.get_folder()) {
+            let mut files = Vec::new();
+            while let Some(Ok(entry)) = dir.next() {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            for file in files.iter() {
+                if let Ok(file) = std::fs::read(file.path()) {
+                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
+                    if let Some(_) = iter.position(|m| {
+                        if &m.id == id {
+                            result.push(m);
+                            true
+                        } else {
+                            false
+                        }
+                    }) {
+                        result.append(&mut iter.collect());
                     }
                 }
             }
