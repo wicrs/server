@@ -642,6 +642,38 @@ pub async fn get_message(
     }
 }
 
+/// Gets messages sent after a given message.
+/// If successful they are returned in an array. The array is orderd oldest message to newest
+/// If there are no messages after the given message or the given message is not found, an empty array is returned.
+///
+/// # Arguments
+///
+/// * `user_id` - ID of the user who is requesting the message.
+/// * `hub_id` - ID of the hub where the message is located.
+/// * `channel_id` - ID of the channel where the message is located.
+/// * `from` - ID of the message to start from.
+/// * `max` - The maximum number of messages to retreive.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * The user is not in the hub.
+/// * The channel could not be found in the hub.
+/// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+pub async fn get_messages_after(
+    user_id: &ID,
+    hub_id: &ID,
+    channel_id: &ID,
+    from: &ID,
+    max: usize,
+) -> Result<Vec<Message>> {
+    let hub = Hub::load(hub_id).await?;
+    let channel = Hub::get_channel(&hub, user_id, channel_id)?;
+    Ok(channel.get_all_messages_after(from, max).await)
+}
+
 /// Gets a set of messages between two times (both in milliseconds since Unix Epoch).
 /// If successful they are returned in an array. The array is orderd oldest message to newest
 /// unless the `invert` argument is `true` in which case the order is newest to oldest message.

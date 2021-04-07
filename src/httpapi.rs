@@ -71,6 +71,7 @@ pub async fn server(config: Config) -> std::io::Result<()> {
             .service(send_message)
             .service(get_message)
             .service(get_messages)
+            .service(get_messages_after)
             .service(set_user_hub_permission)
             .service(set_user_channel_permission)
             .service(web::resource("/v2/websocket").route(web::get().to(get_websocket)))
@@ -372,7 +373,7 @@ impl GetMessagesQuery {
     }
 }
 
-#[get("/v2/message/{hub_id}/{channel_id}")]
+#[get("/v2/messages/{hub_id}/{channel_id}")]
 async fn get_messages(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -387,6 +388,35 @@ async fn get_messages(
             query.to(),
             query.invert(),
             query.max()
+        )
+        .await
+    )
+}
+
+#[derive(Deserialize)]
+struct GetMessagesAfterQuery {
+    max: Option<usize>,
+}
+
+impl GetMessagesAfterQuery {
+    fn max(&self) -> usize {
+        self.max.unwrap_or(100)
+    }
+}
+
+#[get("/v2/messages_after/{hub_id}/{channel_id}/{message_id}")]
+async fn get_messages_after(
+    user_id: UserID,
+    path: Path<(ID, ID, ID)>,
+    query: Query<GetMessagesAfterQuery>,
+) -> Result<Json<Vec<Message>>> {
+    json_response!(
+        api::get_messages_after(
+            &user_id.0,
+            &path.0 .0,
+            &path.1,
+            &path.2,
+            query.max(),
         )
         .await
     )
