@@ -16,7 +16,6 @@ pub enum HubPermission {
     DeleteChannel,
     ArrangeChannels,
     SendMessage,
-    ReadMessage,
     Mute,
     Unmute,
     Invite,
@@ -32,7 +31,6 @@ pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
 pub enum ChannelPermission {
     SendMessage,
-    ReadMessage,
     ViewChannel,
     Configure,
     All,
@@ -43,7 +41,6 @@ impl ChannelPermission {
     pub fn hub_equivalent(&self) -> HubPermission {
         match self {
             ChannelPermission::SendMessage => HubPermission::SendMessage,
-            ChannelPermission::ReadMessage => HubPermission::ReadMessage,
             ChannelPermission::ViewChannel => HubPermission::ViewChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
             ChannelPermission::All => HubPermission::All,

@@ -9,7 +9,7 @@ use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     config::Config,
-    error::{AuthError, Error},
+    error::{AuthError, DataError, Error},
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
@@ -72,6 +72,7 @@ pub async fn server(config: Config) -> std::io::Result<()> {
             .service(get_message)
             .service(get_messages)
             .service(get_messages_after)
+            .service(search_messages)
             .service(set_user_hub_permission)
             .service(set_user_channel_permission)
             .service(web::resource("/v2/websocket").route(web::get().to(get_websocket)))
@@ -411,15 +412,41 @@ async fn get_messages_after(
     query: Query<GetMessagesAfterQuery>,
 ) -> Result<Json<Vec<Message>>> {
     json_response!(
-        api::get_messages_after(
-            &user_id.0,
-            &path.0 .0,
-            &path.1,
-            &path.2,
-            query.max(),
-        )
-        .await
+        api::get_messages_after(&user_id.0, &path.0 .0, &path.1, &path.2, query.max(),).await
     )
+}
+
+#[derive(Deserialize)]
+struct MessageSearchQuery {
+    query: String,
+    max: Option<usize>,
+}
+
+impl MessageSearchQuery {
+    fn max(&self) -> usize {
+        self.max.unwrap_or(100)
+    }
+}
+
+#[get("/v2/search_messages/{hub_id}/{channel_id}")]
+async fn search_messages(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    query: Query<MessageSearchQuery>,
+    srv: Data<Addr<Server>>,
+) -> Result<Json<Vec<ID>>> {
+    let hub = Hub::load(&path.0 .0).await?;
+    hub.get_channel(&user_id.0, &path.1)?;
+    let message_server = srv.send(crate::server::GetMessageServer).await.map_err(|_| Error::Data(DataError::Directory))?;
+    json_response!(message_server
+        .send(crate::server::SearchMessageIndex {
+            hub_id: path.0 .0,
+            channel_id: path.1,
+            limit: query.max(),
+            query: query.0.query,
+        })
+        .await
+        .map_err(|_| Error::Data(DataError::Directory))?)
 }
 
 #[derive(Deserialize)]

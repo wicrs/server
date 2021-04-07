@@ -130,11 +130,6 @@ pub async fn create_hub(owner_id: &ID, name: String) -> Result<ID> {
             crate::permission::ChannelPermission::SendMessage,
             Some(true),
         );
-        group.set_channel_permission(
-            channel_id.clone(),
-            crate::permission::ChannelPermission::ReadMessage,
-            Some(true),
-        );
     }
     owner.in_hubs.push(id.clone());
     owner.save().await?;

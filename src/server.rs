@@ -102,14 +102,14 @@ struct NewMessageForIndex {
 
 #[derive(Message)]
 #[rtype(result = "Result<Vec<ID>>")]
-struct SearchMessageIndex {
-    hub_id: ID,
-    channel_id: ID,
-    limit: usize,
-    query: String,
+pub struct SearchMessageIndex {
+    pub hub_id: ID,
+    pub channel_id: ID,
+    pub limit: usize,
+    pub query: String,
 }
 
-struct MessageServer {
+pub struct MessageServer {
     indexes: HashMap<(ID, ID), Index>,
     index_writers: HashMap<(ID, ID), IndexWriter>,
     index_readers: HashMap<(ID, ID), IndexReader>,
@@ -124,8 +124,8 @@ impl MessageServer {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("content", TEXT);
         schema_builder.add_date_field("created", FAST);
-        schema_builder.add_i64_field("id", STORED);
-        schema_builder.add_i64_field("sender", FAST);
+        schema_builder.add_bytes_field("id", STORED | FAST);
+        schema_builder.add_bytes_field("sender", ());
         let schema = schema_builder.build();
         Self {
             commit_threshold,
@@ -205,7 +205,9 @@ impl MessageServer {
     }
 
     fn get_searcher(&mut self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
-        Ok(self.get_reader(hub_id, channel_id)?.searcher())
+        let reader = self.get_reader(hub_id, channel_id)?;
+        let _ = reader.reload();
+        Ok(reader.searcher())
     }
 
     fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
@@ -241,12 +243,17 @@ impl Handler<SearchMessageIndex> for MessageServer {
     fn handle(&mut self, msg: SearchMessageIndex, _: &mut Self::Context) -> Self::Result {
         {
             let pending = self.pending_messages.clone();
+            dbg!(&pending);
             if let Some((pending, message_id)) = pending.get(&(msg.hub_id, msg.channel_id)) {
                 if pending != &0 {
                     let _ = self.get_writer(&msg.hub_id, &msg.channel_id)?.commit();
                     Self::log_last_message(&msg.hub_id, &msg.channel_id, message_id)?;
+                } else {
                 }
-                self.pending_messages.insert((msg.hub_id.clone(), msg.channel_id.clone()), (0, message_id.clone()));
+                self.pending_messages.insert(
+                    (msg.hub_id.clone(), msg.channel_id.clone()),
+                    (0, message_id.clone()),
+                );
             }
         }
         let searcher = self.get_searcher(&msg.hub_id, &msg.channel_id)?;
@@ -264,8 +271,10 @@ impl Handler<SearchMessageIndex> for MessageServer {
                 .doc(doc_address)
                 .map_err(|_| DataError::Directory)?;
             if let Some(value) = retrieved_doc.get_first(self.schema_fields.id.clone()) {
-                if let Some(num) = value.i64_value() {
-                    result.push(ID::from_u128(num as u128));
+                if let Some(bytes) = value.bytes_value() {
+                    if let Ok (id) = bincode::deserialize::<ID>(bytes) {
+                        result.push(id);
+                    }
                 }
             }
         }
@@ -287,19 +296,24 @@ impl Handler<NewMessageForIndex> for MessageServer {
         } = self.schema_fields.clone();
         let writer = self.get_writer(&msg.hub_id, &msg.channel_id)?;
         writer.add_document(doc!(
-            id => msg.message.id.as_u128() as i64,
-            sender => msg.message.sender.as_u128() as i64,
+            id => bincode::serialize(&msg.message.id).map_err(|_| DataError::Serialize)?,
+            sender => bincode::serialize(&msg.message.sender).map_err(|_| DataError::Serialize)?,
             created => msg.message.created as i64,
             content => msg.message.content,
         ));
-        let mut new_pending = 0;
+        let mut new_pending;
         if let Some((pending, _)) = get_pending.get(&(msg.hub_id, msg.channel_id)) {
             new_pending = pending + 1;
             if pending >= &commit_threshold {
-                writer.commit().map_err(|_| DataError::Directory)?;
-                Self::log_last_message(&msg.hub_id, &msg.channel_id, &msg.message.id)?;
-                new_pending = 0;
+                if let Ok(_) = writer.commit() {
+                    Self::log_last_message(&msg.hub_id, &msg.channel_id, &msg.message.id)?;
+                    new_pending = 0;
+                } else {
+                    Err(DataError::Directory)?
+                }
             }
+        } else {
+            new_pending = 1;
         }
         drop(writer);
         let _ = self
@@ -393,26 +407,16 @@ impl Handler<ClientServerMessage> for Server {
                                 &crate::permission::ChannelPermission::ViewChannel,
                                 &hub,
                             ) {
-                                if user.has_channel_permission(
-                                    &channel_id,
-                                    &crate::permission::ChannelPermission::ReadMessage,
-                                    &hub,
-                                ) {
-                                    self.subscribed
-                                        .entry(addr.clone())
-                                        .or_default()
-                                        .0
-                                        .insert((hub_id.clone(), channel_id.clone()));
-                                    self.subscribed_channels
-                                        .entry((hub_id, channel_id))
-                                        .or_default()
-                                        .insert(addr);
-                                    Ok(())
-                                } else {
-                                    Err(Error::MissingChannelPermission(
-                                        crate::permission::ChannelPermission::ReadMessage,
-                                    ))
-                                }
+                                self.subscribed
+                                    .entry(addr.clone())
+                                    .or_default()
+                                    .0
+                                    .insert((hub_id.clone(), channel_id.clone()));
+                                self.subscribed_channels
+                                    .entry((hub_id, channel_id))
+                                    .or_default()
+                                    .insert(addr);
+                                Ok(())
                             } else {
                                 Err(Error::MissingChannelPermission(
                                     crate::permission::ChannelPermission::ViewChannel,
@@ -614,5 +618,17 @@ impl Handler<ServerNotification> for Server {
                 ctx.stop();
             }
         }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Addr<MessageServer>")]
+pub struct GetMessageServer;
+
+impl Handler<GetMessageServer> for Server {
+    type Result = Addr<MessageServer>;
+
+    fn handle(&mut self, _: GetMessageServer, _: &mut Self::Context) -> Self::Result {
+        self.message_server.clone()
     }
 }
