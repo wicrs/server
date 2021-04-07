@@ -1,4 +1,9 @@
-use crate::{api, channel, error::DataError, hub::Hub, Error, Result, ID};
+use crate::{
+    api, channel,
+    error::{DataError, IndexError},
+    hub::Hub,
+    Error, Result, ID,
+};
 use actix::prelude::*;
 use parse_display::{Display, FromStr};
 use std::{
@@ -177,14 +182,16 @@ impl MessageServer {
             std::fs::create_dir_all(dir_path)?;
         }
         let dir = MmapDirectory::open(dir_path).map_err(|_| DataError::Directory)?;
-        let index =
-            Index::open_or_create(dir, self.schema.clone()).map_err(|_| DataError::Directory)?;
+        let index = Index::open_or_create(dir, self.schema.clone())
+            .map_err(|_| IndexError::OpenCreateIndex)?;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommit)
             .try_into()
-            .map_err(|_| DataError::Directory)?;
-        let writer = index.writer(50_000_000).map_err(|_| DataError::Directory)?;
+            .map_err(|_| IndexError::CreateReader)?;
+        let writer = index
+            .writer(50_000_000)
+            .map_err(|_| IndexError::CreateWriter)?;
         let key = (hub_id.clone(), channel_id.clone());
         self.indexes.insert(key.clone(), index);
         self.index_readers.insert(key.clone(), reader);
@@ -200,7 +207,7 @@ impl MessageServer {
         if let Some(reader) = self.index_readers.get(&key) {
             Ok(reader)
         } else {
-            Err(DataError::Directory.into())
+            Err(IndexError::GetReader.into())
         }
     }
 
@@ -218,7 +225,7 @@ impl MessageServer {
         if let Some(writer) = self.index_writers.get_mut(&key) {
             Ok(writer)
         } else {
-            Err(DataError::Directory.into())
+            Err(IndexError::GetWriter.into())
         }
     }
 }
@@ -243,7 +250,6 @@ impl Handler<SearchMessageIndex> for MessageServer {
     fn handle(&mut self, msg: SearchMessageIndex, _: &mut Self::Context) -> Self::Result {
         {
             let pending = self.pending_messages.clone();
-            dbg!(&pending);
             if let Some((pending, message_id)) = pending.get(&(msg.hub_id, msg.channel_id)) {
                 if pending != &0 {
                     let _ = self.get_writer(&msg.hub_id, &msg.channel_id)?.commit();
@@ -261,18 +267,16 @@ impl Handler<SearchMessageIndex> for MessageServer {
             QueryParser::for_index(searcher.index(), vec![self.schema_fields.content.clone()]);
         let query = query_parser
             .parse_query(&msg.query)
-            .map_err(|_| DataError::Directory)?;
+            .map_err(|_| IndexError::ParseQuery)?;
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(msg.limit))
-            .map_err(|_| DataError::Directory)?;
+            .map_err(|_| IndexError::Search)?;
         let mut result = Vec::new();
         for (_score, doc_address) in top_docs {
-            let retrieved_doc = searcher
-                .doc(doc_address)
-                .map_err(|_| DataError::Directory)?;
+            let retrieved_doc = searcher.doc(doc_address).map_err(|_| IndexError::GetDoc)?;
             if let Some(value) = retrieved_doc.get_first(self.schema_fields.id.clone()) {
                 if let Some(bytes) = value.bytes_value() {
-                    if let Ok (id) = bincode::deserialize::<ID>(bytes) {
+                    if let Ok(id) = bincode::deserialize::<ID>(bytes) {
                         result.push(id);
                     }
                 }
@@ -309,7 +313,7 @@ impl Handler<NewMessageForIndex> for MessageServer {
                     Self::log_last_message(&msg.hub_id, &msg.channel_id, &msg.message.id)?;
                     new_pending = 0;
                 } else {
-                    Err(DataError::Directory)?
+                    Err(IndexError::Commit)?
                 }
             }
         } else {

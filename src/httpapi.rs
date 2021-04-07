@@ -9,7 +9,7 @@ use crate::{
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     config::Config,
-    error::{AuthError, DataError, Error},
+    error::{AuthError, Error},
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
@@ -437,7 +437,10 @@ async fn search_messages(
 ) -> Result<Json<Vec<ID>>> {
     let hub = Hub::load(&path.0 .0).await?;
     hub.get_channel(&user_id.0, &path.1)?;
-    let message_server = srv.send(crate::server::GetMessageServer).await.map_err(|_| Error::Data(DataError::Directory))?;
+    let message_server = srv
+        .send(crate::server::GetMessageServer)
+        .await
+        .map_err(|_| Error::InternalMessageFailed)?;
     json_response!(message_server
         .send(crate::server::SearchMessageIndex {
             hub_id: path.0 .0,
@@ -446,7 +449,7 @@ async fn search_messages(
             query: query.0.query,
         })
         .await
-        .map_err(|_| Error::Data(DataError::Directory))?)
+        .map_err(|_| Error::InternalMessageFailed)?)
 }
 
 #[derive(Deserialize)]

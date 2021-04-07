@@ -17,6 +17,20 @@ pub enum DataError {
     DeleteFailed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
+pub enum IndexError {
+    OpenCreateIndex,
+    CreateReader,
+    CreateWriter,
+    GetReader,
+    GetWriter,
+    ParseQuery,
+    Search,
+    GetDoc,
+    Commit,
+}
+
 /// Errors related to authentication.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -65,11 +79,20 @@ pub enum Error {
     CannotAuthenticate,
     AlreadyTyping,
     NotTyping,
+    InternalMessageFailed,
     Io,
     #[display("{}({0})")]
     Auth(AuthError),
     #[display("{}({0})")]
     Data(DataError),
+    #[display("{}({0})")]
+    Index(IndexError),
+}
+
+impl From<IndexError> for Error {
+    fn from(err: IndexError) -> Self {
+        Self::Index(err)
+    }
 }
 
 impl From<AuthError> for Error {
@@ -113,8 +136,10 @@ impl From<&Error> for StatusCode {
             Error::MessageSendFailed => Self::INTERNAL_SERVER_ERROR,
             Error::AlreadyTyping => Self::CONFLICT,
             Error::NotTyping => Self::CONFLICT,
+            Error::InternalMessageFailed => Self::INTERNAL_SERVER_ERROR,
             Error::Auth(error) => error.into(),
             Error::Data(_) => Self::INTERNAL_SERVER_ERROR,
+            Error::Index(_) => Self::INTERNAL_SERVER_ERROR,
             Error::Io => Self::INTERNAL_SERVER_ERROR,
         }
     }
