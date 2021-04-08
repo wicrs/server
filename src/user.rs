@@ -8,7 +8,6 @@ use sha3::{
 
 use crate::{
     auth::Service,
-    check_name_validity,
     error::{DataError, Error},
     get_system_millis,
     hub::Hub,
@@ -22,6 +21,10 @@ const USER_FOLDER: &str = "data/users/";
 pub struct User {
     /// ID of the user.
     pub id: ID,
+    /// The user's status.
+    pub status: String,
+    /// The user's description.
+    pub description: String,
     /// The user's name.
     pub username: String,
     /// The email address used by the user on their OAuth service.
@@ -39,6 +42,8 @@ pub struct User {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GenericUser {
     pub id: ID,
+    pub status: String,
+    pub description: String,
     pub username: String,
     pub created: u128,
     /// Hashed versions of the IDs of the hubs that the user is in.
@@ -51,6 +56,8 @@ impl User {
         Self {
             id: get_id(&id, &service),
             username: String::new(),
+            status: String::new(),
+            description: String::new(),
             email,
             service,
             created: get_system_millis(),
@@ -70,17 +77,11 @@ impl User {
         GenericUser {
             id: self.id.clone(),
             created: self.created.clone(),
+            description: self.description.clone(),
+            status: self.status.clone(),
             username: self.username.clone(),
             hubs_hashed,
         }
-    }
-
-    /// Changes the username of the user or returns an error as outlined by [`check_name_validity`].
-    pub fn change_username(&mut self, new_name: String) -> Result<String> {
-        check_name_validity(&new_name)?;
-        let old_name = self.username.clone();
-        self.username = new_name;
-        Ok(old_name)
     }
 
     /// Adds the user to the hub with the given ID, giving them the default permissions and making sure that they are not banned.
@@ -95,24 +96,13 @@ impl User {
     /// * The user could not be added to the hub for any of the reasons outlined in [`Hub::user_join`].
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
-    pub async fn join_hub(&mut self, hub_id: &ID) -> Result<()> {
-        let mut hub = Hub::load(hub_id).await?;
+    pub async fn join_hub(&mut self, hub: &mut Hub) -> Result<()> {
         if hub.bans.contains(&self.id) {
             Err(Error::Banned)
         } else {
             hub.user_join(&self)?;
-            hub.save().await?;
-            self.in_hubs.push(hub_id.clone());
+            self.in_hubs.push(hub.id.clone());
             Ok(())
-        }
-    }
-
-    /// Returns and error if the user is not in the hub with the given ID.
-    pub fn in_hub(&self, hub_id: &ID) -> Result<()> {
-        if self.in_hubs.contains(hub_id) {
-            Ok(())
-        } else {
-            Err(Error::NotInHub)
         }
     }
 
@@ -124,14 +114,8 @@ impl User {
     /// limited to just these cases:
     ///
     /// * The user is not a member of the given hub.
-    /// * The hub does not exist.
-    /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
-    /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
-    pub async fn leave_hub(&mut self, hub_id: &ID) -> Result<()> {
+    pub fn remove_hub(&mut self, hub_id: &ID) -> Result<()> {
         if let Some(index) = self.in_hubs.iter().position(|id| id == hub_id) {
-            let mut hub = Hub::load(hub_id).await?;
-            hub.user_leave(&self)?;
-            hub.save().await?;
             self.in_hubs.remove(index);
             Ok(())
         } else {
@@ -142,8 +126,11 @@ impl User {
     /// Saves the user's data to a file on the disk.
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(USER_FOLDER).await?;
-        let json = serde_json::to_string(self).map_err(|_| DataError::Serialize)?;
-        tokio::fs::write(format!("{}{:x}.json", USER_FOLDER, self.id.as_u128()), json).await?;
+        tokio::fs::write(
+            format!("{}{:x}", USER_FOLDER, self.id.as_u128()),
+            bincode::serialize(self).map_err(|_| DataError::Serialize)?,
+        )
+        .await?;
         Ok(())
     }
 
@@ -157,13 +144,13 @@ impl User {
     /// * The user data file could not be found, probably means that the user does not exist.
     /// * The user data file was corrupt and or could not be deserialized properly.
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = format!("{}{:x}.json", USER_FOLDER, id.as_u128());
+        let filename = format!("{}{:x}", USER_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(Error::UserNotFound);
         }
-        let json = tokio::fs::read_to_string(path).await?;
-        serde_json::from_str(&json).map_err(|_| DataError::Deserialize.into())
+        bincode::deserialize(&tokio::fs::read(path).await?)
+            .map_err(|_| DataError::Deserialize.into())
     }
 
     /// Same as `Self::load` but first maps an OAuth ID and service name to a WICRS Server ID.

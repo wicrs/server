@@ -28,18 +28,17 @@ pub mod websocket;
 /// String to identify the version of the library, used for external requests.
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 
-/// List of characters that can be used in a username.
-pub const NAME_ALLOWED_CHARS: &str =
-    " .,_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/// Maximum size of a username in bytes. Clients should be able to accept larger and smaller values.
+pub const MAX_NAME_SIZE: usize = 128;
 
-/// Maximum length of a name in characters.
-pub const MAX_NAME_LENGTH: usize = 32;
+/// Maximum size of a user status in bytes. Clients should be able to accept larger and smaller values.
+pub const MAX_STATUS_SIZE: usize = 128;
 
-/// Minimum length of a name in characters.
-pub const MIN_NAME_LENGTH: usize = 1;
+/// Maximum size of a description in bytes. Clients should be able to accept larger and smaller values.
+pub const MAX_DESCRIPTION_SIZE: usize = 8192;
 
-/// Maximum size of a message in bytes.
-pub const MESSAGE_MAX_SIZE: usize = 4096;
+/// Maximum size of a message in bytes. Clients should be able to accept larger and smaller values.
+pub const MESSAGE_MAX_SIZE: usize = 8192;
 
 /// Get the current time in milliseconds since Unix Epoch.
 pub fn get_system_millis() -> u128 {
@@ -51,9 +50,7 @@ pub fn get_system_millis() -> u128 {
 
 /// Checks if a name is valid (not too long and only allowed characters).
 pub fn is_valid_name(name: &str) -> bool {
-    name.len() >= MIN_NAME_LENGTH
-        && name.len() <= MAX_NAME_LENGTH
-        && name.chars().all(|c| NAME_ALLOWED_CHARS.contains(c))
+    name.as_bytes().len() <= MAX_NAME_SIZE
 }
 
 /// Wraps `is_valid_name` to return a `Result<()>`.
@@ -62,9 +59,7 @@ pub fn is_valid_name(name: &str) -> bool {
 ///
 /// This function returns an error for any of the following reasons:
 ///
-/// * The name is too long (maximum defined by [`MAX_NAME_LENGTH`]).
-/// * The name is too short (minimum defined by [`MIN_NAME_LENGTH`]).
-/// * The name contains characters not listed in [`NAME_ALLOWED_CHARS`].
+/// * The name is too big (maximum in bytes defined by [`MAX_NAME_SIZE`]).
 pub fn check_name_validity(name: &str) -> Result<()> {
     if is_valid_name(name) {
         Ok(())
@@ -94,20 +89,4 @@ pub type ID = Uuid;
 /// Generates a new random ID.
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_valid_name;
-
-    #[test]
-    fn valid_username_check() {
-        assert!(is_valid_name("a"));
-        assert!(is_valid_name("Test_test tHAt-tester."));
-        assert!(is_valid_name("1234567890"));
-        assert!(is_valid_name("l33t 5p34k"));
-        assert!(!is_valid_name(""));
-        assert!(!is_valid_name("Test! @thing"));
-        assert!(!is_valid_name("123456789111315171921232527293133"));
-    }
 }

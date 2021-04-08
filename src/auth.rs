@@ -89,6 +89,8 @@ impl Auth {
             username: "testuser".to_string(),
             email: "test@example.com".to_string(),
             in_hubs: Vec::new(),
+            status: String::new(),
+            description: String::new(),
             created: 0,
             service: Service::GitHub,
         };

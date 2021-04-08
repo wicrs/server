@@ -15,6 +15,8 @@ pub struct Channel {
     pub id: ID,
     /// ID of the Hub that the channel belongs to.
     pub hub_id: ID,
+    /// Description of the channel.
+    pub description: String,
     /// Name of the channel.
     pub name: String,
     /// Date the channel was created in milliseconds since Unix Epoch.
@@ -28,6 +30,7 @@ impl Channel {
             name,
             id,
             hub_id,
+            description: String::new(),
             created: crate::get_system_millis(),
         }
     }

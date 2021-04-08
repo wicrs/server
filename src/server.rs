@@ -231,7 +231,7 @@ impl MessageServer {
             let hub = serde_json::from_str::<Hub>(&json).map_err(|_| DataError::Deserialize)?;
             if let Some(channel) = hub.channels.get(channel_id) {
                 let messages = channel.get_all_messages_from(&last_id);
-                let last_id =if let Some(last) = messages.last() {
+                let last_id = if let Some(last) = messages.last() {
                     Some(last.id.clone())
                 } else {
                     None

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -307,6 +310,8 @@ pub struct Hub {
     pub bans: HashSet<ID>,
     /// List of IDs of all the users who cannot send **any** messages in the hub.
     pub mutes: HashSet<ID>,
+    /// Description of the hub.
+    pub description: String,
     /// ID of the user who owns the hub, also the creator.
     pub owner: ID,
     /// Map of permission groups to their IDs.
@@ -337,6 +342,7 @@ impl Hub {
             name,
             id,
             groups,
+            description: String::new(),
             default_group: everyone.id.clone(),
             owner: creator_id,
             bans: HashSet::new(),
@@ -347,7 +353,7 @@ impl Hub {
         }
     }
 
-    /// Creates a new channel.
+    /// Creates a new channel while checking that the given user has permission to do so.
     ///
     /// # Errors
     ///
@@ -421,7 +427,7 @@ impl Hub {
         }
     }
 
-    /// Renames a channel.
+    /// Renames a channel while checking that the given user has permission to do so.
     ///
     /// # Errors
     ///
@@ -437,16 +443,14 @@ impl Hub {
         &mut self,
         user_id: &ID,
         channel_id: &ID,
-        name: String,
+        new_name: String,
     ) -> Result<String> {
-        check_name_validity(&name)?;
+        check_name_validity(&new_name)?;
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
             check_permission!(user, channel_id, ChannelPermission::Configure, self);
             if let Some(channel) = self.channels.get_mut(channel_id) {
-                let old_name = channel.name.clone();
-                channel.name = name;
-                Ok(old_name)
+                Ok(mem::replace(&mut channel.name, new_name))
             } else {
                 Err(Error::ChannelNotFound)
             }
@@ -455,7 +459,7 @@ impl Hub {
         }
     }
 
-    /// Deletes a channel while checking that the given user has permission to view it and to delete it.
+    /// Deletes a channel while checking that the given user has permission to do so.
     ///
     /// # Errors
     ///
@@ -525,7 +529,7 @@ impl Hub {
 
     /// Gets the file path to be used for storing the hub's data.
     pub fn get_info_path(&self) -> String {
-        format!("{}{:x}.json", HUB_INFO_FOLDER, self.id.as_u128())
+        format!("{}{:x}", HUB_INFO_FOLDER, self.id.as_u128())
     }
 
     /// Gets the path of the directory in which channel folders should be stored.
@@ -545,12 +549,12 @@ impl Hub {
     /// * The data could not be written to the disk.
     pub async fn save(&self) -> Result<()> {
         tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
-        if let Ok(json) = serde_json::to_string(self) {
-            tokio::fs::write(self.get_info_path(), json).await?;
-            Ok(())
-        } else {
-            Err(DataError::Serialize.into())
-        }
+        tokio::fs::write(
+            self.get_info_path(),
+            &bincode::serialize(self).map_err(|_| DataError::Serialize)?,
+        )
+        .await?;
+        Ok(())
     }
 
     /// Loads a hub's data given its ID.
@@ -563,17 +567,12 @@ impl Hub {
     /// * There is no hub with that ID.
     /// * The hub's data file was corrupt and could not be deserialized.
     pub async fn load(id: &ID) -> Result<Self> {
-        let filename = format!("{}{:x}.json", HUB_INFO_FOLDER, id.as_u128());
+        let filename = format!("{}{:x}", HUB_INFO_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(Error::HubNotFound);
         }
-        let json = tokio::fs::read_to_string(path).await?;
-        if let Ok(result) = serde_json::from_str(&json) {
-            Ok(result)
-        } else {
-            Err(DataError::Deserialize.into())
-        }
+        bincode::deserialize(&tokio::fs::read(path).await?).map_err(|_| DataError::Deserialize)?
     }
 
     /// Adds a user to a hub, creating and returning the resulting hub member.

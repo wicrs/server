@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use tokio::sync::RwLock;
 
@@ -88,10 +88,67 @@ pub async fn change_username<S: Into<String> + Clone>(user_id: &ID, new_name: S)
     let name: String = new_name.into();
     check_name_validity(&name)?;
     let mut user = User::load(user_id).await?;
-    let old_name = user.username;
-    user.username = name;
+    let old_name = mem::replace(&mut user.username, name);
     user.save().await?;
     Ok(old_name)
+}
+
+/// Changes a user's status.
+/// Returns the user's previous status if successful.
+///
+/// # Arguments
+///
+/// * `user` - User whose name is to be changed.
+/// * `new_status` - New status for the user.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons.
+///
+/// * The modified user data could not be saved for any of the reasons outlined in [`User::save`].
+/// * The new status was bigger than [`crate::MAX_STATUS_SIZE`].
+pub async fn change_user_status<S: Into<String> + Clone>(
+    user_id: &ID,
+    new_status: S,
+) -> Result<String> {
+    let status: String = new_status.into();
+    if status.as_bytes().len() > crate::MAX_STATUS_SIZE {
+        Err(Error::TooBig)
+    } else {
+        let mut user = User::load(user_id).await?;
+        let old_status = mem::replace(&mut user.status, status);
+        user.save().await?;
+        Ok(old_status)
+    }
+}
+
+/// Changes a user's description.
+/// Returns the user's previous description if successful.
+///
+/// # Arguments
+///
+/// * `user` - User whose name is to be changed.
+/// * `new_description` - New description for the user.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons.
+///
+/// * The modified user data could not be saved for any of the reasons outlined in [`User::save`].
+/// * The new status was bigger than [`crate::MAX_DESCRIPTION_SIZE`].
+pub async fn change_user_description<S: Into<String> + Clone>(
+    user_id: &ID,
+    new_description: S,
+) -> Result<String> {
+    let description: String = new_description.into();
+    if description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+        Err(Error::TooBig)
+    } else {
+        let mut user = User::load(user_id).await?;
+        let old_description = mem::replace(&mut user.description, description);
+        user.save().await?;
+        Ok(old_description)
+    }
 }
 
 /// Creates a hub, returning the ID of the new hub if successful.
@@ -201,14 +258,49 @@ pub async fn rename_hub<S: Into<String> + Clone>(
     hub_id: &ID,
     new_name: S,
 ) -> Result<String> {
-    check_name_validity(&new_name.clone().into())?;
+    let new_name: String = new_name.into();
+    check_name_validity(&new_name)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(user_id)?;
     check_permission!(member, HubPermission::Administrate, hub);
-    let old_name = hub.name.clone();
-    hub.name = new_name.into();
+    let old_name = mem::replace(&mut hub.name, new_name);
     hub.save().await?;
     Ok(old_name)
+}
+
+/// Changes the description of a hub.
+///
+/// # Arguments
+///
+/// * `user_id` - ID of the user to check for permission to perform the operation.
+/// * `hub_id` - The ID of the hub whose name is to be changed.
+/// * `new_description` - The content for the hub's description
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The user does not have permission to change the hub's description.
+/// * The given description is bigger than [`crate::MAX_DESCRIPTION_SIZE`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+pub async fn change_hub_description<S: Into<String> + Clone>(
+    user_id: &ID,
+    hub_id: &ID,
+    new_description: S,
+) -> Result<String> {
+    let new_description: String = new_description.into();
+    if new_description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+        Err(Error::TooBig)
+    } else {
+        let mut hub = Hub::load(hub_id).await?;
+        let member = hub.get_member(user_id)?;
+        check_permission!(member, HubPermission::Administrate, hub);
+        let old_name = mem::replace(&mut hub.description, new_description);
+        hub.save().await?;
+        Ok(old_name)
+    }
 }
 
 /// Changes a user's nickname in a hub.
@@ -232,11 +324,11 @@ pub async fn change_nickname<S: Into<String> + Clone>(
     hub_id: &ID,
     new_name: S,
 ) -> Result<String> {
-    check_name_validity(&new_name.clone().into())?;
+    let new_name: String = new_name.into();
+    check_name_validity(&new_name)?;
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member_mut(user_id)?;
-    let old_name = member.nickname.clone();
-    member.nickname = new_name.into();
+    let old_name = mem::replace(&mut member.nickname, new_name);
     hub.save().await?;
     Ok(old_name)
 }
@@ -327,7 +419,9 @@ pub async fn get_hub_member(actor_id: &ID, hub_id: &ID, user_id: &ID) -> Result<
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn join_hub(user_id: &ID, hub_id: &ID) -> Result<()> {
     let mut user = User::load(user_id).await?;
-    user.join_hub(hub_id).await?;
+    let mut hub = Hub::load(hub_id).await?;
+    user.join_hub(&mut hub).await?;
+    hub.save().await?;
     user.save().await
 }
 
@@ -344,7 +438,10 @@ pub async fn join_hub(user_id: &ID, hub_id: &ID) -> Result<()> {
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn leave_hub(user_id: &ID, hub_id: &ID) -> Result<()> {
     let mut user = User::load(user_id).await?;
-    user.leave_hub(hub_id).await?;
+    user.remove_hub(hub_id)?;
+    let mut hub = Hub::load(hub_id).await?;
+    hub.user_leave(&user)?;
+    hub.save().await?;
     user.save().await
 }
 
@@ -600,7 +697,7 @@ pub async fn send_message(
         let mut hub = Hub::load(hub_id).await?;
         hub.send_message(user_id, channel_id, message).await
     } else {
-        Err(Error::MessageTooBig)
+        Err(Error::TooBig)
     }
 }
 
