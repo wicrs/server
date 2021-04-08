@@ -19,6 +19,7 @@ use tantivy::{
     Index, IndexReader, IndexWriter, LeasedItem, ReloadPolicy, Searcher,
 };
 
+/// Messages sent to the server, usually from a websocket handler.
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub struct ClientServerMessage {
@@ -40,18 +41,28 @@ impl From<ClientCommand> for ClientServerMessage {
     }
 }
 
+/// Commands that the client can send the server.
 #[derive(Clone)]
 pub enum ClientCommand {
+    /// Disconnects the client by unsubscribing them from everything (does not drop connection).
     Disconnect(Recipient<ServerMessage>),
+    /// Subscribes the client to notifications on a hub (everything except for messages sent in channels in the hub).
     SubscribeHub(ID, ID, Recipient<ServerMessage>),
+    /// Unsubscribes the client from notifications in a hub, does not change channel subscriptions.
     UnsubscribeHub(ID, Recipient<ServerMessage>),
+    /// Subscribes the client to notifications of new messages in the given channel.
     SubscribeChannel(ID, ID, ID, Recipient<ServerMessage>),
+    /// Unsubscribes the client to notifications of new messages in the given channel.
     UnsubscribeChannel(ID, ID, Recipient<ServerMessage>),
+    /// Notifies other clients subscribed to the given channel that the given user has started typing.
     StartTyping(ID, ID, ID),
+    /// Notifies other clients subscribed to the given channel that the given user has stopped typing.
     StopTyping(ID, ID, ID),
+    /// Tells the server to send the given message in the given channel, also notifies other clients that are subscribed to the channel of the new message.
     SendMessage(ID, ID, ID, String),
 }
 
+/// Server's response to a [`ClientServerMessage`].
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub struct ServerResponse {
@@ -61,6 +72,7 @@ pub struct ServerResponse {
     pub message: Response,
 }
 
+/// Possible responses to a [`ClientServerMessage`].
 #[derive(MessageResponse, Clone, Display, FromStr, Message)]
 #[rtype(result = "()")]
 #[display(style = "SNAKE_CASE")]
@@ -72,15 +84,21 @@ pub enum Response {
     Id(ID),
 }
 
+/// Messages the server sends to clients based on subscriptions.
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub enum ServerMessage {
+    /// New message in a channel.
     NewMessage(ID, ID, channel::Message),
+    /// Hub has changed, (anything except for new messages).
     HubUpdated(ID),
+    /// The given user has started typing in the given channel.
     TypingStart(ID, ID, ID),
+    /// The given user has stopped typing in the given channel.
     TypingStop(ID, ID, ID),
 }
 
+/// Message to notify the server of a change made externally, usually used so the server can notify clients.
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub enum ServerNotification {
@@ -105,15 +123,21 @@ struct NewMessageForIndex {
     message: channel::Message,
 }
 
+/// Command for a [`MessageServer`] to search the given channel with a query.
 #[derive(Message)]
 #[rtype(result = "Result<Vec<ID>>")]
 pub struct SearchMessageIndex {
+    /// ID of the hub the channel is in.
     pub hub_id: ID,
+    /// ID of the channel in which to perform the search.
     pub channel_id: ID,
+    /// Maximum number of results to return.
     pub limit: usize,
+    /// Query string.
     pub query: String,
 }
 
+/// Handles sending messages to be indexed by the search engine (tantivy) and actually querying the search engine.
 pub struct MessageServer {
     indexes: HashMap<(ID, ID), Index>,
     index_writers: HashMap<(ID, ID), IndexWriter>,
@@ -403,6 +427,7 @@ pub struct Server {
 }
 
 impl Server {
+    /// Creates a new server with default options, also creates a [`MessageServer`] with the given `commit_threshold` (how many messages should be added to the search index before commiting to the index).
     pub fn new(commit_threshold: u8) -> Self {
         Self {
             subscribed_channels: HashMap::new(),
@@ -693,6 +718,7 @@ impl Handler<ServerNotification> for Server {
     }
 }
 
+/// Tells the [`Server`] to get an address to it's [`MessageServer`].
 #[derive(Message)]
 #[rtype(result = "Addr<MessageServer>")]
 pub struct GetMessageServer;

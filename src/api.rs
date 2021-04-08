@@ -645,6 +645,45 @@ pub async fn rename_channel<S: Into<String> + Clone>(
     Ok(old_name)
 }
 
+/// Renames a text channel in a hub.
+/// Returns the previous name of the channel if successful.
+///
+/// # Arguments
+///
+/// * `user_id` - ID of the user to check for permission to rename the channel.
+/// * `hub_id` - ID of the hub that has the channel.
+/// * `channel_id` - ID of the channel to be renamed.
+/// * `new_name` - New name for the channel.
+///
+/// # Errors
+///
+/// This function may return an error for any of the following reasons:
+///
+/// * THe user is not in the hub.
+/// * The name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
+/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+/// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+/// * The user does not have permission to rename channels.
+/// * The channel could not be renamed for any of the reasons outlined by [`Hub::rename_channel`].
+pub async fn change_channel_description<S: Into<String> + Clone>(
+    user_id: &ID,
+    hub_id: &ID,
+    channel_id: &ID,
+    new_description: S,
+) -> Result<String> {
+    let description: String = new_description.into();
+    if description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+        Err(Error::TooBig)
+    } else {
+        let mut hub = Hub::load(hub_id).await?;
+        let old_name = hub
+            .change_channel_description(user_id, channel_id, description)
+            .await?;
+        hub.save().await?;
+        Ok(old_name)
+    }
+}
+
 /// Deletes a text channel in a hub.
 ///
 /// # Arguments

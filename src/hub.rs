@@ -427,6 +427,41 @@ impl Hub {
         }
     }
 
+    /// Changes the description of a channel while checking that the given user has permission to do so.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error in the following situations, but is not
+    /// limited to just these cases:
+    ///
+    /// * Description is bigger than [`crate::MAX_DESCRIPTION_SIZE`].
+    /// * The user it not in the hub.
+    /// * The user does not have permission to view the channel.
+    /// * The user does not have permission to configure the channel.
+    /// * The channel does not exist.
+    pub async fn change_channel_description(
+        &mut self,
+        user_id: &ID,
+        channel_id: &ID,
+        new_description: String,
+    ) -> Result<String> {
+        if new_description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+            Err(Error::TooBig)
+        } else {
+            if let Some(user) = self.members.get(user_id) {
+                check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+                check_permission!(user, channel_id, ChannelPermission::Configure, self);
+                if let Some(channel) = self.channels.get_mut(channel_id) {
+                    Ok(mem::replace(&mut channel.description, new_description))
+                } else {
+                    Err(Error::ChannelNotFound)
+                }
+            } else {
+                Err(Error::NotInHub)
+            }
+        }
+    }
+
     /// Renames a channel while checking that the given user has permission to do so.
     ///
     /// # Errors
@@ -437,7 +472,7 @@ impl Hub {
     /// * Failed to pass [`check_name_validity`].
     /// * The user it not in the hub.
     /// * The user does not have permission to view the channel.
-    /// * The user does not have permission to configure (rename) the channel.
+    /// * The user does not have permission to configure the channel.
     /// * The channel does not exist.
     pub async fn rename_channel(
         &mut self,
