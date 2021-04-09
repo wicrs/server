@@ -157,9 +157,15 @@ macro_rules! no_content {
         $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
             .or_else(|e| Err(e))
     };
-    ($hub:expr, $srv:ident, $op:expr) => {
+    ($hub:expr, $srv:ident, $update_type:ident($($data:expr),*), $op:expr) => {
         no_content!($op).and_then(|r| {
-            update_hub!($hub, $srv);
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type($($data.clone(),)*));
+            Ok(r)
+        })
+    };
+    ($hub:expr, $srv:ident, $update_type:ident, $op:expr) => {
+        no_content!($op).and_then(|r| {
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type);
             Ok(r)
         })
     };
@@ -169,9 +175,15 @@ macro_rules! string_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(t.to_string())).or_else(|e| Err(e))
     };
-    ($hub:expr, $srv:ident, $op:expr) => {
+    ($hub:expr, $srv:ident, $update_type:ident($($data:expr),*), $op:expr) => {
         string_response!($op).and_then(|r| {
-            update_hub!($hub, $srv);
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type($($data.clone(),)*));
+            Ok(r)
+        })
+    };
+    ($hub:expr, $srv:ident, $update_type:ident, $op:expr) => {
+        string_response!($op).and_then(|r| {
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type);
             Ok(r)
         })
     };
@@ -181,17 +193,26 @@ macro_rules! json_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(Json(t))).or_else(|e| Err(e))
     };
-    ($hub:expr, $srv:ident, $op:expr) => {
+    ($hub:expr, $srv:ident, $update_type:ident($($data:expr),*), $op:expr) => {
         json_response!($op).and_then(|r| {
-            update_hub!($hub, $srv);
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type($($data.clone(),)*));
+            Ok(r)
+        })
+    };
+    ($hub:expr, $srv:ident, $update_type:ident, $op:expr) => {
+        json_response!($op).and_then(|r| {
+            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type);
             Ok(r)
         })
     };
 }
 
 macro_rules! update_hub {
-    ($hub:expr, $srv:ident) => {
-        $srv.do_send(crate::server::ServerNotification::HubUpdated($hub.clone()));
+    ($hub:expr, $srv:ident, $update_type:expr) => {
+        $srv.do_send(crate::server::ServerNotification::HubUpdated(
+            $hub.clone(),
+            $update_type,
+        ));
     };
 }
 
@@ -263,7 +284,12 @@ async fn delete_hub(
     hub_id: Path<ID>,
     srv: Data<Addr<Server>>,
 ) -> Result<HttpResponse> {
-    no_content!(hub_id.0, srv, api::delete_hub(&user_id.0, &hub_id.0).await)
+    no_content!(
+        hub_id.0,
+        srv,
+        HubDeleted,
+        api::delete_hub(&user_id.0, &hub_id.0).await
+    )
 }
 
 #[put("/v2/rename_hub/{hub_id}/{new_name}")]
@@ -275,6 +301,7 @@ async fn rename_hub(
     string_response!(
         path.0 .0,
         srv,
+        HubRenamed,
         api::rename_hub(&user_id.0, &path.0 .0, path.1.clone()).await
     )
 }
@@ -300,7 +327,12 @@ async fn join_hub(
     hub_id: Path<ID>,
     srv: Data<Addr<Server>>,
 ) -> Result<HttpResponse> {
-    no_content!(hub_id.0, srv, api::join_hub(&user_id.0, &hub_id.0).await)
+    no_content!(
+        hub_id.0,
+        srv,
+        UserJoined(user_id.0),
+        api::join_hub(&user_id.0, &hub_id.0).await
+    )
 }
 
 #[post("/v2/leave_hub/{hub_id}")]
@@ -309,7 +341,12 @@ async fn leave_hub(
     hub_id: Path<ID>,
     srv: Data<Addr<Server>>,
 ) -> Result<HttpResponse> {
-    no_content!(hub_id.0, srv, api::leave_hub(&user_id.0, &hub_id.0).await)
+    no_content!(
+        hub_id.0,
+        srv,
+        UserLeft(user_id.0),
+        api::leave_hub(&user_id.0, &hub_id.0).await
+    )
 }
 
 #[post("/v2/kick_member/{hub_id}/{user_id}")]
@@ -321,6 +358,7 @@ async fn kick_user(
     no_content!(
         path.0 .0,
         srv,
+        UserKicked(user_id.0),
         api::kick_user(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -334,6 +372,7 @@ async fn ban_user(
     no_content!(
         path.0 .0,
         srv,
+        UserBanned(user_id.0),
         api::ban_user(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -347,6 +386,7 @@ async fn unban_user(
     no_content!(
         path.0 .0,
         srv,
+        UserUnbanned(user_id.0),
         api::unban_user(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -360,6 +400,7 @@ async fn mute_user(
     no_content!(
         path.0 .0,
         srv,
+        UserMuted(user_id.0),
         api::mute_user(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -373,6 +414,7 @@ async fn unmute_user(
     no_content!(
         path.0 .0,
         srv,
+        UserUnmuted(user_id.0),
         api::unmute_user(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -386,6 +428,7 @@ async fn change_nickname(
     string_response!(
         path.0 .0,
         srv,
+        MemberNicknameChanged(user_id.0),
         api::change_nickname(&user_id.0, &path.0 .0, path.1.clone()).await
     )
 }
@@ -396,11 +439,8 @@ async fn create_channel(
     path: Path<(ID, String)>,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    string_response!(
-        path.0 .0,
-        srv,
-        api::create_channel(&user_id.0, &path.0 .0, path.1.clone()).await
-    )
+    let create = api::create_channel(&user_id.0, &path.0 .0, path.1.clone()).await?;
+    string_response!(path.0 .0, srv, ChannelCreated(create), Ok(create))
 }
 
 #[get("/v2/channel/{hub_id}/{channel_id}")]
@@ -417,6 +457,7 @@ async fn rename_channel(
     string_response!(
         path.0 .0,
         srv,
+        ChannelRenamed(path.1),
         api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
     )
 }
@@ -430,6 +471,7 @@ async fn delete_channel(
     no_content!(
         path.0 .0,
         srv,
+        ChannelDeleted(path.1),
         api::delete_channel(&user_id.0, &path.0 .0, &path.1).await
     )
 }
@@ -575,6 +617,7 @@ async fn set_user_hub_permission(
     no_content!(
         path.0 .0,
         srv,
+        UserHubPermissionChanged(path.0 .0),
         api::set_member_hub_permission(&user_id.0, &path.1, &path.0 .0, path.2, query.setting)
             .await
     )
@@ -590,6 +633,7 @@ async fn set_user_channel_permission(
     no_content!(
         path.0 .0,
         srv,
+        UserChannelPermissionChanged(user_id.0, path.0 .0),
         api::set_member_channel_permission(
             &user_id.0,
             &path.1,

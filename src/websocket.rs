@@ -5,7 +5,10 @@ use std::{
 
 use crate::{
     channel,
-    server::{ClientCommand, ClientServerMessage, Response, Server, ServerMessage, ServerResponse},
+    server::{
+        ClientCommand, ClientServerMessage, HubUpdateType, Response, Server, ServerMessage,
+        ServerResponse,
+    },
     Error, ID,
 };
 use actix::{
@@ -43,8 +46,8 @@ pub enum ServerClientMessage {
     CommandSent(u128),
     #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, channel::Message),
-    #[display("{}({0})")]
-    HubUpdated(ID),
+    #[display("{}({0},{1})")]
+    HubUpdated(ID, HubUpdateType),
     #[display("{}({0},{1})")]
     Result(u128, Response),
     #[display("{}({0},{1},{2})")]
@@ -65,7 +68,7 @@ impl From<ServerMessage> for ServerClientMessage {
             ServerMessage::TypingStop(hub_id, channel_id, user_id) => {
                 Self::UserStoppedTyping(hub_id, channel_id, user_id)
             }
-            ServerMessage::HubUpdated(hub_id) => Self::HubUpdated(hub_id),
+            ServerMessage::HubUpdated(hub_id, update_type) => Self::HubUpdated(hub_id, update_type),
         }
     }
 }

@@ -91,11 +91,53 @@ pub enum ServerMessage {
     /// New message in a channel.
     NewMessage(ID, ID, channel::Message),
     /// Hub has changed, (anything except for new messages).
-    HubUpdated(ID),
+    HubUpdated(ID, HubUpdateType),
     /// The given user has started typing in the given channel.
     TypingStart(ID, ID, ID),
     /// The given user has stopped typing in the given channel.
     TypingStop(ID, ID, ID),
+}
+
+/// Types of updates that trigger [`ServerNotification::HubUpdated`]
+#[derive(Clone, Display, FromStr)]
+pub enum HubUpdateType {
+    HubDeleted,
+    HubRenamed,
+    HubDescriptionUpdated,
+    #[display("{}({0})")]
+    UserJoined(ID),
+    #[display("{}({0})")]
+    UserLeft(ID),
+    #[display("{}({0})")]
+    UserBanned(ID),
+    #[display("{}({0})")]
+    UserMuted(ID),
+    #[display("{}({0})")]
+    UserUnmuted(ID),
+    #[display("{}({0})")]
+    UserUnbanned(ID),
+    #[display("{}({0})")]
+    UserKicked(ID),
+    #[display("{}({0})")]
+    UserHubPermissionChanged(ID),
+    #[display("{}({0},{1})")]
+    UserChannelPermissionChanged(ID, ID),
+    #[display("{}({0})")]
+    UsernameChanged(ID),
+    #[display("{}({0})")]
+    UserStatusUpdated(ID),
+    #[display("{}({0})")]
+    UserDescriptionUpdated(ID),
+    #[display("{}({0})")]
+    MemberNicknameChanged(ID),
+    #[display("{}({0})")]
+    ChannelCreated(ID),
+    #[display("{}({0})")]
+    ChannelDeleted(ID),
+    #[display("{}({0})")]
+    ChannelRenamed(ID),
+    #[display("{}({0})")]
+    ChannelDescriptionUpdated(ID),
 }
 
 /// Message to notify the server of a change made externally, usually used so the server can notify clients.
@@ -103,7 +145,7 @@ pub enum ServerMessage {
 #[rtype(result = "()")]
 pub enum ServerNotification {
     NewMessage(ID, ID, channel::Message),
-    HubUpdated(ID),
+    HubUpdated(ID, HubUpdateType),
     Stop,
 }
 
@@ -702,10 +744,10 @@ impl Handler<ServerNotification> for Server {
                 .into_actor(self)
                 .spawn(ctx);
             }
-            ServerNotification::HubUpdated(hub_id) => {
+            ServerNotification::HubUpdated(hub_id, update_type) => {
                 Self::send_hub(
                     self.subscribed_hubs.clone(),
-                    ServerMessage::HubUpdated(hub_id),
+                    ServerMessage::HubUpdated(hub_id, update_type),
                     hub_id,
                 )
                 .into_actor(self)

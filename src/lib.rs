@@ -19,7 +19,7 @@ pub mod hub;
 /// Permissions are defined here.
 pub mod permission;
 /// Server implementation.
-pub(crate) mod server;
+pub mod server;
 /// User management.
 pub mod user;
 /// Definition of the WebSocket API.
