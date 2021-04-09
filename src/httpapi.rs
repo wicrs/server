@@ -193,18 +193,6 @@ macro_rules! json_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(Json(t))).or_else(|e| Err(e))
     };
-    ($hub:expr, $srv:ident, $update_type:ident($($data:expr),*), $op:expr) => {
-        json_response!($op).and_then(|r| {
-            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type($($data.clone(),)*));
-            Ok(r)
-        })
-    };
-    ($hub:expr, $srv:ident, $update_type:ident, $op:expr) => {
-        json_response!($op).and_then(|r| {
-            update_hub!($hub, $srv, crate::server::HubUpdateType::$update_type);
-            Ok(r)
-        })
-    };
 }
 
 macro_rules! update_hub {
