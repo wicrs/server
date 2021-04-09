@@ -15,6 +15,7 @@ use actix::{
 use actix_web_actors::ws;
 use parse_display::{Display, FromStr};
 
+/// Messages that can be sent to the server by the client
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum ClientMessage {
@@ -30,6 +31,7 @@ pub enum ClientMessage {
     StopTyping(ID, ID),
 }
 
+/// Messages that the server can send to clients.
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum ServerClientMessage {
@@ -68,6 +70,7 @@ impl From<ServerMessage> for ServerClientMessage {
     }
 }
 
+/// WebSocket message handling.
 pub struct ChatSocket {
     hb: Instant,
     user: ID,

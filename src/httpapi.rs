@@ -13,7 +13,7 @@ use crate::{
     get_system_millis,
     hub::{Hub, HubMember},
     permission::{ChannelPermission, HubPermission, PermissionSetting},
-    server::{Server, ServerNotification},
+    server::Server,
     user::{GenericUser, User},
     websocket::ChatSocket,
     Result, ID,
@@ -157,17 +157,41 @@ macro_rules! no_content {
         $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
             .or_else(|e| Err(e))
     };
+    ($hub:expr, $srv:ident, $op:expr) => {
+        no_content!($op).and_then(|r| {
+            update_hub!($hub, $srv);
+            Ok(r)
+        })
+    };
 }
 
 macro_rules! string_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(t.to_string())).or_else(|e| Err(e))
     };
+    ($hub:expr, $srv:ident, $op:expr) => {
+        string_response!($op).and_then(|r| {
+            update_hub!($hub, $srv);
+            Ok(r)
+        })
+    };
 }
 
 macro_rules! json_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(Json(t))).or_else(|e| Err(e))
+    };
+    ($hub:expr, $srv:ident, $op:expr) => {
+        json_response!($op).and_then(|r| {
+            update_hub!($hub, $srv);
+            Ok(r)
+        })
+    };
+}
+
+macro_rules! update_hub {
+    ($hub:expr, $srv:ident) => {
+        $srv.do_send(crate::server::ServerNotification::HubUpdated($hub.clone()));
     };
 }
 
@@ -220,9 +244,7 @@ async fn get_user_by_id(user_id: UserID, id: Path<ID>) -> Result<Json<GenericUse
 
 #[put("/v2/change_username/{new_username}")]
 async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
-    api::change_username(&user_id.0, name.0)
-        .await
-        .or_else(|e| Err(e))
+    api::change_username(&user_id.0, name.0).await
 }
 
 #[post("/v2/create_hub/{name}")]
@@ -236,8 +258,12 @@ async fn get_hub(user_id: UserID, hub_id: Path<ID>) -> Result<Json<Hub>> {
 }
 
 #[delete("/v2/delete_hub/{hub_id}")]
-async fn delete_hub(user_id: UserID, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::delete_hub(&user_id.0, &hub_id.0).await)
+async fn delete_hub(
+    user_id: UserID,
+    hub_id: Path<ID>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(hub_id.0, srv, api::delete_hub(&user_id.0, &hub_id.0).await)
 }
 
 #[put("/v2/rename_hub/{hub_id}/{new_name}")]
@@ -246,11 +272,11 @@ async fn rename_hub(
     path: Path<(ID, String)>,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    let res = api::rename_hub(&user_id.0, &path.0 .0, path.1.clone())
-        .await
-        .or_else(|e| Err(e))?;
-    srv.do_send(ServerNotification::HubUpdated(path.0 .0));
-    Ok(res)
+    string_response!(
+        path.0 .0,
+        srv,
+        api::rename_hub(&user_id.0, &path.0 .0, path.1.clone()).await
+    )
 }
 
 #[get("/v2/is_member_banned/{hub_id}/{user_id}")]
@@ -269,50 +295,112 @@ async fn get_hub_member(user_id: UserID, path: Path<(ID, ID)>) -> Result<Json<Hu
 }
 
 #[post("/v2/join_hub/{hub_id}")]
-async fn join_hub(user_id: UserID, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::join_hub(&user_id.0, &hub_id.0).await)
+async fn join_hub(
+    user_id: UserID,
+    hub_id: Path<ID>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(hub_id.0, srv, api::join_hub(&user_id.0, &hub_id.0).await)
 }
 
 #[post("/v2/leave_hub/{hub_id}")]
-async fn leave_hub(user_id: UserID, hub_id: Path<ID>) -> Result<HttpResponse> {
-    no_content!(api::leave_hub(&user_id.0, &hub_id.0).await)
+async fn leave_hub(
+    user_id: UserID,
+    hub_id: Path<ID>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(hub_id.0, srv, api::leave_hub(&user_id.0, &hub_id.0).await)
 }
 
 #[post("/v2/kick_member/{hub_id}/{user_id}")]
-async fn kick_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::kick_user(&user_id.0, &path.0 .0, &path.1).await)
+async fn kick_user(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::kick_user(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[post("/v2/ban_member/{hub_id}/{user_id}")]
-async fn ban_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::ban_user(&user_id.0, &path.0 .0, &path.1).await)
+async fn ban_user(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::ban_user(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[post("/v2/unban_member/{hub_id}/{user_id}")]
-async fn unban_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unban_user(&user_id.0, &path.0 .0, &path.1).await)
+async fn unban_user(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::unban_user(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[post("/v2/mute_member/{hub_id}/{user_id}")]
-async fn mute_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::mute_user(&user_id.0, &path.0 .0, &path.1).await)
+async fn mute_user(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::mute_user(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[post("/v2/unmute_member/{hub_id}/{user_id}")]
-async fn unmute_user(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::unmute_user(&user_id.0, &path.0 .0, &path.1).await)
+async fn unmute_user(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::unmute_user(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[put("/v2/change_nickname/{hub_id}/{new_nickname}")]
-async fn change_nickname(user_id: UserID, path: Path<(ID, String)>) -> Result<String> {
-    api::change_nickname(&user_id.0, &path.0 .0, path.1.clone())
-        .await
-        .or_else(|e| Err(e))
+async fn change_nickname(
+    user_id: UserID,
+    path: Path<(ID, String)>,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
+    string_response!(
+        path.0 .0,
+        srv,
+        api::change_nickname(&user_id.0, &path.0 .0, path.1.clone()).await
+    )
 }
 
 #[post("/v2/create_channel/{hub_id}/{name}")]
-async fn create_channel(user_id: UserID, path: Path<(ID, String)>) -> Result<String> {
-    string_response!(api::create_channel(&user_id.0, &path.0 .0, path.1.clone()).await)
+async fn create_channel(
+    user_id: UserID,
+    path: Path<(ID, String)>,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
+    string_response!(
+        path.0 .0,
+        srv,
+        api::create_channel(&user_id.0, &path.0 .0, path.1.clone()).await
+    )
 }
 
 #[get("/v2/channel/{hub_id}/{channel_id}")]
@@ -321,15 +409,29 @@ async fn get_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<Json<Chann
 }
 
 #[put("/v2/rename_channel/{hub_id}/{channel_id}/{new_name}")]
-async fn rename_channel(user_id: UserID, path: Path<(ID, ID, String)>) -> Result<String> {
-    api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone())
-        .await
-        .or_else(|e| Err(e))
+async fn rename_channel(
+    user_id: UserID,
+    path: Path<(ID, ID, String)>,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
+    string_response!(
+        path.0 .0,
+        srv,
+        api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
+    )
 }
 
 #[delete("/v2/delete_channel/{hub_id}/{channel_id}")]
-async fn delete_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<HttpResponse> {
-    no_content!(api::delete_channel(&user_id.0, &path.0 .0, &path.1).await)
+async fn delete_channel(
+    user_id: UserID,
+    path: Path<(ID, ID)>,
+    srv: Data<Addr<Server>>,
+) -> Result<HttpResponse> {
+    no_content!(
+        path.0 .0,
+        srv,
+        api::delete_channel(&user_id.0, &path.0 .0, &path.1).await
+    )
 }
 
 #[post("/v2/send_message/{hub_id}/{channel_id}")]
@@ -468,8 +570,11 @@ async fn set_user_hub_permission(
     user_id: UserID,
     path: Path<(ID, ID, HubPermission)>,
     query: Query<PermissionSettingQuery>,
+    srv: Data<Addr<Server>>,
 ) -> Result<HttpResponse> {
     no_content!(
+        path.0 .0,
+        srv,
         api::set_member_hub_permission(&user_id.0, &path.1, &path.0 .0, path.2, query.setting)
             .await
     )
@@ -480,8 +585,11 @@ async fn set_user_channel_permission(
     user_id: UserID,
     path: Path<(ID, ID, ID, ChannelPermission)>,
     query: Query<PermissionSettingQuery>,
+    srv: Data<Addr<Server>>,
 ) -> Result<HttpResponse> {
     no_content!(
+        path.0 .0,
+        srv,
         api::set_member_channel_permission(
             &user_id.0,
             &path.1,
