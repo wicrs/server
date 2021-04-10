@@ -256,6 +256,16 @@ async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
     api::change_username(&user_id.0, name.0).await
 }
 
+#[put("/v2/change_status/{new_status}")]
+async fn change_status(user_id: UserID, status: Path<String>) -> Result<String> {
+    api::change_user_status(&user_id.0, status.0).await
+}
+
+#[put("/v2/change_description/{new_description}")]
+async fn change_user_description(user_id: UserID, description: Path<String>) -> Result<String> {
+    api::change_user_description(&user_id.0, description.0).await
+}
+
 #[post("/v2/create_hub/{name}")]
 async fn create_hub(user_id: UserID, name: Path<String>) -> Result<String> {
     string_response!(api::create_hub(&user_id.0, name.0).await)
@@ -291,6 +301,21 @@ async fn rename_hub(
         srv,
         HubRenamed,
         api::rename_hub(&user_id.0, &path.0 .0, path.1.clone()).await
+    )
+}
+
+#[put("/v2/change_hub_description/{hub_id}/{new_description}")]
+async fn change_hub_description(
+    user_id: UserID,
+    path: Path<(ID, String)>,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
+    let hub_id = path.0 .0.clone();
+    string_response!(
+        hub_id,
+        srv,
+        HubDescriptionUpdated,
+        api::change_hub_description(&user_id.0, &path.0 .0, path.0 .1).await
     )
 }
 
@@ -447,6 +472,20 @@ async fn rename_channel(
         srv,
         ChannelRenamed(path.1),
         api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
+    )
+}
+
+#[put("/v2/change_channel_description/{hub_id}/{channel_id}/{new_description}")]
+async fn change_channel_description(
+    user_id: UserID,
+    path: Path<(ID, ID, String)>,
+    srv: Data<Addr<Server>>,
+) -> Result<String> {
+    string_response!(
+        path.0 .0,
+        srv,
+        ChannelDescriptionUpdated(path.1),
+        api::change_channel_description(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
     )
 }
 
