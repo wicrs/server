@@ -337,7 +337,7 @@ async fn leave_hub(
     )
 }
 
-#[post("/v2/kick_member/{hub_id}/{user_id}")]
+#[post("/v2/kick_user/{hub_id}/{user_id}")]
 async fn kick_user(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -351,7 +351,7 @@ async fn kick_user(
     )
 }
 
-#[post("/v2/ban_member/{hub_id}/{user_id}")]
+#[post("/v2/ban_user/{hub_id}/{user_id}")]
 async fn ban_user(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -365,7 +365,7 @@ async fn ban_user(
     )
 }
 
-#[post("/v2/unban_member/{hub_id}/{user_id}")]
+#[post("/v2/unban_user/{hub_id}/{user_id}")]
 async fn unban_user(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -379,7 +379,7 @@ async fn unban_user(
     )
 }
 
-#[post("/v2/mute_member/{hub_id}/{user_id}")]
+#[post("/v2/mute_user/{hub_id}/{user_id}")]
 async fn mute_user(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -393,7 +393,7 @@ async fn mute_user(
     )
 }
 
-#[post("/v2/unmute_member/{hub_id}/{user_id}")]
+#[post("/v2/unmute_user/{hub_id}/{user_id}")]
 async fn unmute_user(
     user_id: UserID,
     path: Path<(ID, ID)>,
@@ -611,7 +611,7 @@ async fn set_user_hub_permission(
     )
 }
 
-#[put("/v2/member_hub_permission/{hub_id}/{channel_id}/{member_id}/{channel_permission}")]
+#[put("/v2/member_channel_permission/{hub_id}/{channel_id}/{member_id}/{channel_permission}")]
 async fn set_user_channel_permission(
     user_id: UserID,
     path: Path<(ID, ID, ID, ChannelPermission)>,
