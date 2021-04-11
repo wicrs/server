@@ -60,7 +60,11 @@ pub async fn invalidate_all_tokens(auth_manager: Arc<RwLock<Auth>>, user_id: ID)
 /// * `auth_manager` - The Authentication manager for the current server instance, wrapped in Arc<RwLock>> so that it can be used by multiple threads.
 /// * `user_id` - ID of the user whose tokens should be invalidated.
 /// * `token` - Token to be invalidated.
-pub async fn invalidate_token<S: Into<String>>(auth_manager: Arc<RwLock<Auth>>, user_id: ID, token: S) {
+pub async fn invalidate_token<S: Into<String>>(
+    auth_manager: Arc<RwLock<Auth>>,
+    user_id: ID,
+    token: S,
+) {
     Auth::invalidate_token(auth_manager, user_id, token.into()).await
 }
 

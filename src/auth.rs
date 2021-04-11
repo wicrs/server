@@ -17,10 +17,10 @@ use crate::{
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
-/// Map of active logged in user sessions. 
+/// Map of active logged in user sessions.
 /// `HashMap<Hashed User ID, HashMap<Hashed Token, Token Expiry Date>>`
 type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, u128>>>>;
-/// A login sessions, not an actual logged in user. 
+/// A login sessions, not an actual logged in user.
 /// `(Login Start Time, Client)`
 type LoginSession = (u128, BasicClient);
 /// Map of login sessions, sessions that are in the process of authenticating and logging in.

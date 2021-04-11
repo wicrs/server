@@ -278,29 +278,44 @@ async fn get_user_by_id(user_id: UserID, id: Path<ID>) -> Result<Json<GenericUse
     json_response!(api::get_user_stripped(&user_id.0, id.0).await)
 }
 
-#[put("/v2/change_username/{new_username}")]
-async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
-    api::change_username(&user_id.0, name.0).await
+/// Change the currently authenticated user's name, new username should be in the body as UTF-8 bytes, returns the old username.
+#[put("/v2/change_username")]
+async fn rename_user(user_id: UserID, body: Bytes) -> Result<String> {
+    if let Ok(new_name) = String::from_utf8(body.to_vec()) {
+        api::change_username(&user_id.0, new_name).await
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
-#[put("/v2/change_status/{new_status}")]
-async fn change_status(user_id: UserID, status: Path<String>) -> Result<String> {
-    api::change_user_status(&user_id.0, status.0).await
+/// Change the currently authenticated user's status, new status should be in the body as UTF-8 bytes, returns the old status.
+#[put("/v2/change_status")]
+async fn change_status(user_id: UserID, body: Bytes) -> Result<String> {
+    if let Ok(new_status) = String::from_utf8(body.to_vec()) {
+        api::change_user_status(&user_id.0, new_status).await
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 /// Change the currently authenticated user's description, new description should be in the body as UTF-8 bytes, returns the old description.
-#[put("/v2/change_description/{new_description}")]
+#[put("/v2/change_description")]
 async fn change_user_description(user_id: UserID, body: Bytes) -> Result<String> {
     if let Ok(description) = String::from_utf8(body.to_vec()) {
         api::change_user_description(&user_id.0, description).await
     } else {
-        Err(Error::InvalidMessage)
+        Err(Error::InvalidText)
     }
 }
 
-#[post("/v2/create_hub/{name}")]
-async fn create_hub(user_id: UserID, name: Path<String>) -> Result<String> {
-    string_response!(api::create_hub(&user_id.0, name.0).await)
+/// Change creates a new hub with the currently authenticated user as the owner, name should be in the body as UTF-8 bytes, returns the new hub's ID.
+#[post("/v2/create_hub")]
+async fn create_hub(user_id: UserID, body: Bytes) -> Result<String> {
+    if let Ok(name) = String::from_utf8(body.to_vec()) {
+        string_response!(api::create_hub(&user_id.0, name).await)
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 #[get("/v2/hub/{hub_id}")]
@@ -322,34 +337,45 @@ async fn delete_hub(
     )
 }
 
-#[put("/v2/rename_hub/{hub_id}/{new_name}")]
+/// Change the given hub's name, new name should be in the body as UTF-8 bytes, returns the old name.
+#[put("/v2/rename_hub/{hub_id}")]
 async fn rename_hub(
     user_id: UserID,
-    path: Path<(ID, String)>,
+    path: Path<ID>,
+    body: Bytes,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    string_response!(
-        path.0 .0,
-        srv,
-        HubRenamed,
-        api::rename_hub(&user_id.0, &path.0 .0, path.1.clone()).await
-    )
+    if let Ok(new_name) = String::from_utf8(body.to_vec()) {
+        string_response!(
+            path.0,
+            srv,
+            HubRenamed,
+            api::rename_hub(&user_id.0, &path.0, new_name).await
+        )
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 /// Change the given hub's description, new description should be in the body as UTF-8 bytes, returns the old description.
-#[put("/v2/change_hub_description/{hub_id}/{new_description}")]
+#[put("/v2/change_hub_description/{hub_id}")]
 async fn change_hub_description(
     user_id: UserID,
-    path: Path<(ID, String)>,
+    path: Path<ID>,
+    body: Bytes,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    let hub_id = path.0 .0.clone();
-    string_response!(
-        hub_id,
-        srv,
-        HubDescriptionUpdated,
-        api::change_hub_description(&user_id.0, &path.0 .0, path.0 .1).await
-    )
+    if let Ok(description) = String::from_utf8(body.to_vec()) {
+        let hub_id = path.0.clone();
+        string_response!(
+            hub_id,
+            srv,
+            HubDescriptionUpdated,
+            api::change_hub_description(&user_id.0, &path.0, description).await
+        )
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 #[get("/v2/is_member_banned/{hub_id}/{user_id}")]
@@ -465,28 +491,44 @@ async fn unmute_user(
     )
 }
 
-#[put("/v2/change_nickname/{hub_id}/{new_nickname}")]
+/// Change currently authenticated user's nickname in a hub, new name should be in the body as UTF-8 bytes, returns the old name.
+#[put("/v2/change_nickname/{hub_id}")]
 async fn change_nickname(
     user_id: UserID,
-    path: Path<(ID, String)>,
+    path: Path<ID>,
+    body: Bytes,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    string_response!(
-        path.0 .0,
-        srv,
-        MemberNicknameChanged(user_id.0),
-        api::change_nickname(&user_id.0, &path.0 .0, path.1.clone()).await
-    )
+    if let Ok(new_name) = String::from_utf8(body.to_vec()) {
+        string_response!(
+            path.0,
+            srv,
+            HubRenamed,
+            string_response!(
+                path.0,
+                srv,
+                MemberNicknameChanged(user_id.0),
+                api::change_nickname(&user_id.0, &path.0, new_name).await
+            )
+        )
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
-#[post("/v2/create_channel/{hub_id}/{name}")]
+#[post("/v2/create_channel/{hub_id}")]
 async fn create_channel(
     user_id: UserID,
-    path: Path<(ID, String)>,
+    path: Path<ID>,
+    body: Bytes,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    let create = api::create_channel(&user_id.0, &path.0 .0, path.1.clone()).await?;
-    string_response!(path.0 .0, srv, ChannelCreated(create), Ok(create))
+    if let Ok(name) = String::from_utf8(body.to_vec()) {
+        let create = api::create_channel(&user_id.0, &path.0, name).await?;
+        string_response!(path.0, srv, ChannelCreated(create), Ok(create))
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 #[get("/v2/channel/{hub_id}/{channel_id}")]
@@ -494,33 +536,44 @@ async fn get_channel(user_id: UserID, path: Path<(ID, ID)>) -> Result<Json<Chann
     json_response!(api::get_channel(&user_id.0, &path.0 .0, &path.1).await)
 }
 
-#[put("/v2/rename_channel/{hub_id}/{channel_id}/{new_name}")]
+/// Change the given channel's name, new name should be in the body as UTF-8 bytes, returns the old name.
+#[put("/v2/rename_channel/{hub_id}/{channel_id}")]
 async fn rename_channel(
     user_id: UserID,
-    path: Path<(ID, ID, String)>,
+    path: Path<(ID, ID)>,
     srv: Data<Addr<Server>>,
+    body: Bytes,
 ) -> Result<String> {
-    string_response!(
-        path.0 .0,
-        srv,
-        ChannelRenamed(path.1),
-        api::rename_channel(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
-    )
+    if let Ok(new_name) = String::from_utf8(body.to_vec()) {
+        string_response!(
+            path.0 .0,
+            srv,
+            ChannelRenamed(path.1),
+            api::rename_channel(&user_id.0, &path.0 .0, &path.1, new_name).await
+        )
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 /// Change the given channel's description, new description should be in the body as UTF-8 bytes, returns the old description.
-#[put("/v2/change_channel_description/{hub_id}/{channel_id}/{new_description}")]
+#[put("/v2/change_channel_description/{hub_id}/{channel_id}")]
 async fn change_channel_description(
     user_id: UserID,
     path: Path<(ID, ID, String)>,
+    body: Bytes,
     srv: Data<Addr<Server>>,
 ) -> Result<String> {
-    string_response!(
-        path.0 .0,
-        srv,
-        ChannelDescriptionUpdated(path.1),
-        api::change_channel_description(&user_id.0, &path.0 .0, &path.1, path.2.clone()).await
-    )
+    if let Ok(description) = String::from_utf8(body.to_vec()) {
+        string_response!(
+            path.0 .0,
+            srv,
+            ChannelDescriptionUpdated(path.1),
+            api::change_channel_description(&user_id.0, &path.0 .0, &path.1, description).await
+        )
+    } else {
+        Err(Error::InvalidText)
+    }
 }
 
 #[delete("/v2/delete_channel/{hub_id}/{channel_id}")]
@@ -554,7 +607,7 @@ async fn send_message(
         )));
         string_response!(Ok(message.id))
     } else {
-        Err(Error::InvalidMessage)
+        Err(Error::InvalidText)
     }
 }
 

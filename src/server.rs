@@ -500,7 +500,7 @@ impl Server {
         }
     }
 
-        /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
+    /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
     async fn send_channel(
         subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
         message: ServerMessage,
