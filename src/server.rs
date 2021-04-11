@@ -149,6 +149,7 @@ pub enum ServerNotification {
     Stop,
 }
 
+/// Fields for the Tantivy message schema.
 #[derive(Clone)]
 struct MessageSchemaFields {
     content: Field,
@@ -157,6 +158,7 @@ struct MessageSchemaFields {
     sender: Field,
 }
 
+/// Message to tell the message server that there is a new message in a channel.
 #[derive(Message)]
 #[rtype(result = "Result<()>")]
 struct NewMessageForIndex {
@@ -191,6 +193,7 @@ pub struct MessageServer {
 }
 
 impl MessageServer {
+    /// Create a new message server with the given commit threshold (how many messages should be sent before commiting to the index).
     fn new(commit_threshold: u8) -> Self {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("content", TEXT);
@@ -222,6 +225,7 @@ impl MessageServer {
         }
     }
 
+    /// Logs the given message ID to a file, should be called after any Tantivy commits.
     fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
@@ -231,15 +235,12 @@ impl MessageServer {
         );
         let log_path = std::path::Path::new(&log_path_string);
         let mut log_file = std::fs::File::create(log_path)?;
-        log_file.write(
-            bincode::serialize(&message_id.as_u128())
-                .map_err(|_| DataError::Serialize)?
-                .as_slice(),
-        )?;
+        log_file.write(&message_id.as_u128().to_ne_bytes())?;
         log_file.flush()?;
         Ok(())
     }
 
+    /// Same as [`log_last_message`] but only writes the message_id if the log file doesn't already exist.
     fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
@@ -249,11 +250,14 @@ impl MessageServer {
         );
         let log_path = std::path::Path::new(&log_path_string);
         if !log_path.is_file() {
-            std::fs::File::create(log_path)?.write(&message_id.as_u128().to_ne_bytes())?;
+            let mut log_file = std::fs::File::create(log_path)?;
+            log_file.write(&message_id.as_u128().to_ne_bytes())?;
+            log_file.flush()?;
         }
         Ok(())
     }
 
+    /// Sets up the Tantivy index for a given channel, also makes sure that the index is up to date by commiting any messages sent after the last message sent (logged by [`log_last_message`]).
     fn setup_index(&mut self, hub_id: &ID, channel_id: &ID) -> Result {
         let dir_string = format!(
             "{}/{:x}/{:x}/index",
@@ -330,6 +334,7 @@ impl MessageServer {
         Ok(())
     }
 
+    /// Gets a reader for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
     fn get_reader(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&IndexReader> {
         let key = (hub_id.clone(), channel_id.clone());
         if !self.index_readers.contains_key(&key) {
@@ -342,12 +347,14 @@ impl MessageServer {
         }
     }
 
+    /// Gets a searcher for the Tantivy index for a channel, uses [`get_reader`].
     fn get_searcher(&mut self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
         let reader = self.get_reader(hub_id, channel_id)?;
         let _ = reader.reload();
         Ok(reader.searcher())
     }
 
+    /// Gets a writer for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
     fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
         let key = (hub_id.clone(), channel_id.clone());
         if !self.index_writers.contains_key(&key) {
@@ -461,6 +468,7 @@ impl Handler<NewMessageForIndex> for MessageServer {
     }
 }
 
+/// Server that handles socket clients and manages notifying them of new messages/changes as well as sending messages to be indexed by Tantivy.
 pub struct Server {
     subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
     subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
@@ -479,6 +487,7 @@ impl Server {
         }
     }
 
+    /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
     async fn send_hub(
         subscribed_hubs: HashMap<ID, HashSet<Recipient<ServerMessage>>>,
         message: ServerMessage,
@@ -491,6 +500,7 @@ impl Server {
         }
     }
 
+        /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
     async fn send_channel(
         subscribed_channels: HashMap<(ID, ID), HashSet<Recipient<ServerMessage>>>,
         message: ServerMessage,

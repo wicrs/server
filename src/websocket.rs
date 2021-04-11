@@ -114,6 +114,7 @@ impl Handler<ServerMessage> for ChatSocket {
 }
 
 impl ChatSocket {
+    /// Creates a new ChatSocket for the given user going to the given [`Server`].
     pub fn new(user: ID, hb_interval: Duration, hb_timeout: Duration, addr: Addr<Server>) -> Self {
         Self {
             hb: Instant::now(),
@@ -123,6 +124,8 @@ impl ChatSocket {
             addr,
         }
     }
+
+    /// Updates the heartbeat status or closes the connection if too much time has elapsed since the last heartbeat ping.
     fn hb(&self, ctx: &mut <Self as Actor>::Context) {
         let timeout = self.hb_timeout.clone();
         ctx.run_interval(self.hb_interval.clone(), move |act, ctx| {

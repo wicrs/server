@@ -14,7 +14,8 @@ use crate::{
     Result, ID,
 };
 
-const USER_FOLDER: &str = "data/users/";
+/// Relative path to the folder where user data is stored.
+pub const USER_FOLDER: &str = "data/users/";
 
 /// Represents a user, keeps track of which accounts it owns and their metadata.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

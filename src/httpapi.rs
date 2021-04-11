@@ -250,14 +250,12 @@ async fn login_finish(
     json_response!(api::complete_login(auth.get_ref().clone(), service.0, query.0).await)
 }
 
-/// Invalidates all of the authenticated user's authentication tokens.
 #[post("/v2/invalidate_tokens")]
 async fn invalidate_all_tokens(user_id: UserID, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
     api::invalidate_all_tokens(auth.get_ref().clone(), user_id.0).await;
     HttpResponse::NoContent().finish()
 }
 
-/// Invalidates the given authentication token for the authenticated user.
 #[post("/v2/invalidate_token/{token}")]
 async fn invalidate_token(
     user_id: UserID,
@@ -280,13 +278,11 @@ async fn get_user_by_id(user_id: UserID, id: Path<ID>) -> Result<Json<GenericUse
     json_response!(api::get_user_stripped(&user_id.0, id.0).await)
 }
 
-/// Change the authenticated user's username, returns the old username.
 #[put("/v2/change_username/{new_username}")]
 async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
     api::change_username(&user_id.0, name.0).await
 }
 
-/// Change the currently authenticated user's status, returns the old status.
 #[put("/v2/change_status/{new_status}")]
 async fn change_status(user_id: UserID, status: Path<String>) -> Result<String> {
     api::change_user_status(&user_id.0, status.0).await
@@ -302,7 +298,6 @@ async fn change_user_description(user_id: UserID, body: Bytes) -> Result<String>
     }
 }
 
-/// Creates a new hub with the given name and the currently authenticated user as the owner, returns the new hub's ID as a string.
 #[post("/v2/create_hub/{name}")]
 async fn create_hub(user_id: UserID, name: Path<String>) -> Result<String> {
     string_response!(api::create_hub(&user_id.0, name.0).await)
@@ -341,6 +336,7 @@ async fn rename_hub(
     )
 }
 
+/// Change the given hub's description, new description should be in the body as UTF-8 bytes, returns the old description.
 #[put("/v2/change_hub_description/{hub_id}/{new_description}")]
 async fn change_hub_description(
     user_id: UserID,
@@ -512,6 +508,7 @@ async fn rename_channel(
     )
 }
 
+/// Change the given channel's description, new description should be in the body as UTF-8 bytes, returns the old description.
 #[put("/v2/change_channel_description/{hub_id}/{channel_id}/{new_description}")]
 async fn change_channel_description(
     user_id: UserID,
@@ -540,6 +537,7 @@ async fn delete_channel(
     )
 }
 
+/// Sends a message in the given channel, message text should be in the body as UTF-8 bytes, returns the ID of the message.
 #[post("/v2/send_message/{hub_id}/{channel_id}")]
 async fn send_message(
     user_id: UserID,
