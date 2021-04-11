@@ -96,7 +96,7 @@ impl User {
     /// * The user could not be added to the hub for any of the reasons outlined in [`Hub::user_join`].
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
-    pub async fn join_hub(&mut self, hub: &mut Hub) -> Result<()> {
+    pub async fn join_hub(&mut self, hub: &mut Hub) -> Result {
         if hub.bans.contains(&self.id) {
             Err(Error::Banned)
         } else {
@@ -114,7 +114,7 @@ impl User {
     /// limited to just these cases:
     ///
     /// * The user is not a member of the given hub.
-    pub fn remove_hub(&mut self, hub_id: &ID) -> Result<()> {
+    pub fn remove_hub(&mut self, hub_id: &ID) -> Result {
         if let Some(index) = self.in_hubs.iter().position(|id| id == hub_id) {
             self.in_hubs.remove(index);
             Ok(())
@@ -124,7 +124,7 @@ impl User {
     }
 
     /// Saves the user's data to a file on the disk.
-    pub async fn save(&self) -> Result<()> {
+    pub async fn save(&self) -> Result {
         tokio::fs::create_dir_all(USER_FOLDER).await?;
         tokio::fs::write(
             format!("{}{:x}", USER_FOLDER, self.id.as_u128()),

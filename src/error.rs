@@ -3,7 +3,8 @@ use parse_display::{Display, FromStr};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-pub type Result<T, E = Error> = std::result::Result<T, E>;
+/// General result type for wicrs, error type defaults to [`Error`].
+pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 
 /// Errors related to data processing.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
@@ -17,6 +18,7 @@ pub enum DataError {
     DeleteFailed,
 }
 
+/// Errors related to message indexing and searching (Tantivy).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum IndexError {

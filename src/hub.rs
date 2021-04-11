@@ -56,7 +56,7 @@ impl HubMember {
     }
 
     /// Changes the nickname of the hub member or returns an error if [`check_name_validity`] fails.
-    pub fn set_nickname(&mut self, nickname: String) -> Result<()> {
+    pub fn set_nickname(&mut self, nickname: String) -> Result {
         check_name_validity(&nickname)?;
         self.nickname = nickname;
         Ok(())
@@ -147,7 +147,7 @@ impl HubMember {
     pub fn has_channel_permission(
         &self,
         channel: &ID,
-        permission: &ChannelPermission,
+        permission: ChannelPermission,
         hub: &Hub,
     ) -> bool {
         if hub.owner == self.user {
@@ -164,7 +164,7 @@ impl HubMember {
                     return true;
                 }
             }
-            if let Some(value) = channel.get(permission) {
+            if let Some(value) = channel.get(&permission) {
                 match value {
                     &Some(true) => {
                         return true;
@@ -173,7 +173,7 @@ impl HubMember {
                         return false;
                     }
                     None => {
-                        if self.has_permission(permission.hub_equivalent(), hub) {
+                        if self.has_permission(permission.into(), hub) {
                             return true;
                         }
                     }
@@ -275,7 +275,7 @@ impl PermissionGroup {
     }
 
     /// Checks if the group has a permission in a specific channel.
-    pub fn has_channel_permission(&self, channel_id: &ID, permission: &ChannelPermission) -> bool {
+    pub fn has_channel_permission(&self, channel_id: &ID, permission: ChannelPermission) -> bool {
         if self.has_all_permissions() {
             return true;
         }
@@ -289,7 +289,7 @@ impl PermissionGroup {
                 if value == &Some(true) {
                     return true;
                 } else if value == &None {
-                    if self.has_permission(&permission.hub_equivalent()) {
+                    if self.has_permission(&permission.into()) {
                         return true;
                     }
                 }
@@ -505,7 +505,7 @@ impl Hub {
     /// * The channel does not exist.
     /// * THe user does not have permission to view the channel.
     /// * The user does not have permission to delete the channel.
-    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result<()> {
+    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result {
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, HubPermission::DeleteChannel, self);
             check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
@@ -582,7 +582,7 @@ impl Hub {
     /// * The hub data could not be serialized.
     /// * The hub info folder does not exist and could not be created.
     /// * The data could not be written to the disk.
-    pub async fn save(&self) -> Result<()> {
+    pub async fn save(&self) -> Result {
         tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
         tokio::fs::write(
             self.get_info_path(),
@@ -638,7 +638,7 @@ impl Hub {
     ///
     /// * The user is not in the hub.
     /// * One of the permission groups the user was in could not be found in the hub.
-    pub fn user_leave(&mut self, user: &User) -> Result<()> {
+    pub fn user_leave(&mut self, user: &User) -> Result {
         if let Some(member) = self.members.get_mut(&user.id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
@@ -662,7 +662,7 @@ impl Hub {
     /// * The user could not be removed from the hub for any of the reasons outlined in [`Hub::user_leave`].
     /// * The user's data failed to load for any of the reasons outlined in [`User::load`].
     /// * The user's data failed to save for any of the reasons outlined in [`User::save`].
-    pub async fn kick_user(&mut self, user_id: &ID) -> Result<()> {
+    pub async fn kick_user(&mut self, user_id: &ID) -> Result {
         if self.members.contains_key(user_id) {
             let mut user = User::load(user_id).await?;
             self.user_leave(&user)?;
@@ -680,7 +680,7 @@ impl Hub {
     /// # Errors
     ///
     /// Possible errors outlined by [`Hub::kick_user`].
-    pub async fn ban_user(&mut self, user_id: ID) -> Result<()> {
+    pub async fn ban_user(&mut self, user_id: ID) -> Result {
         self.kick_user(&user_id).await?;
         self.bans.insert(user_id);
         Ok(())
@@ -711,7 +711,7 @@ impl Hub {
         if let Some(user) = self.members.get(user_id) {
             let mut result = HashMap::new();
             for channel in self.channels.clone() {
-                if user.has_channel_permission(&channel.0, &ChannelPermission::ViewChannel, &hub_im)
+                if user.has_channel_permission(&channel.0, ChannelPermission::ViewChannel, &hub_im)
                 {
                     result.insert(channel.0.clone(), channel.1.clone());
                 }

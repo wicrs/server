@@ -46,7 +46,7 @@ impl Channel {
     }
 
     /// Creates the channel data folder.
-    pub async fn create_dir(&self) -> Result<()> {
+    pub async fn create_dir(&self) -> Result {
         tokio::fs::create_dir_all(self.get_folder()).await?;
         Ok(())
     }
@@ -60,7 +60,7 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: Message) -> Result<()> {
+    pub async fn add_message(&self, message: Message) -> Result {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -240,7 +240,7 @@ impl Channel {
     }
 
     /// Unlimited version of [`get_messages_after`] for internal use.
-    pub(crate) fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+    pub fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = std::fs::read_dir(self.get_folder()) {
             let mut files = Vec::new();

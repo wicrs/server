@@ -36,10 +36,9 @@ pub enum ChannelPermission {
     All,
 }
 
-impl ChannelPermission {
-    /// Gets the equivalent `HubPermission` for a `ChannelPermission`.
-    pub fn hub_equivalent(&self) -> HubPermission {
-        match self {
+impl From<ChannelPermission> for HubPermission {
+    fn from(channel_perm: ChannelPermission) -> Self {
+        match channel_perm {
             ChannelPermission::SendMessage => HubPermission::SendMessage,
             ChannelPermission::ViewChannel => HubPermission::ViewChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,

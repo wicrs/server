@@ -17,9 +17,15 @@ use crate::{
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
-type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, u128>>>>; // HashMap<Hashed User ID, HashMap<Hashed Token, Token Expiry Date>>
-type LoginSession = (u128, BasicClient); // (Login Start Time, Client)
-type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>; // HashMap<Login Secret, <LoginSession>>
+/// Map of active logged in user sessions. 
+/// `HashMap<Hashed User ID, HashMap<Hashed Token, Token Expiry Date>>`
+type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, u128>>>>;
+/// A login sessions, not an actual logged in user. 
+/// `(Login Start Time, Client)`
+type LoginSession = (u128, BasicClient);
+/// Map of login sessions, sessions that are in the process of authenticating and logging in.
+/// `HashMap<Login Secret, <LoginSession>>`
+type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 
 /// Relative path to the file where sessions (user ID, auth token and expiry time triples) are stored.
 pub const SESSION_FILE: &str = "data/sessions.json";
@@ -108,7 +114,7 @@ impl Auth {
     /// # Errors
     ///
     /// Returns an error if the data could not be written to the disk.
-    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>>) -> Result<()> {
+    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>>) -> Result {
         std::fs::write(
             SESSION_FILE,
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
@@ -150,7 +156,7 @@ impl Auth {
     }
 
     /// Invalidates any tokens that are for the given user ID.
-    pub async fn invalidate_tokens(manager: Arc<RwLock<Self>>, id: ID) {
+    pub async fn invalidate_all_tokens(manager: Arc<RwLock<Self>>, id: ID) {
         let sessions_arc;
         let mut sessions_lock;
         {
@@ -158,8 +164,26 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.write().await;
         }
-        sessions_lock.remove(hash_auth(id, String::new()).0.as_str());
-        let _save = Auth::save_tokens(&sessions_lock);
+        if let Some(_) = sessions_lock.remove(&hash_auth(id, String::new()).0) {
+            let _save = Auth::save_tokens(&sessions_lock);
+        }
+    }
+
+    /// Invalidates the given token for the given user ID.
+    pub async fn invalidate_token(manager: Arc<RwLock<Self>>, id: ID, token: String) {
+        let sessions_arc;
+        let mut sessions_lock;
+        {
+            let lock = manager.write().await;
+            sessions_arc = lock.sessions.clone();
+            sessions_lock = sessions_arc.write().await;
+        }
+        let (hashed_id, hashed_token) = hash_auth(id, token);
+        if let Some(tokens) = sessions_lock.get_mut(&hashed_id) {
+            if let Some(_) = tokens.remove(&hashed_token) {
+                let _save = Auth::save_tokens(&sessions_lock);
+            }
+        }
     }
 
     /// Start the OAuth login process. Returns a redirect to the given OAuth service's page with the correct parameters.
@@ -264,6 +288,7 @@ struct GitHub {
 }
 
 impl GitHub {
+    /// Create new GitHub OAuth handler, using the `client_id` and `client_secret` given by GitHub.
     fn new(client_id: String, client_secret: String) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -277,6 +302,7 @@ impl GitHub {
         }
     }
 
+    /// Get the ID of the user that the given auth token belongs to.
     async fn get_id(&self, token: &String) -> Result<String, AuthError> {
         let user_request = self
             .client
@@ -296,6 +322,7 @@ impl GitHub {
         }
     }
 
+    /// Get the email address of the user that the given auth token belongs to.
     async fn get_email(&self, token: &String) -> Result<String, AuthError> {
         let email_request = self
             .client
@@ -322,12 +349,14 @@ impl GitHub {
         }
     }
 
+    /// Gets the login session associated to the given `state`.
     async fn get_session(&self, state: &String) -> Option<LoginSession> {
         let arc = self.sessions.clone();
         let mut lock = arc.lock().await;
         lock.remove(state)
     }
 
+    /// Begin the login process (returns a URL to the GitHub OAuth page with the required permissions).
     async fn start_login(&self) -> String {
         let client = BasicClient::new(
             self.client_id.clone(),
@@ -348,6 +377,7 @@ impl GitHub {
         authorize_url.to_string()
     }
 
+    /// Handles a clients authentication response (after they have completed the login process on GitHub).
     async fn handle_oauth(
         &self,
         manager: Arc<RwLock<Auth>>,
@@ -372,11 +402,12 @@ impl GitHub {
     }
 }
 
+/// Returns the hashes of the given ID and token (separately).
+/// `(Hashed ID, Hashed Token)`
 fn hash_auth(id: ID, token: String) -> (String, String) {
-    // (Hashed ID, Hashed Token)
     let mut hasher = Sha3_256::new();
     hasher.update(id.as_bytes());
     let id_hash = format!("{:x}", hasher.finalize_reset());
     hasher.update(token.as_bytes());
-    (id_hash, format!("{:x}", hasher.finalize_reset()))
+    (id_hash, format!("{:x}", hasher.finalize()))
 }

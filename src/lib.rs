@@ -60,7 +60,7 @@ pub fn is_valid_name(name: &str) -> bool {
 /// This function returns an error for any of the following reasons:
 ///
 /// * The name is too big (maximum in bytes defined by [`MAX_NAME_SIZE`]).
-pub fn check_name_validity(name: &str) -> Result<()> {
+pub fn check_name_validity(name: &str) -> Result {
     if is_valid_name(name) {
         Ok(())
     } else {
@@ -77,7 +77,7 @@ macro_rules! check_permission {
         }
     };
     ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
-        if !$member.has_channel_permission($channel, &$perm, &$hub) {
+        if !$member.has_channel_permission($channel, $perm, &$hub) {
             return Err(Error::MissingChannelPermission($perm));
         }
     };

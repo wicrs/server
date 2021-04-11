@@ -45,7 +45,8 @@ pub async fn server(config: Config) -> std::io::Result<()> {
             .service(index)
             .service(login_start)
             .service(login_finish)
-            .service(invalidate_tokens)
+            .service(invalidate_all_tokens)
+            .service(invalidate_token)
             .service(get_user)
             .service(get_user_by_id)
             .service(rename_user)
@@ -86,6 +87,7 @@ pub async fn server(config: Config) -> std::io::Result<()> {
     .await
 }
 
+/// Wraps [`ID`] for use as an actix_web request parameter requirement.
 struct UserID(ID);
 
 impl ResponseError for Error {
@@ -156,6 +158,7 @@ impl FromRequest for UserID {
     }
 }
 
+/// Returns a `204` (no content) response if the given [`Result`] (`$op`) is `Ok` or returns the error, optionally tells the WebSocket server that a hub has been modified.
 macro_rules! no_content {
     ($op:expr) => {
         $op.and_then(|_| Ok(HttpResponse::NoContent().finish()))
@@ -175,6 +178,7 @@ macro_rules! no_content {
     };
 }
 
+/// Returns a `200` response with content of `$op` as a string if the given [`Result`] (`$op`) is `Ok` or returns the error, optionally tells the WebSocket server that a hub has been modified.
 macro_rules! string_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(t.to_string())).or_else(|e| Err(e))
@@ -193,12 +197,14 @@ macro_rules! string_response {
     };
 }
 
+/// Returns a `200` response with content of `$op` as a string if the given [`Result`] (`$op`) is `Ok` or returns the error, optionally tells the WebSocket server that a hub has been modified.
 macro_rules! json_response {
     ($op:expr) => {
         $op.and_then(|t| Ok(Json(t))).or_else(|e| Err(e))
     };
 }
 
+/// Tells the WebSocket server that a hub has been modified.
 macro_rules! update_hub {
     ($hub:expr, $srv:ident, $update_type:expr) => {
         $srv.do_send(crate::server::ServerNotification::HubUpdated(
@@ -208,6 +214,7 @@ macro_rules! update_hub {
     };
 }
 
+/// Indicates that the server is running and gives the version of the server if configured to do so.
 #[get("/")]
 async fn index(config: Data<Config>) -> String {
     if config.show_version {
@@ -220,6 +227,8 @@ async fn index(config: Data<Config>) -> String {
     }
 }
 
+/// Starts the OAuth login process, `{service}` should be one of the variants of [`Service`] (case sensitive, so `GitHub` not `github`).
+/// Returns a `302 Found` response redirecting to the OAuth service authentication page.
 #[get("/v2/login/{service}")]
 async fn login_start(service: Path<Service>, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
     HttpResponse::Found()
@@ -230,6 +239,8 @@ async fn login_start(service: Path<Service>, auth: Data<Arc<RwLock<Auth>>>) -> H
         .finish()
 }
 
+/// Finishes the OAuth login process, `{service}` should be one of the variants of [`Service`] (case sensitive, so `GitHub` not `github`).
+/// If successful returns the ID and token of the user as JSON (`{"id":"$ID_HERE","token":"$AUTH_TOKEN_HERE"}).
 #[get("/v2/auth/{service}")]
 async fn login_finish(
     service: Path<Service>,
@@ -239,37 +250,59 @@ async fn login_finish(
     json_response!(api::complete_login(auth.get_ref().clone(), service.0, query.0).await)
 }
 
+/// Invalidates all of the authenticated user's authentication tokens.
 #[post("/v2/invalidate_tokens")]
-async fn invalidate_tokens(user_id: UserID, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
-    api::invalidate_tokens(auth.get_ref().clone(), user_id.0).await;
+async fn invalidate_all_tokens(user_id: UserID, auth: Data<Arc<RwLock<Auth>>>) -> HttpResponse {
+    api::invalidate_all_tokens(auth.get_ref().clone(), user_id.0).await;
     HttpResponse::NoContent().finish()
 }
 
+/// Invalidates the given authentication token for the authenticated user.
+#[post("/v2/invalidate_token/{token}")]
+async fn invalidate_token(
+    user_id: UserID,
+    auth: Data<Arc<RwLock<Auth>>>,
+    path: Path<String>,
+) -> HttpResponse {
+    api::invalidate_token(auth.get_ref().clone(), user_id.0, path.0).await;
+    HttpResponse::NoContent().finish()
+}
+
+/// Get the currently authenticated user's information.
 #[get("/v2/user")]
 async fn get_user(user_id: UserID) -> Result<Json<User>> {
     Ok(Json(User::load(&user_id.0).await?))
 }
 
+/// Get the information of another use that the authenticated user can see, private information hidden or hashed with the authenticated user's ID as a salt.
 #[get("/v2/user/{id}")]
 async fn get_user_by_id(user_id: UserID, id: Path<ID>) -> Result<Json<GenericUser>> {
     json_response!(api::get_user_stripped(&user_id.0, id.0).await)
 }
 
+/// Change the authenticated user's username, returns the old username.
 #[put("/v2/change_username/{new_username}")]
 async fn rename_user(user_id: UserID, name: Path<String>) -> Result<String> {
     api::change_username(&user_id.0, name.0).await
 }
 
+/// Change the currently authenticated user's status, returns the old status.
 #[put("/v2/change_status/{new_status}")]
 async fn change_status(user_id: UserID, status: Path<String>) -> Result<String> {
     api::change_user_status(&user_id.0, status.0).await
 }
 
+/// Change the currently authenticated user's description, new description should be in the body as UTF-8 bytes, returns the old description.
 #[put("/v2/change_description/{new_description}")]
-async fn change_user_description(user_id: UserID, description: Path<String>) -> Result<String> {
-    api::change_user_description(&user_id.0, description.0).await
+async fn change_user_description(user_id: UserID, body: Bytes) -> Result<String> {
+    if let Ok(description) = String::from_utf8(body.to_vec()) {
+        api::change_user_description(&user_id.0, description).await
+    } else {
+        Err(Error::InvalidMessage)
+    }
 }
 
+/// Creates a new hub with the given name and the currently authenticated user as the owner, returns the new hub's ID as a string.
 #[post("/v2/create_hub/{name}")]
 async fn create_hub(user_id: UserID, name: Path<String>) -> Result<String> {
     string_response!(api::create_hub(&user_id.0, name.0).await)

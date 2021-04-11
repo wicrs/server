@@ -1,5 +1,5 @@
 use crate::{
-    api, channel,
+    api, channel, check_permission,
     error::{DataError, IndexError},
     hub::Hub,
     Error, Result, ID,
@@ -222,7 +222,7 @@ impl MessageServer {
         }
     }
 
-    fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result<()> {
+    fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
             crate::hub::HUB_DATA_FOLDER,
@@ -240,7 +240,7 @@ impl MessageServer {
         Ok(())
     }
 
-    fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result<()> {
+    fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
             crate::hub::HUB_DATA_FOLDER,
@@ -254,7 +254,7 @@ impl MessageServer {
         Ok(())
     }
 
-    fn setup_index(&mut self, hub_id: &ID, channel_id: &ID) -> Result<()> {
+    fn setup_index(&mut self, hub_id: &ID, channel_id: &ID) -> Result {
         let dir_string = format!(
             "{}/{:x}/{:x}/index",
             crate::hub::HUB_DATA_FOLDER,
@@ -418,7 +418,7 @@ impl Handler<SearchMessageIndex> for MessageServer {
 }
 
 impl Handler<NewMessageForIndex> for MessageServer {
-    type Result = Result<()>;
+    type Result = Result;
 
     fn handle(&mut self, msg: NewMessageForIndex, _: &mut Self::Context) -> Self::Result {
         let get_pending = self.pending_messages.clone();
@@ -541,26 +541,22 @@ impl Handler<ClientServerMessage> for Server {
                             }
                         })
                         .and_then(|(hub, user)| {
-                            if user.has_channel_permission(
+                            check_permission!(
+                                user,
                                 &channel_id,
-                                &crate::permission::ChannelPermission::ViewChannel,
-                                &hub,
-                            ) {
-                                self.subscribed
-                                    .entry(addr.clone())
-                                    .or_default()
-                                    .0
-                                    .insert((hub_id.clone(), channel_id.clone()));
-                                self.subscribed_channels
-                                    .entry((hub_id, channel_id))
-                                    .or_default()
-                                    .insert(addr);
-                                Ok(())
-                            } else {
-                                Err(Error::MissingChannelPermission(
-                                    crate::permission::ChannelPermission::ViewChannel,
-                                ))
-                            }
+                                crate::permission::ChannelPermission::ViewChannel,
+                                hub
+                            );
+                            self.subscribed
+                                .entry(addr.clone())
+                                .or_default()
+                                .0
+                                .insert((hub_id.clone(), channel_id.clone()));
+                            self.subscribed_channels
+                                .entry((hub_id, channel_id))
+                                .or_default()
+                                .insert(addr);
+                            Ok(())
                         });
                     let response = if let Err(error) = result {
                         Response::Error(error)

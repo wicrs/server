@@ -15,6 +15,7 @@ fn load_config(path: &str) -> wicrs_server::config::Config {
     }
 }
 
+/// Main function, loads config and starts a server for the HTTP API.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = load_config("config.json");
