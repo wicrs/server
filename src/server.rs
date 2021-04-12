@@ -151,7 +151,6 @@ pub struct GetMessageServer;
 pub enum ServerNotification {
     NewMessage(ID, ID, channel::Message),
     HubUpdated(ID, HubUpdateType),
-    Stop,
 }
 
 /// Fields for the Tantivy message schema.
@@ -559,7 +558,7 @@ impl Handler<ClientServerMessage> for Server {
                             check_permission!(
                                 user,
                                 &channel_id,
-                                crate::permission::ChannelPermission::ViewChannel,
+                                crate::permission::ChannelPermission::Read,
                                 hub
                             );
                             self.subscribed
@@ -763,9 +762,6 @@ impl Handler<ServerNotification> for Server {
                 )
                 .into_actor(self)
                 .spawn(ctx);
-            }
-            ServerNotification::Stop => {
-                ctx.stop();
             }
         }
     }

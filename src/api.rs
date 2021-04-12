@@ -195,12 +195,12 @@ pub async fn create_hub<S: Into<String>>(owner_id: &ID, name: S) -> Result<ID> {
     if let Some(group) = new_hub.groups.get_mut(&new_hub.default_group) {
         group.set_channel_permission(
             channel_id.clone(),
-            crate::permission::ChannelPermission::ViewChannel,
+            crate::permission::ChannelPermission::Read,
             Some(true),
         );
         group.set_channel_permission(
             channel_id.clone(),
-            crate::permission::ChannelPermission::SendMessage,
+            crate::permission::ChannelPermission::Write,
             Some(true),
         );
     }

@@ -1,4 +1,8 @@
-use std::{fmt::Write, sync::Arc, time::{Duration, Instant}};
+use std::{
+    fmt::Write,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use actix::{Actor, Addr};
 use actix_web_actors::ws;

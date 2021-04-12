@@ -9,13 +9,13 @@ pub type PermissionSetting = Option<bool>;
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
 pub enum HubPermission {
     All,
-    ViewChannels,
+    ReadChannels,
     ConfigureChannels,
     Administrate,
     CreateChannel,
     DeleteChannel,
     ArrangeChannels,
-    SendMessage,
+    WriteInChannels,
     Mute,
     Unmute,
     Invite,
@@ -30,8 +30,8 @@ pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 /// Permissions that only apply to channels, override hub permissions.
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
 pub enum ChannelPermission {
-    SendMessage,
-    ViewChannel,
+    Write,
+    Read,
     Configure,
     All,
 }
@@ -39,8 +39,8 @@ pub enum ChannelPermission {
 impl From<ChannelPermission> for HubPermission {
     fn from(channel_perm: ChannelPermission) -> Self {
         match channel_perm {
-            ChannelPermission::SendMessage => HubPermission::SendMessage,
-            ChannelPermission::ViewChannel => HubPermission::ViewChannels,
+            ChannelPermission::Write => HubPermission::WriteInChannels,
+            ChannelPermission::Read => HubPermission::ReadChannels,
             ChannelPermission::Configure => HubPermission::ConfigureChannels,
             ChannelPermission::All => HubPermission::All,
         }

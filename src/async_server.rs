@@ -8,9 +8,7 @@ use actix::prelude::*;
 use futures::{future::LocalBoxFuture, lock::Mutex, FutureExt};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Read, Write},
-    marker::PhantomData,
-    pin::Pin,
+    io::Read,
     sync::Arc,
 };
 use tantivy::{
@@ -29,7 +27,7 @@ use crate::server::*;
 use lazy_static::lazy_static;
 
 pub mod client_command {
-    use super::{LocalBoxFuture, Message, Recipient, Result, ServerMessage, ID};
+    use super::{Message, Recipient, Result, ServerMessage, ID};
 
     /// Disconnects the client by unsubscribing them from everything (does not drop connection).
     #[derive(Message, Clone)]
@@ -481,7 +479,7 @@ pub struct AsyncServer {
 
 impl AsyncServer {
     /// Creates a new server with default options, also creates a [`MessageServer`] with the given `commit_threshold` (how many messages should be added to the search index before commiting to the index).
-    pub fn new(commit_threshold: u8) -> Self {
+    pub fn new() -> Self {
         Self {
             subscribed_channels: Arc::new(RwLock::new(HashMap::new())),
             subscribed_hubs: Arc::new(RwLock::new(HashMap::new())),
@@ -494,6 +492,27 @@ impl AsyncServer {
         (
             Arc::clone(&self.subscribed_channels),
             Arc::clone(&self.subscribed_hubs),
+            Arc::clone(&self.subscribed),
+        )
+    }
+
+    fn clone_hub(&self) -> (SubscribedHubMap, SubscribedMap) {
+        (
+            Arc::clone(&self.subscribed_hubs),
+            Arc::clone(&self.subscribed),
+        )
+    }
+
+    fn clone_hub_channel(&self) -> (SubscribedHubMap, SubscribedChannelMap) {
+        (
+            Arc::clone(&self.subscribed_hubs),
+            Arc::clone(&self.subscribed_channels),
+        )
+    }
+
+    fn clone_channel(&self) -> (SubscribedChannelMap, SubscribedMap) {
+        (
+            Arc::clone(&self.subscribed_channels),
             Arc::clone(&self.subscribed),
         )
     }
@@ -530,24 +549,20 @@ impl Handler<client_command::Disconnect> for AsyncServer {
     type Result = LocalBoxFuture<'static, ()>;
 
     fn handle(&mut self, msg: client_command::Disconnect, _: &mut Self::Context) -> Self::Result {
-        let (subscribed_channels, subscribed_hubs, subscribed) = (
-            Arc::clone(&self.subscribed_channels),
-            Arc::clone(&self.subscribed_hubs),
-            Arc::clone(&self.subscribed),
-        );
+        let (subscribed_channels, subscribed_hubs, subscribed) = self.clone_all();
         async move {
             if let Some(subscribed) = subscribed.write().await.remove(&msg.addr) {
                 let subscribed = subscribed.write().await;
-                let mut subscribed_channels = subscribed_channels.write().await;
+                let subscribed_channels = subscribed_channels.write().await;
                 for channel in subscribed.0.iter() {
-                    if let Some(subs) = subscribed_channels.get_mut(&channel) {
+                    if let Some(subs) = subscribed_channels.get(&channel) {
                         subs.write().await.remove(&msg.addr);
                     }
                 }
                 drop(subscribed_channels);
-                let mut subscribed_hubs = subscribed_hubs.write().await;
+                let subscribed_hubs = subscribed_hubs.write().await;
                 for hub in subscribed.1.iter() {
-                    if let Some(subs) = subscribed_hubs.get_mut(&hub) {
+                    if let Some(subs) = subscribed_hubs.get(&hub) {
                         subs.write().await.remove(&msg.addr);
                     }
                 }
@@ -561,10 +576,7 @@ impl Handler<client_command::SubscribeHub> for AsyncServer {
     type Result = LocalBoxFuture<'static, Result>;
 
     fn handle(&mut self, msg: client_command::SubscribeHub, _: &mut Self::Context) -> Self::Result {
-        let (subscribed_hubs, subscribed) = (
-            Arc::clone(&self.subscribed_hubs),
-            Arc::clone(&self.subscribed),
-        );
+        let (subscribed_hubs, subscribed) = self.clone_hub();
         async move {
             Hub::load(&msg.hub_id)
                 .await
@@ -592,6 +604,27 @@ impl Handler<client_command::SubscribeHub> for AsyncServer {
     }
 }
 
+impl Handler<client_command::UnsubscribeHub> for AsyncServer {
+    type Result = LocalBoxFuture<'static, ()>;
+
+    fn handle(
+        &mut self,
+        msg: client_command::UnsubscribeHub,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let (subscribed_hubs, subscribed) = self.clone_hub();
+        async move {
+            if let Some(subs) = subscribed.write().await.get(&msg.addr) {
+                subs.write().await.1.remove(&msg.hub_id);
+            }
+            if let Some(subs) = subscribed_hubs.write().await.get(&msg.hub_id) {
+                subs.write().await.remove(&msg.addr);
+            }
+        }
+        .boxed_local()
+    }
+}
+
 impl Handler<client_command::SubscribeChannel> for AsyncServer {
     type Result = LocalBoxFuture<'static, Result>;
 
@@ -600,10 +633,7 @@ impl Handler<client_command::SubscribeChannel> for AsyncServer {
         msg: client_command::SubscribeChannel,
         _: &mut Self::Context,
     ) -> Self::Result {
-        let (subscibed_channels, subscribed) = (
-            Arc::clone(&self.subscribed_channels),
-            Arc::clone(&self.subscribed),
-        );
+        let (subscibed_channels, subscribed) = self.clone_channel();
         async move {
             Hub::load(&msg.hub_id)
                 .await
@@ -618,11 +648,12 @@ impl Handler<client_command::SubscribeChannel> for AsyncServer {
                     check_permission!(
                         user,
                         &msg.channel_id,
-                        crate::permission::ChannelPermission::ViewChannel,
+                        crate::permission::ChannelPermission::Read,
                         hub
                     );
                     Ok(())
                 })?;
+            let key = (msg.hub_id, msg.channel_id);
             subscribed
                 .write()
                 .await
@@ -631,16 +662,192 @@ impl Handler<client_command::SubscribeChannel> for AsyncServer {
                 .write()
                 .await
                 .0
-                .insert((msg.hub_id.clone(), msg.channel_id.clone()));
+                .insert(key.clone());
             subscibed_channels
                 .write()
                 .await
-                .entry((msg.hub_id, msg.channel_id))
+                .entry(key)
                 .or_default()
                 .write()
                 .await
                 .insert(msg.addr);
             Ok(())
+        }
+        .boxed_local()
+    }
+}
+
+impl Handler<client_command::UnsubscribeChannel> for AsyncServer {
+    type Result = LocalBoxFuture<'static, ()>;
+
+    fn handle(
+        &mut self,
+        msg: client_command::UnsubscribeChannel,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let (subscribed_channels, subscribed) = self.clone_channel();
+        async move {
+            let key = (msg.hub_id, msg.channel_id);
+            if let Some(subs) = subscribed.write().await.get(&msg.addr) {
+                subs.write().await.0.remove(&key);
+            }
+            if let Some(subs) = subscribed_channels.write().await.get(&key) {
+                subs.write().await.remove(&msg.addr);
+            }
+        }
+        .boxed_local()
+    }
+}
+
+impl Handler<client_command::StartTyping> for AsyncServer {
+    type Result = LocalBoxFuture<'static, Result>;
+
+    fn handle(&mut self, msg: client_command::StartTyping, _: &mut Self::Context) -> Self::Result {
+        let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        async move {
+            Hub::load(&msg.hub_id)
+                .await
+                .and_then(|hub| {
+                    if let Ok(member) = hub.get_member(&msg.user_id) {
+                        Ok((hub, member))
+                    } else {
+                        Err(Error::MemberNotFound)
+                    }
+                })
+                .and_then(|(hub, user)| {
+                    check_permission!(
+                        user,
+                        &msg.channel_id,
+                        crate::permission::ChannelPermission::Write,
+                        hub
+                    );
+                    Ok(())
+                })?;
+            Self::send_channel(
+                subscribed_channels,
+                ServerMessage::TypingStart(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
+            Ok(())
+        }
+        .boxed_local()
+    }
+}
+
+impl Handler<client_command::StopTyping> for AsyncServer {
+    type Result = LocalBoxFuture<'static, Result>;
+
+    fn handle(&mut self, msg: client_command::StopTyping, _: &mut Self::Context) -> Self::Result {
+        let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        async move {
+            Hub::load(&msg.hub_id)
+                .await
+                .and_then(|hub| {
+                    if let Ok(member) = hub.get_member(&msg.user_id) {
+                        Ok((hub, member))
+                    } else {
+                        Err(Error::MemberNotFound)
+                    }
+                })
+                .and_then(|(hub, user)| {
+                    check_permission!(
+                        user,
+                        &msg.channel_id,
+                        crate::permission::ChannelPermission::Write,
+                        hub
+                    );
+                    Ok(())
+                })?;
+            Self::send_channel(
+                subscribed_channels,
+                ServerMessage::TypingStop(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
+            Ok(())
+        }
+        .boxed_local()
+    }
+}
+
+impl Handler<client_command::SendMessage> for AsyncServer {
+    type Result = LocalBoxFuture<'static, Result<ID>>;
+
+    fn handle(&mut self, msg: client_command::SendMessage, _: &mut Self::Context) -> Self::Result {
+        let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        async move {
+            Hub::load(&msg.hub_id)
+                .await
+                .and_then(|hub| {
+                    if let Ok(member) = hub.get_member(&msg.user_id) {
+                        Ok((hub, member))
+                    } else {
+                        Err(Error::MemberNotFound)
+                    }
+                })
+                .and_then(|(hub, user)| {
+                    check_permission!(
+                        user,
+                        &msg.channel_id,
+                        crate::permission::ChannelPermission::Write,
+                        hub
+                    );
+                    Ok(())
+                })?;
+            let message =
+                api::send_message(&msg.user_id, &msg.hub_id, &msg.channel_id, msg.message).await?;
+            let message_id = message.id.clone();
+            Self::send_channel(
+                subscribed_channels,
+                ServerMessage::NewMessage(msg.hub_id.clone(), msg.channel_id.clone(), message),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
+            Ok(message_id)
+        }
+        .boxed_local()
+    }
+}
+
+impl Handler<ServerNotification> for AsyncServer {
+    type Result = LocalBoxFuture<'static, ()>;
+
+    fn handle(&mut self, msg: ServerNotification, _: &mut Self::Context) -> Self::Result {
+        let (subscribed_hubs, subscribed_channels) = self.clone_hub_channel();
+        let message_server = self.message_server.clone();
+        async move {
+            match msg {
+                ServerNotification::NewMessage(hub_id, channel_id, message) => {
+                    let message_server = message_server.recipient();
+                    let m = message.clone();
+                    let _ = message_server
+                        .send(NewMessageForIndex {
+                            hub_id: hub_id.clone(),
+                            channel_id: channel_id.clone(),
+                            message: message.clone(),
+                        })
+                        .await;
+                    Self::send_channel(
+                        subscribed_channels,
+                        ServerMessage::NewMessage(hub_id, channel_id, m),
+                        hub_id,
+                        channel_id,
+                    )
+                    .await
+                }
+                ServerNotification::HubUpdated(hub_id, update_type) => {
+                    Self::send_hub(
+                        subscribed_hubs,
+                        ServerMessage::HubUpdated(hub_id.clone(), update_type),
+                        &hub_id,
+                    )
+                    .await
+                }
+            }
         }
         .boxed_local()
     }

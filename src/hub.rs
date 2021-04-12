@@ -377,7 +377,7 @@ impl Hub {
         {
             self.get_member_mut(member_id)?.set_channel_permission(
                 &channel.id,
-                ChannelPermission::ViewChannel,
+                ChannelPermission::Read,
                 Some(true),
             );
         }
@@ -389,7 +389,7 @@ impl Hub {
     /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
     pub fn get_channel(&self, member_id: &ID, channel_id: &ID) -> Result<&Channel> {
         let member = self.get_member(member_id)?;
-        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        check_permission!(member, channel_id, ChannelPermission::Read, self);
         if let Some(channel) = self.channels.get(channel_id) {
             Ok(channel)
         } else {
@@ -401,7 +401,7 @@ impl Hub {
     /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
     pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: &ID) -> Result<&mut Channel> {
         let member = self.get_member(member_id)?;
-        check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
+        check_permission!(member, channel_id, ChannelPermission::Read, self);
         if let Some(channel) = self.channels.get_mut(channel_id) {
             Ok(channel)
         } else {
@@ -449,7 +449,7 @@ impl Hub {
             Err(Error::TooBig)
         } else {
             if let Some(user) = self.members.get(user_id) {
-                check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+                check_permission!(user, channel_id, ChannelPermission::Read, self);
                 check_permission!(user, channel_id, ChannelPermission::Configure, self);
                 if let Some(channel) = self.channels.get_mut(channel_id) {
                     Ok(mem::replace(&mut channel.description, new_description))
@@ -482,7 +482,7 @@ impl Hub {
     ) -> Result<String> {
         check_name_validity(&new_name)?;
         if let Some(user) = self.members.get(user_id) {
-            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            check_permission!(user, channel_id, ChannelPermission::Read, self);
             check_permission!(user, channel_id, ChannelPermission::Configure, self);
             if let Some(channel) = self.channels.get_mut(channel_id) {
                 Ok(mem::replace(&mut channel.name, new_name))
@@ -508,7 +508,7 @@ impl Hub {
     pub async fn delete_channel(&mut self, user_id: &ID, channel_id: &ID) -> Result {
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, HubPermission::DeleteChannel, self);
-            check_permission!(user, channel_id, ChannelPermission::ViewChannel, self);
+            check_permission!(user, channel_id, ChannelPermission::Read, self);
             if let Some(_) = self.channels.remove(channel_id) {
                 Ok(())
             } else {
@@ -540,8 +540,8 @@ impl Hub {
     ) -> Result<Message> {
         if let Some(member) = self.members.get(&user_id) {
             if !self.mutes.contains(&user_id) {
-                check_permission!(member, channel_id, ChannelPermission::ViewChannel, self);
-                check_permission!(member, channel_id, ChannelPermission::SendMessage, self);
+                check_permission!(member, channel_id, ChannelPermission::Read, self);
+                check_permission!(member, channel_id, ChannelPermission::Write, self);
                 if let Some(channel) = self.channels.get(&channel_id) {
                     let message = Message {
                         id: new_id(),
@@ -711,8 +711,7 @@ impl Hub {
         if let Some(user) = self.members.get(user_id) {
             let mut result = HashMap::new();
             for channel in self.channels.clone() {
-                if user.has_channel_permission(&channel.0, ChannelPermission::ViewChannel, &hub_im)
-                {
+                if user.has_channel_permission(&channel.0, ChannelPermission::Read, &hub_im) {
                     result.insert(channel.0.clone(), channel.1.clone());
                 }
             }
