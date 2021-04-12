@@ -20,6 +20,8 @@ pub mod hub;
 pub mod permission;
 /// Server implementation.
 pub mod server;
+/// Async version of [`server`].
+pub mod async_server;
 /// User management.
 pub mod user;
 /// Definition of the WebSocket API.
