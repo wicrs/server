@@ -40,6 +40,9 @@ pub const MAX_DESCRIPTION_SIZE: usize = 8192;
 /// Maximum size of a message in bytes. Clients should be able to accept larger and smaller values.
 pub const MESSAGE_MAX_SIZE: usize = 8192;
 
+/// How long to wait before commiting new messages to the tantivy search engine in milliseconds, this takes a lot of time, which is why it should be done only periodically.
+pub const TANTIVY_COMMIT_THRESHOLD: u8 = 10;
+
 /// Get the current time in milliseconds since Unix Epoch.
 pub fn get_system_millis() -> u128 {
     SystemTime::now()

@@ -239,7 +239,36 @@ impl Channel {
         result
     }
 
-    /// Unlimited version of [`get_messages_after`] for internal use.
+    /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
+    pub async fn async_get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            for file in files.iter() {
+                if let Ok(file) = tokio::fs::read(file.path()).await {
+                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
+                    if let Some(_) = iter.position(|m| {
+                        if &m.id == id {
+                            result.push(m);
+                            true
+                        } else {
+                            false
+                        }
+                    }) {
+                        result.append(&mut iter.collect());
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Unlimited synchronus version of [`get_messages_after`] for internal use.
     pub fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = std::fs::read_dir(self.get_folder()) {

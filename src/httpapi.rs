@@ -1,4 +1,4 @@
-use std::{fmt::Write, sync::Arc, time::Duration};
+use std::{fmt::Write, sync::Arc, time::{Duration, Instant}};
 
 use actix::{Actor, Addr};
 use actix_web_actors::ws;
@@ -27,7 +27,7 @@ use actix_web::{
     web::{self, Bytes, Data, Json, Path, Query},
     App, FromRequest, HttpRequest, HttpResponse, HttpServer, ResponseError,
 };
-use futures::future::{err, ok, Ready};
+use futures::{future::LocalBoxFuture, FutureExt};
 
 /// Function runs starts an HTTP server that allows HTTP clients to interact with the WICRS Server API. `bind_address` is a string representing the address to bind to, for example it could be `"127.0.0.1:8080"`.
 pub async fn server(config: Config) -> std::io::Result<()> {
@@ -110,12 +110,16 @@ impl ResponseError for Error {
 impl FromRequest for UserID {
     type Error = Error;
 
-    type Future = Ready<Result<Self>>;
+    type Future = LocalBoxFuture<'static, Result<Self>>;
 
     type Config = ();
 
     fn from_request(request: &HttpRequest, _payload: &mut actix_web::dev::Payload) -> Self::Future {
-        let result = futures::executor::block_on(async {
+        let now = Instant::now();
+        let request = request.clone();
+        let elapsed = now.elapsed().as_nanos();
+        dbg!(elapsed);
+        async move {
             if let Some(header) = request.headers().get(header::AUTHORIZATION) {
                 if let Ok(header_str) = header.to_str() {
                     let mut split = header_str.split(':');
@@ -130,20 +134,20 @@ impl FromRequest for UserID {
                                 )
                                 .await
                                 {
-                                    ok(UserID(id))
+                                    Ok(UserID(id))
                                 } else {
-                                    err(AuthError::InvalidToken.into())
+                                    Err(AuthError::InvalidToken.into())
                                 }
                             } else {
-                                err(Error::CannotAuthenticate)
+                                Err(Error::CannotAuthenticate)
                             };
                         }
                     }
                 }
             }
-            err(AuthError::MalformedIDToken.into())
-        });
-        result
+            Err(AuthError::MalformedIDToken.into())
+        }
+        .boxed_local()
     }
 
     fn extract(req: &actix_web::HttpRequest) -> Self::Future {
