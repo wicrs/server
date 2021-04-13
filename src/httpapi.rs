@@ -10,8 +10,6 @@ use serde::Deserialize;
 
 use crate::{
     api,
-    async_server::AsyncServer,
-    async_websocket,
     auth::{Auth, AuthQuery, IDToken, Service},
     channel::{Channel, Message},
     config::Config,
@@ -776,7 +774,6 @@ async fn get_websocket(
     r: HttpRequest,
     stream: web::Payload,
     srv: Data<Addr<Server>>,
-    addr: Data<Addr<AsyncServer>>,
     wshbt: Data<(Duration, Duration)>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let res = ws::start(
