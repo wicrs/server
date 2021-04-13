@@ -25,9 +25,9 @@ pub enum ClientMessage {
     #[display("{}({0},{1},\"{2}\")")]
     SendMessage(ID, ID, String),
     #[display("{}({0},{1})")]
-    Subscribe(ID, ID),
+    SubscribeChannel(ID, ID),
     #[display("{}({0},{1})")]
-    Unsubscribe(ID, ID),
+    UnsubscribeChannel(ID, ID),
     #[display("{}({0},{1})")]
     StartTyping(ID, ID),
     #[display("{}({0},{1})")]
@@ -169,7 +169,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                                 ctx.text(ServerClientMessage::CommandFailed.to_string());
                             }
                         }
-                        ClientMessage::Subscribe(hub, channel) => {
+                        ClientMessage::SubscribeChannel(hub, channel) => {
                             let id = rand::random();
                             let message = ClientServerMessage {
                                 client_addr: Some(ctx.address().recipient()),
@@ -187,7 +187,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
                                 ctx.text(ServerClientMessage::CommandFailed.to_string());
                             }
                         }
-                        ClientMessage::Unsubscribe(hub, channel) => {
+                        ClientMessage::UnsubscribeChannel(hub, channel) => {
                             if let Ok(_) = self.addr.try_send(ClientServerMessage::from(
                                 ClientCommand::UnsubscribeChannel(
                                     hub,

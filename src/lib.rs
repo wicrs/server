@@ -6,6 +6,8 @@ use uuid::Uuid;
 pub mod api;
 /// Async version of [`server`].
 pub mod async_server;
+/// Async version of [`websocket`] (using tungstenite).
+pub mod async_websocket;
 /// Authentication handling.
 pub mod auth;
 /// Message storage and retreival for channels.

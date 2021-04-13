@@ -1,11 +1,16 @@
+use crate::async_websocket::WebSocketMessage;
 use crate::{
-    api, channel, check_permission,
+    api,
+    async_websocket::ServerMessage,
+    channel, check_permission,
     error::{DataError, IndexError},
     hub::Hub,
     Error, Result, ID,
 };
 use actix::prelude::*;
-use futures::{future::LocalBoxFuture, lock::Mutex, FutureExt};
+use futures::stream::SplitSink;
+use futures::{future::LocalBoxFuture, FutureExt, SinkExt};
+use parse_display::{Display, FromStr};
 use std::{
     collections::{HashMap, HashSet},
     io::Read,
@@ -16,24 +21,31 @@ use tantivy::{
     directory::MmapDirectory,
     doc,
     query::QueryParser,
-    schema::{Schema, FAST, STORED, TEXT},
+    schema::{Field, Schema, FAST, STORED, TEXT},
     Index, IndexReader, IndexWriter, LeasedItem, ReloadPolicy, Searcher,
 };
-use tokio::io::AsyncWriteExt;
-use tokio::sync::RwLock;
-
-use crate::server::*;
+use tokio::sync::{Mutex, RwLock};
+use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio_tungstenite::WebSocketStream;
 
 use lazy_static::lazy_static;
 
 pub mod client_command {
-    use super::{Message, Recipient, Result, ServerMessage, ID};
+    use super::{
+        Arc, Message, Mutex, Result, SplitSink, TcpStream, WebSocketMessage, WebSocketStream, ID,
+    };
 
+    /// Disconnects the client by unsubscribing them from everything (does not drop connection).
+    #[derive(Message, Clone)]
+    #[rtype(result = "u128")]
+    pub struct Connect {
+        pub websocket_writer: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>,
+    }
     /// Disconnects the client by unsubscribing them from everything (does not drop connection).
     #[derive(Message, Clone)]
     #[rtype(result = "()")]
     pub struct Disconnect {
-        pub addr: Recipient<ServerMessage>,
+        pub connection_id: u128,
     }
     /// Subscribes the client to notifications on a hub (everything except for messages sent in channels in the hub).
     #[derive(Message, Clone)]
@@ -41,14 +53,14 @@ pub mod client_command {
     pub struct SubscribeHub {
         pub user_id: ID,
         pub hub_id: ID,
-        pub addr: Recipient<ServerMessage>,
+        pub connection_id: u128,
     }
     /// Unsubscribes the client from notifications in a hub, does not change channel subscriptions.
     #[derive(Message, Clone)]
     #[rtype(result = "()")]
     pub struct UnsubscribeHub {
         pub hub_id: ID,
-        pub addr: Recipient<ServerMessage>,
+        pub connection_id: u128,
     }
     /// Subscribes the client to notifications of new messages in the given channel.
     #[derive(Message, Clone)]
@@ -57,7 +69,7 @@ pub mod client_command {
         pub user_id: ID,
         pub hub_id: ID,
         pub channel_id: ID,
-        pub addr: Recipient<ServerMessage>,
+        pub connection_id: u128,
     }
     /// Unsubscribes the client to notifications of new messages in the given channel.
     #[derive(Message, Clone)]
@@ -65,7 +77,7 @@ pub mod client_command {
     pub struct UnsubscribeChannel {
         pub hub_id: ID,
         pub channel_id: ID,
-        pub addr: Recipient<ServerMessage>,
+        pub connection_id: u128,
     }
     /// Notifies other clients subscribed to the given channel that the given user has started typing.
     #[derive(Message, Clone)]
@@ -92,6 +104,88 @@ pub mod client_command {
         pub channel_id: ID,
         pub message: String,
     }
+}
+
+/// Fields for the Tantivy message schema.
+#[derive(Clone)]
+pub struct MessageSchemaFields {
+    pub content: Field,
+    pub created: Field,
+    pub id: Field,
+    pub sender: Field,
+}
+
+/// Message to tell the message server that there is a new message in a channel.
+#[derive(Message)]
+#[rtype(result = "Result<()>")]
+pub struct NewMessageForIndex {
+    pub hub_id: ID,
+    pub channel_id: ID,
+    pub message: channel::Message,
+}
+
+/// Command for a [`MessageServer`] to search the given channel with a query.
+#[derive(Message)]
+#[rtype(result = "Result<Vec<ID>>")]
+pub struct SearchMessageIndex {
+    /// ID of the hub the channel is in.
+    pub hub_id: ID,
+    /// ID of the channel in which to perform the search.
+    pub channel_id: ID,
+    /// Maximum number of results to return.
+    pub limit: usize,
+    /// Query string.
+    pub query: String,
+}
+
+/// Types of updates that trigger [`ServerNotification::HubUpdated`]
+#[derive(Clone, Display, FromStr)]
+pub enum HubUpdateType {
+    HubDeleted,
+    HubRenamed,
+    HubDescriptionUpdated,
+    #[display("{}({0})")]
+    UserJoined(ID),
+    #[display("{}({0})")]
+    UserLeft(ID),
+    #[display("{}({0})")]
+    UserBanned(ID),
+    #[display("{}({0})")]
+    UserMuted(ID),
+    #[display("{}({0})")]
+    UserUnmuted(ID),
+    #[display("{}({0})")]
+    UserUnbanned(ID),
+    #[display("{}({0})")]
+    UserKicked(ID),
+    #[display("{}({0})")]
+    UserHubPermissionChanged(ID),
+    #[display("{}({0},{1})")]
+    UserChannelPermissionChanged(ID, ID),
+    #[display("{}({0})")]
+    UsernameChanged(ID),
+    #[display("{}({0})")]
+    UserStatusUpdated(ID),
+    #[display("{}({0})")]
+    UserDescriptionUpdated(ID),
+    #[display("{}({0})")]
+    MemberNicknameChanged(ID),
+    #[display("{}({0})")]
+    ChannelCreated(ID),
+    #[display("{}({0})")]
+    ChannelDeleted(ID),
+    #[display("{}({0})")]
+    ChannelRenamed(ID),
+    #[display("{}({0})")]
+    ChannelDescriptionUpdated(ID),
+}
+
+/// Message to notify the server of a change made externally, usually used so the server can notify clients.
+#[derive(Message, Clone)]
+#[rtype(result = "()")]
+pub enum ServerNotification {
+    NewMessage(ID, ID, channel::Message),
+    HubUpdated(ID, HubUpdateType),
 }
 
 /// Tells the [`AsyncServer`] to get an address to it's [`AsyncMessageServer`].
@@ -462,18 +556,18 @@ impl Handler<NewMessageForIndex> for AsyncMessageServer {
     }
 }
 
-pub type SubscribedChannelMap =
-    Arc<RwLock<HashMap<(ID, ID), Arc<RwLock<HashSet<Recipient<ServerMessage>>>>>>>;
-pub type SubscribedHubMap =
-    Arc<RwLock<HashMap<ID, Arc<RwLock<HashSet<Recipient<ServerMessage>>>>>>>;
-pub type SubscribedMap =
-    Arc<RwLock<HashMap<Recipient<ServerMessage>, Arc<RwLock<(HashSet<(ID, ID)>, HashSet<ID>)>>>>>;
+pub type SubscribedChannelMap = Arc<RwLock<HashMap<(ID, ID), Arc<RwLock<HashSet<u128>>>>>>;
+pub type SubscribedHubMap = Arc<RwLock<HashMap<ID, Arc<RwLock<HashSet<u128>>>>>>;
+pub type SubscribedMap = Arc<RwLock<HashMap<u128, Arc<RwLock<(HashSet<(ID, ID)>, HashSet<ID>)>>>>>;
+pub type ConnectedMap =
+    Arc<RwLock<HashMap<u128, Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>>>>;
 
 /// Server that handles socket clients and manages notifying them of new messages/changes as well as sending messages to be indexed by Tantivy.
 pub struct AsyncServer {
     subscribed_channels: SubscribedChannelMap,
     subscribed_hubs: SubscribedHubMap,
     subscribed: SubscribedMap,
+    connected: ConnectedMap,
     message_server: Addr<AsyncMessageServer>,
 }
 
@@ -484,6 +578,7 @@ impl AsyncServer {
             subscribed_channels: Arc::new(RwLock::new(HashMap::new())),
             subscribed_hubs: Arc::new(RwLock::new(HashMap::new())),
             subscribed: Arc::new(RwLock::new(HashMap::new())),
+            connected: Arc::new(RwLock::new(HashMap::new())),
             message_server: AsyncMessageServer::new().start(),
         }
     }
@@ -518,10 +613,17 @@ impl AsyncServer {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
-    async fn send_hub(subscribed_hubs: SubscribedHubMap, message: ServerMessage, hub_id: &ID) {
+    async fn send_hub(
+        subscribed_hubs: SubscribedHubMap,
+        connections: ConnectedMap,
+        message: ServerMessage,
+        hub_id: &ID,
+    ) {
         if let Some(subscribed_arc) = subscribed_hubs.read().await.get(hub_id) {
-            for connection in subscribed_arc.read().await.iter() {
-                let _ = connection.do_send(message.clone());
+            for connection_id in subscribed_arc.read().await.iter() {
+                if let Some(connection) = connections.read().await.get(connection_id) {
+                    let _ = connection.lock().await.send(WebSocketMessage::Text(message.to_string())).await;
+                }
             }
         }
     }
@@ -529,13 +631,16 @@ impl AsyncServer {
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
     async fn send_channel(
         subscribed_channels: SubscribedChannelMap,
+        connections: ConnectedMap,
         message: ServerMessage,
         hub_id: ID,
         channel_id: ID,
     ) {
         if let Some(subscribed_arc) = subscribed_channels.read().await.get(&(hub_id, channel_id)) {
-            for connection in subscribed_arc.read().await.iter() {
-                let _ = connection.do_send(message.clone());
+            for connection_id in subscribed_arc.read().await.iter() {
+                if let Some(connection) = connections.read().await.get(connection_id) {
+                    let _ = connection.lock().await.send(WebSocketMessage::Text(message.to_string())).await;
+                }
             }
         }
     }
@@ -545,27 +650,48 @@ impl Actor for AsyncServer {
     type Context = Context<Self>;
 }
 
+impl Handler<client_command::Connect> for AsyncServer {
+    type Result = LocalBoxFuture<'static, u128>;
+
+    fn handle(&mut self, msg: client_command::Connect, _: &mut Self::Context) -> Self::Result {
+        let connections = self.connected.clone();
+        async move {
+            let mut connection_set = connections.write().await;
+            let mut id = rand::random::<u128>();
+            while connection_set.contains_key(&id) {
+                id = rand::random::<u128>();
+            }
+            connection_set.insert(id, msg.websocket_writer);
+            id
+        }
+        .boxed_local()
+    }
+}
+
 impl Handler<client_command::Disconnect> for AsyncServer {
     type Result = LocalBoxFuture<'static, ()>;
 
     fn handle(&mut self, msg: client_command::Disconnect, _: &mut Self::Context) -> Self::Result {
         let (subscribed_channels, subscribed_hubs, subscribed) = self.clone_all();
+        let connections = self.connected.clone();
         async move {
-            if let Some(subscribed) = subscribed.write().await.remove(&msg.addr) {
+            if let Some(subscribed) = subscribed.write().await.remove(&msg.connection_id) {
                 let subscribed = subscribed.write().await;
                 let subscribed_channels = subscribed_channels.write().await;
                 for channel in subscribed.0.iter() {
                     if let Some(subs) = subscribed_channels.get(&channel) {
-                        subs.write().await.remove(&msg.addr);
+                        subs.write().await.remove(&msg.connection_id);
                     }
                 }
                 drop(subscribed_channels);
                 let subscribed_hubs = subscribed_hubs.write().await;
                 for hub in subscribed.1.iter() {
                     if let Some(subs) = subscribed_hubs.get(&hub) {
-                        subs.write().await.remove(&msg.addr);
+                        subs.write().await.remove(&msg.connection_id);
                     }
                 }
+                drop(subscribed_hubs);
+                connections.write().await.remove(&msg.connection_id);
             }
         }
         .boxed_local()
@@ -584,7 +710,7 @@ impl Handler<client_command::SubscribeHub> for AsyncServer {
             subscribed
                 .write()
                 .await
-                .entry(msg.addr.clone())
+                .entry(msg.connection_id.clone())
                 .or_default()
                 .write()
                 .await
@@ -597,7 +723,7 @@ impl Handler<client_command::SubscribeHub> for AsyncServer {
                 .or_default()
                 .write()
                 .await
-                .insert(msg.addr);
+                .insert(msg.connection_id);
             Ok(())
         }
         .boxed_local()
@@ -614,11 +740,11 @@ impl Handler<client_command::UnsubscribeHub> for AsyncServer {
     ) -> Self::Result {
         let (subscribed_hubs, subscribed) = self.clone_hub();
         async move {
-            if let Some(subs) = subscribed.write().await.get(&msg.addr) {
+            if let Some(subs) = subscribed.write().await.get(&msg.connection_id) {
                 subs.write().await.1.remove(&msg.hub_id);
             }
             if let Some(subs) = subscribed_hubs.write().await.get(&msg.hub_id) {
-                subs.write().await.remove(&msg.addr);
+                subs.write().await.remove(&msg.connection_id);
             }
         }
         .boxed_local()
@@ -657,7 +783,7 @@ impl Handler<client_command::SubscribeChannel> for AsyncServer {
             subscribed
                 .write()
                 .await
-                .entry(msg.addr.clone())
+                .entry(msg.connection_id.clone())
                 .or_default()
                 .write()
                 .await
@@ -670,7 +796,7 @@ impl Handler<client_command::SubscribeChannel> for AsyncServer {
                 .or_default()
                 .write()
                 .await
-                .insert(msg.addr);
+                .insert(msg.connection_id);
             Ok(())
         }
         .boxed_local()
@@ -688,11 +814,11 @@ impl Handler<client_command::UnsubscribeChannel> for AsyncServer {
         let (subscribed_channels, subscribed) = self.clone_channel();
         async move {
             let key = (msg.hub_id, msg.channel_id);
-            if let Some(subs) = subscribed.write().await.get(&msg.addr) {
+            if let Some(subs) = subscribed.write().await.get(&msg.connection_id) {
                 subs.write().await.0.remove(&key);
             }
             if let Some(subs) = subscribed_channels.write().await.get(&key) {
-                subs.write().await.remove(&msg.addr);
+                subs.write().await.remove(&msg.connection_id);
             }
         }
         .boxed_local()
@@ -704,6 +830,7 @@ impl Handler<client_command::StartTyping> for AsyncServer {
 
     fn handle(&mut self, msg: client_command::StartTyping, _: &mut Self::Context) -> Self::Result {
         let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        let connections = Arc::clone(&self.connected);
         async move {
             Hub::load(&msg.hub_id)
                 .await
@@ -725,7 +852,8 @@ impl Handler<client_command::StartTyping> for AsyncServer {
                 })?;
             Self::send_channel(
                 subscribed_channels,
-                ServerMessage::TypingStart(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
+                connections,
+                ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
                 msg.hub_id,
                 msg.channel_id,
             )
@@ -741,6 +869,7 @@ impl Handler<client_command::StopTyping> for AsyncServer {
 
     fn handle(&mut self, msg: client_command::StopTyping, _: &mut Self::Context) -> Self::Result {
         let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        let connections = Arc::clone(&self.connected);
         async move {
             Hub::load(&msg.hub_id)
                 .await
@@ -762,7 +891,8 @@ impl Handler<client_command::StopTyping> for AsyncServer {
                 })?;
             Self::send_channel(
                 subscribed_channels,
-                ServerMessage::TypingStop(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
+                connections,
+                ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id.clone(), msg.channel_id.clone()),
                 msg.hub_id,
                 msg.channel_id,
             )
@@ -778,6 +908,7 @@ impl Handler<client_command::SendMessage> for AsyncServer {
 
     fn handle(&mut self, msg: client_command::SendMessage, _: &mut Self::Context) -> Self::Result {
         let subscribed_channels = Arc::clone(&self.subscribed_channels);
+        let connections = Arc::clone(&self.connected);
         async move {
             Hub::load(&msg.hub_id)
                 .await
@@ -802,7 +933,8 @@ impl Handler<client_command::SendMessage> for AsyncServer {
             let message_id = message.id.clone();
             Self::send_channel(
                 subscribed_channels,
-                ServerMessage::NewMessage(msg.hub_id.clone(), msg.channel_id.clone(), message),
+                connections,
+                ServerMessage::ChatMessage(msg.hub_id.clone(), msg.channel_id.clone(), message),
                 msg.hub_id,
                 msg.channel_id,
             )
@@ -819,6 +951,7 @@ impl Handler<ServerNotification> for AsyncServer {
     fn handle(&mut self, msg: ServerNotification, _: &mut Self::Context) -> Self::Result {
         let (subscribed_hubs, subscribed_channels) = self.clone_hub_channel();
         let message_server = self.message_server.clone();
+        let connections = Arc::clone(&self.connected);
         async move {
             match msg {
                 ServerNotification::NewMessage(hub_id, channel_id, message) => {
@@ -833,7 +966,8 @@ impl Handler<ServerNotification> for AsyncServer {
                         .await;
                     Self::send_channel(
                         subscribed_channels,
-                        ServerMessage::NewMessage(hub_id, channel_id, m),
+                        connections,
+                        ServerMessage::ChatMessage(hub_id, channel_id, m),
                         hub_id,
                         channel_id,
                     )
@@ -842,6 +976,7 @@ impl Handler<ServerNotification> for AsyncServer {
                 ServerNotification::HubUpdated(hub_id, update_type) => {
                     Self::send_hub(
                         subscribed_hubs,
+                        connections,
                         ServerMessage::HubUpdated(hub_id.clone(), update_type),
                         &hub_id,
                     )
