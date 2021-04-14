@@ -16,7 +16,7 @@ fn load_config(path: &str) -> wicrs_server::config::Config {
 }
 
 /// Main function, loads config and starts a server for the HTTP API.
-#[actix_web::main]
+#[tokio::main]
 async fn main() {
     let config = load_config("config.json");
     wicrs_server::httpapi::graphql(config).await;

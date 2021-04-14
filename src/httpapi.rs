@@ -10,15 +10,16 @@ use crate::ID;
 use async_graphql::Response as AsyncGraphQLResponse;
 use async_graphql::*;
 
-pub async fn graphql(config: Config) {
+pub async fn graphql(_config: Config) {
     let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
-    let auth = Arc::new(RwLock::new(Auth::from_config(&config.auth_services)));
+    let (auth, test_id, test_token) = Auth::for_testing().await;
+    let auth = Arc::new(RwLock::new(auth));
 
     println!("Playground: http://localhost:8000");
 
     let graphql_post = warp::any()
         .map(move || auth.clone())
-        .and(warp::filters::header::header::<String>("authorization"))
+        .and(warp::path!("graphql" / String))
         .and(async_graphql_warp::graphql(schema.clone()))
         .and_then(
             |auth: Arc<RwLock<Auth>>,
@@ -43,11 +44,14 @@ pub async fn graphql(config: Config) {
             },
         );
 
-    let graphql_playground = warp::path::end().and(warp::get()).map(|| {
+    let graphql_playground = warp::path::end().and(warp::get()).map(move || {
         HttpResponse::builder()
             .header("content-type", "text/html")
             .body(playground_source(
-                GraphQLPlaygroundConfig::new("/").subscription_endpoint("/"),
+                GraphQLPlaygroundConfig::new(
+                    format!("/graphql/{}:{}", test_id, test_token).as_str(),
+                )
+                .subscription_endpoint("/"),
             ))
     });
 
