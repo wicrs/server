@@ -1,5 +1,4 @@
 use error::{Error, Result};
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
@@ -12,6 +11,8 @@ pub mod channel;
 pub mod config;
 /// Errors
 pub mod error;
+/// GraphQL model definition.
+pub mod graphql_model;
 /// Definition of the HTTP API.
 pub mod httpapi;
 /// Hubs, permission management, channel management and member management.
@@ -42,14 +43,6 @@ pub const MESSAGE_MAX_SIZE: usize = 8192;
 
 /// How long to wait before commiting new messages to the tantivy search engine in milliseconds, this takes a lot of time, which is why it should be done only periodically.
 pub const TANTIVY_COMMIT_THRESHOLD: u8 = 10;
-
-/// Get the current time in milliseconds since Unix Epoch.
-pub fn get_system_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-}
 
 /// Checks if a name is valid (not too long and only allowed characters).
 pub fn is_valid_name(name: &str) -> bool {

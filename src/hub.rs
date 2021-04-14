@@ -3,13 +3,14 @@ use std::{
     mem,
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     channel::{Channel, Message},
     check_name_validity, check_permission,
     error::{DataError, Error},
-    get_system_millis, new_id,
+    new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
@@ -17,18 +18,20 @@ use crate::{
     Result, ID,
 };
 
+use async_graphql::SimpleObject;
+
 /// Relative path of the folder in which Hub information files (`hub.json`) files are stored.
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
 /// Relative path of the folder in which Hub data files are stored (channel directories and messages).
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
 /// Represents a member of a hub that maps to a user.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SimpleObject)]
 pub struct HubMember {
     /// ID of the user that the hub member represents.
     pub user: ID,
     /// Time in milliseconds since Unix Epoch that the user became a member of the hub.
-    pub joined: u128,
+    pub joined: DateTime<Utc>,
     /// ID of the hub that this hub member is in.
     pub hub: ID,
     /// Name used by the hub member.
@@ -36,8 +39,10 @@ pub struct HubMember {
     /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
     /// Hub permission settings that the hub member has.
+    #[graphql(skip)]
     pub hub_permissions: HubPermissions,
     /// Mapping of channel permission settings the hub member has to the channel they apply to.
+    #[graphql(skip)]
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
@@ -49,7 +54,7 @@ impl HubMember {
             user: user.id.clone(),
             hub,
             groups: Vec::new(),
-            joined: get_system_millis(),
+            joined: Utc::now(),
             hub_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
         }
@@ -193,7 +198,7 @@ impl HubMember {
 }
 
 /// Represents a set of permissions that can be easily given to any hub member.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SimpleObject)]
 pub struct PermissionGroup {
     /// ID of the group.
     pub id: ID,
@@ -202,18 +207,20 @@ pub struct PermissionGroup {
     /// Array of the IDs of hub members who are members of the group.
     pub members: Vec<ID>,
     /// Hub permission settings that the group has.
+    #[graphql(skip)]
     pub hub_permissions: HubPermissions,
     /// Mapping of channel permission settings the group has to the channel they apply to.
+    #[graphql(skip)]
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
     /// Time in milliseconds since Unix Epoch that the group was created.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl PermissionGroup {
     /// Creates a new permission group given a name and an ID.
     pub fn new(name: String, id: ID) -> Self {
         Self {
-            created: get_system_millis(),
+            created: Utc::now(),
             id,
             name,
             members: Vec::new(),
@@ -300,11 +307,13 @@ impl PermissionGroup {
 }
 
 /// Represents a group of users, permission groups and channels.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SimpleObject)]
 pub struct Hub {
     /// Map of channels to their IDs.
+    #[graphql(skip)]
     pub channels: HashMap<ID, Channel>,
     /// Map of hub members to their corresponding user's IDs.
+    #[graphql(skip)]
     pub members: HashMap<ID, HubMember>,
     /// List of IDs of all users that are banned from the hub.
     pub bans: HashSet<ID>,
@@ -315,6 +324,7 @@ pub struct Hub {
     /// ID of the user who owns the hub, also the creator.
     pub owner: ID,
     /// Map of permission groups to their IDs.
+    #[graphql(skip)]
     pub groups: HashMap<ID, PermissionGroup>,
     /// ID of the default permission group to be given to new hub members, for now this is always the "everyone" group.
     pub default_group: ID,
@@ -323,7 +333,7 @@ pub struct Hub {
     /// ID of the hub.
     pub id: ID,
     /// Time the hub was created in milliseconds since Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl Hub {
@@ -349,7 +359,7 @@ impl Hub {
             mutes: HashSet::new(),
             channels: HashMap::new(),
             members,
-            created: get_system_millis(),
+            created: Utc::now(),
         }
     }
 
@@ -546,7 +556,7 @@ impl Hub {
                     let message = Message {
                         id: new_id(),
                         sender: member.user.clone(),
-                        created: get_system_millis(),
+                        created: Utc::now(),
                         content: message,
                     };
                     channel.add_message(message.clone()).await?;

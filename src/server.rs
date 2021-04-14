@@ -109,9 +109,7 @@ pub mod client_command {
 #[derive(Clone)]
 pub struct MessageSchemaFields {
     pub content: Field,
-    pub created: Field,
     pub id: Field,
-    pub sender: Field,
 }
 
 /// Message to tell the message server that there is a new message in a channel.
@@ -196,23 +194,15 @@ lazy_static! {
     static ref MESSAGE_SCHEMA: Schema = {
         let mut schema_builder = Schema::builder();
         schema_builder.add_text_field("content", TEXT);
-        schema_builder.add_date_field("created", FAST);
         schema_builder.add_bytes_field("id", STORED | FAST);
-        schema_builder.add_bytes_field("sender", ());
         schema_builder.build()
     };
     static ref MESSAGE_SCHEMA_FIELDS: MessageSchemaFields = MessageSchemaFields {
         content: MESSAGE_SCHEMA
             .get_field("content")
             .expect("Failed to create a Tantivy schema correctly."),
-        created: MESSAGE_SCHEMA
-            .get_field("created")
-            .expect("Failed to create a Tantivy schema correctly."),
         id: MESSAGE_SCHEMA
             .get_field("id")
-            .expect("Failed to create a Tantivy schema correctly."),
-        sender: MESSAGE_SCHEMA
-            .get_field("sender")
             .expect("Failed to create a Tantivy schema correctly."),
     };
 }
@@ -220,8 +210,6 @@ lazy_static! {
 pub fn add_message_to_writer(writer: &mut IndexWriter, message: channel::Message) -> Result {
     writer.add_document(doc!(
         MESSAGE_SCHEMA_FIELDS.id => bincode::serialize(&message.id).map_err(|_| DataError::Serialize)?,
-        MESSAGE_SCHEMA_FIELDS.sender => bincode::serialize(&message.sender).map_err(|_| DataError::Serialize)?,
-        MESSAGE_SCHEMA_FIELDS.created => message.created as i64,
         MESSAGE_SCHEMA_FIELDS.content => message.content,
     ));
     Ok(())

@@ -6,13 +6,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::{http::Response as HttpResponse, Filter};
 
+use crate::graphql_model::QueryRoot;
 use crate::ID;
 use async_graphql::Response as AsyncGraphQLResponse;
 use async_graphql::*;
 
 pub async fn graphql(_config: Config) {
-    let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
-    let (auth, test_id, test_token) = Auth::for_testing().await;
+    let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription).finish();
+    let (auth, test_id, test_token) = Auth::for_testing(20).await;
     let auth = Arc::new(RwLock::new(auth));
 
     println!("Playground: http://localhost:8000");
@@ -25,7 +26,7 @@ pub async fn graphql(_config: Config) {
             |auth: Arc<RwLock<Auth>>,
              token: String,
              (schema, mut request): (
-                Schema<Query, EmptyMutation, EmptySubscription>,
+                Schema<QueryRoot, EmptyMutation, EmptySubscription>,
                 async_graphql::Request,
             )| async move {
                 let mut split = token.as_str().split(':');
@@ -57,17 +58,4 @@ pub async fn graphql(_config: Config) {
 
     let routes = graphql_playground.or(graphql_post);
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
-}
-
-struct Query;
-
-#[Object]
-impl Query {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> async_graphql::Result<&'a ID> {
-        ctx.data::<ID>()
-    }
-
-    async fn user(&self, id: ID) -> String {
-        id.to_string()
-    }
 }

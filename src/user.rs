@@ -1,5 +1,6 @@
 use std::io::Read;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha3::{
     digest::{ExtendableOutput, Update},
@@ -9,16 +10,17 @@ use sha3::{
 use crate::{
     auth::Service,
     error::{DataError, Error},
-    get_system_millis,
     hub::Hub,
     Result, ID,
 };
 
+use async_graphql::SimpleObject;
+
 /// Relative path to the folder where user data is stored.
 pub const USER_FOLDER: &str = "data/users/";
 
-/// Represents a user, keeps track of which accounts it owns and their metadata.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// Represents a user of WICRS.
+#[derive(SimpleObject, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct User {
     /// ID of the user.
     pub id: ID,
@@ -31,7 +33,7 @@ pub struct User {
     /// The email address used by the user on their OAuth service.
     pub email: String,
     /// Time of creation of the user in milliseconds from Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// The OAuth service the user used to sign up.
     pub service: Service,
     /// A list of the hubs that the user is a member of.
@@ -40,13 +42,13 @@ pub struct User {
 
 /// Represents the publicly available information on a user, (excludes their email address and the service they signed up with) also only includes the generic version of accounts.
 /// Refer to [`User`] for the use of the fields.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(SimpleObject, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GenericUser {
     pub id: ID,
     pub status: String,
     pub description: String,
     pub username: String,
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// Hashed versions of the IDs of the hubs that the user is in.
     pub hubs_hashed: Vec<String>,
 }
@@ -61,7 +63,7 @@ impl User {
             description: String::new(),
             email,
             service,
-            created: get_system_millis(),
+            created: Utc::now(),
             in_hubs: Vec::new(),
         }
     }

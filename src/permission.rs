@@ -1,3 +1,4 @@
+use async_graphql::Enum;
 use parse_display::{Display, FromStr};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,7 +7,9 @@ use std::collections::HashMap;
 pub type PermissionSetting = Option<bool>;
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
+#[derive(
+    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
+)]
 pub enum HubPermission {
     All,
     ReadChannels,
@@ -28,7 +31,9 @@ pub enum HubPermission {
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr)]
+#[derive(
+    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
+)]
 pub enum ChannelPermission {
     Write,
     Read,

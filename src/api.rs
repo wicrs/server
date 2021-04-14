@@ -1,5 +1,6 @@
 use std::{mem, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -852,8 +853,8 @@ pub async fn get_messages(
     user_id: &ID,
     hub_id: &ID,
     channel_id: &ID,
-    from: u128,
-    to: u128,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
     invert: bool,
     max: usize,
 ) -> Result<Vec<Message>> {

@@ -1,6 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
+use async_graphql::Enum;
 use base64::URL_SAFE_NO_PAD;
+use chrono::{DateTime, Utc};
 use futures::lock::Mutex;
 use parse_display::{Display, FromStr};
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
@@ -9,20 +11,17 @@ use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use tokio::sync::RwLock;
 
-use crate::{
-    config::AuthConfigs, error::AuthError, get_system_millis, user::User, Result, ID,
-    USER_AGENT_STRING,
-};
+use crate::{config::AuthConfigs, error::AuthError, user::User, Result, ID, USER_AGENT_STRING};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
 
 /// Map of active logged in user sessions.
 /// `HashMap<Hashed User ID, HashMap<Hashed Token, Token Expiry Date>>`
-type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, u128>>>>;
+type SessionMap = Arc<RwLock<HashMap<String, HashMap<String, DateTime<Utc>>>>>;
 /// A login sessions, not an actual logged in user.
 /// `(Login Start Time, Client)`
-type LoginSession = (u128, BasicClient);
+type LoginSession = (DateTime<Utc>, BasicClient);
 /// Map of login sessions, sessions that are in the process of authenticating and logging in.
 /// `HashMap<Login Secret, <LoginSession>>`
 type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
@@ -31,7 +30,7 @@ type LoginSessionMap = Arc<Mutex<HashMap<String, LoginSession>>>;
 pub const SESSION_FILE: &str = "data/sessions.json";
 
 /// Represents supported OAuth services.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Display, FromStr)]
+#[derive(Serialize, Deserialize, Clone, Copy, Eq, Debug, PartialEq, Display, FromStr, Enum)]
 pub enum Service {
     GitHub,
 }
@@ -44,7 +43,7 @@ pub struct AuthQuery {
     /// Code given by the OAuth service after starting the OAuth flow.
     pub code: String,
     /// Optional expiry date in milliseconds from Unix Epoch for the token returned after the authentication is complete.
-    pub expires: Option<u128>,
+    pub expires: Option<DateTime<Utc>>,
 }
 
 /// Combination of a user ID and an authentication token.
@@ -82,7 +81,7 @@ impl Auth {
     }
 
     /// Creates an authentication manager with hardcoded user data for testing purposes only.
-    pub async fn for_testing() -> (Self, ID, String) {
+    pub async fn for_testing(count: u8) -> (Self, ID, String) {
         let auth = Self {
             github: Arc::new(Mutex::new(GitHub::new(
                 "testing".to_string(),
@@ -97,14 +96,31 @@ impl Auth {
             in_hubs: Vec::new(),
             status: String::new(),
             description: String::new(),
-            created: 0,
+            created: Utc::now(),
             service: Service::GitHub,
         };
+        for n in 1..count {
+            let _ = User {
+                id: ID::from_u128(n as u128),
+                username: format!("testuser_{}", n),
+                email: format!("testuser_{}@example.com", n),
+                in_hubs: Vec::new(),
+                status: String::new(),
+                description: String::new(),
+                created: Utc::now(),
+                service: Service::GitHub,
+            }
+            .save()
+            .await;
+        }
         account.save().await.expect("Failed to save test account.");
         let token = "testtoken".to_string();
         let hashed = hash_auth(account.id.clone(), token.clone());
         let mut map = HashMap::new();
-        map.insert(hashed.1, u128::MAX);
+        map.insert(
+            hashed.1,
+            Utc::now() + chrono::Duration::milliseconds(604800000),
+        );
         auth.sessions.write().await.insert(hashed.0, map);
         (auth, account.id, token)
     }
@@ -114,7 +130,7 @@ impl Auth {
     /// # Errors
     ///
     /// Returns an error if the data could not be written to the disk.
-    fn save_tokens(sessions: &HashMap<String, HashMap<String, u128>>) -> Result {
+    fn save_tokens(sessions: &HashMap<String, HashMap<String, DateTime<Utc>>>) -> Result {
         std::fs::write(
             SESSION_FILE,
             serde_json::to_string(sessions).unwrap_or("{}".to_string()),
@@ -123,12 +139,12 @@ impl Auth {
     }
 
     /// Loads authentication tokens from disk and remover any that have expired.
-    fn load_tokens() -> HashMap<String, HashMap<String, u128>> {
+    fn load_tokens() -> HashMap<String, HashMap<String, DateTime<Utc>>> {
         if let Ok(read) = std::fs::read_to_string("data/sessions.json") {
             if let Ok(mut map) =
-                serde_json::from_str::<HashMap<String, HashMap<String, u128>>>(&read)
+                serde_json::from_str::<HashMap<String, HashMap<String, DateTime<Utc>>>>(&read)
             {
-                let now = get_system_millis();
+                let now = Utc::now();
                 map.iter_mut()
                     .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
                 let _save = Auth::save_tokens(&map);
@@ -147,7 +163,7 @@ impl Auth {
         let hashed = hash_auth(id, token_str.clone());
         if let Some(map) = sessions_lock.get(&hashed.0) {
             if let Some(expires) = map.get(&hashed.1) {
-                if expires > &get_system_millis() {
+                if expires > &Utc::now() {
                     return true;
                 }
             }
@@ -209,7 +225,9 @@ impl Auth {
         service: Service,
         query: AuthQuery,
     ) -> Result<IDToken> {
-        let expires = query.expires.unwrap_or(get_system_millis() + 604800000);
+        let expires = query
+            .expires
+            .unwrap_or(Utc::now() + chrono::Duration::milliseconds(604800000));
         match service {
             Service::GitHub => {
                 let service_arc;
@@ -232,7 +250,7 @@ impl Auth {
         manager: Arc<RwLock<Self>>,
         service: Service,
         id: &str,
-        expires: u128,
+        expires: DateTime<Utc>,
         email: String,
     ) -> Result<IDToken> {
         let user;
@@ -265,7 +283,7 @@ impl Auth {
                 map.insert(hashed.1, expires);
                 sessions_lock.insert(hashed.0, map);
             }
-            let now = get_system_millis();
+            let now = Utc::now();
             sessions_lock
                 .iter_mut()
                 .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
@@ -372,7 +390,7 @@ impl GitHub {
         {
             let arc = self.sessions.clone();
             let mut lock = arc.lock().await;
-            lock.insert(csrf_state.secret().clone(), (get_system_millis(), client));
+            lock.insert(csrf_state.secret().clone(), (Utc::now(), client));
         }
         authorize_url.to_string()
     }
@@ -383,7 +401,7 @@ impl GitHub {
         manager: Arc<RwLock<Auth>>,
         state: String,
         code: String,
-        expires: u128,
+        expires: DateTime<Utc>,
     ) -> Result<IDToken> {
         if let Some(client) = self.get_session(&state).await {
             let code = AuthorizationCode::new(code.clone());

@@ -1,5 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
+use chrono::{DateTime, NaiveDateTime, Utc};
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,7 @@ pub struct Channel {
     /// Name of the channel.
     pub name: String,
     /// Date the channel was created in milliseconds since Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl Channel {
@@ -31,7 +32,7 @@ impl Channel {
             id,
             hub_id,
             description: String::new(),
-            created: crate::get_system_millis(),
+            created: Utc::now(),
         }
     }
 
@@ -111,8 +112,8 @@ impl Channel {
     /// * `max` - The maximum number of messages to return.
     pub async fn get_messages(
         &self,
-        from: u128,
-        to: u128,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
         invert: bool,
         max: usize,
     ) -> Vec<Message> {
@@ -128,11 +129,11 @@ impl Channel {
             if invert {
                 files.reverse() // Reverse the order of the list of files to search in the correct direction if `invert` is true.
             }
-            let div_from = from / 86400000; // Get the day that `from` corresponds to.
-            let div_to = to / 86400000; // Get the day that `to` corresponds to.
+            let div_from = from.timestamp() / 86400; // Get the day that `from` corresponds to.
+            let div_to = to.timestamp() / 86400; // Get the day that `to` corresponds to.
             for file in files.iter().filter(|f| {
                 if let Ok(fname) = f.file_name().into_string() {
-                    if let Ok(n) = u128::from_str(&fname) {
+                    if let Ok(n) = i64::from_str(&fname) {
                         return n >= div_from && n <= div_to; // Check that the file is of a day within the given `to` and `from` times.
                     }
                 }
@@ -322,11 +323,7 @@ impl Channel {
 
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
     pub async fn get_current_file(&self) -> String {
-        format!(
-            "{}/{}",
-            self.get_folder(),
-            crate::get_system_millis() / 86400000
-        )
+        format!("{}/{}", self.get_folder(), Utc::now().date())
     }
 }
 
@@ -338,7 +335,7 @@ pub struct Message {
     /// ID of the user that sent the message.
     pub sender: ID,
     /// Date in milliseconds since Unix Epoch that the message was sent.
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// The actual text of the message.
     pub content: String,
 }
@@ -349,7 +346,7 @@ impl Display for Message {
             "{:X},{:X},{:X},{}",
             self.id.as_u128(),
             self.sender.as_u128(),
-            self.created,
+            self.created.timestamp_millis() as i64,
             self.content.replace('\n', r#"\n"#)
         ))
     }
@@ -365,12 +362,18 @@ impl FromStr for Message {
                 if let Some(sender_str) = parts.next() {
                     if let Ok(sender) = ID::from_str(sender_str) {
                         if let Some(created_str) = parts.next() {
-                            if let Ok(created) = u128::from_str_radix(created_str, 16) {
+                            if let Ok(created) = i64::from_str_radix(created_str, 16) {
                                 if let Some(content) = parts.next() {
                                     return Ok(Self {
                                         id,
                                         sender,
-                                        created,
+                                        created: DateTime::from_utc(
+                                            NaiveDateTime::from_timestamp(
+                                                created / 1000,
+                                                ((created - created / 1000) * 1000) as u32,
+                                            ),
+                                            Utc,
+                                        ),
                                         content: content.replace(r#"\n"#, "\n"),
                                     });
                                 }
