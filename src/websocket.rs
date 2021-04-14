@@ -1,22 +1,17 @@
-use std::{
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::{str::FromStr, sync::Arc};
 
-use crate::{
-    channel,
-    server::{
-        ClientCommand, ClientServerMessage, HubUpdateType, Response, Server, ServerMessage,
-        ServerResponse,
-    },
-    Error, ID,
-};
-use actix::{
-    fut, Actor, ActorContext, ActorFuture, Addr, AsyncContext, ContextFutureSpawner, Handler,
-    StreamHandler, WrapFuture,
-};
-use actix_web_actors::ws;
+use crate::{channel, server::HubUpdateType};
+use crate::{error::Error, server::Server};
+use crate::{server::client_command, ID};
+use actix::Addr;
+use futures_util::{SinkExt, StreamExt};
+use tokio::{net::TcpStream, sync::Mutex};
+use tokio_tungstenite::accept_async;
+
+use crate::error::Result;
 use parse_display::{Display, FromStr};
+
+pub use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
 
 /// Messages that can be sent to the server by the client
 #[derive(Display, FromStr)]
@@ -24,6 +19,10 @@ use parse_display::{Display, FromStr};
 pub enum ClientMessage {
     #[display("{}({0},{1},\"{2}\")")]
     SendMessage(ID, ID, String),
+    #[display("{}({0})")]
+    SubscribeHub(ID),
+    #[display("{}({0})")]
+    UnsubscribeHub(ID),
     #[display("{}({0},{1})")]
     SubscribeChannel(ID, ID),
     #[display("{}({0},{1})")]
@@ -34,10 +33,21 @@ pub enum ClientMessage {
     StopTyping(ID, ID),
 }
 
+/// Possible responses to a [`ClientServerMessage`].
+#[derive(Clone, Display, FromStr)]
+#[display(style = "SNAKE_CASE")]
+pub enum Response {
+    #[display("{}({0})")]
+    Error(Error),
+    Success,
+    #[display("{}({0})")]
+    Id(ID),
+}
+
 /// Messages that the server can send to clients.
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
-pub enum ServerClientMessage {
+pub enum ServerMessage {
     #[display("{}({0})")]
     Error(Error),
     InvalidCommand,
@@ -48,202 +58,156 @@ pub enum ServerClientMessage {
     ChatMessage(ID, ID, channel::Message),
     #[display("{}({0},{1})")]
     HubUpdated(ID, HubUpdateType),
-    #[display("{}({0},{1})")]
-    Result(u128, Response),
+    #[display("{}({0})")]
+    Result(Response),
     #[display("{}({0},{1},{2})")]
     UserStartedTyping(ID, ID, ID),
     #[display("{}({0},{1},{2})")]
     UserStoppedTyping(ID, ID, ID),
 }
 
-impl From<ServerMessage> for ServerClientMessage {
-    fn from(message: ServerMessage) -> Self {
-        match message {
-            ServerMessage::NewMessage(hub_id, channel_id, message) => {
-                Self::ChatMessage(hub_id, channel_id, message)
-            }
-            ServerMessage::TypingStart(hub_id, channel_id, user_id) => {
-                Self::UserStartedTyping(hub_id, channel_id, user_id)
-            }
-            ServerMessage::TypingStop(hub_id, channel_id, user_id) => {
-                Self::UserStoppedTyping(hub_id, channel_id, user_id)
-            }
-            ServerMessage::HubUpdated(hub_id, update_type) => Self::HubUpdated(hub_id, update_type),
-        }
+pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server>) -> Result {
+    let ws_stream = accept_async(stream).await?;
+    let (outgoing, mut incoming) = ws_stream.split();
+    let out_arc = Arc::new(Mutex::new(outgoing));
+    let connection_id: u128;
+    {
+        let result = addr
+            .send(client_command::Connect {
+                websocket_writer: out_arc.clone(),
+            })
+            .await
+            .map_err(|_| Error::InternalMessageFailed)?;
+        connection_id = result;
     }
-}
-
-/// WebSocket message handling.
-pub struct ChatSocket {
-    hb: Instant,
-    user: ID,
-    addr: Addr<Server>,
-    hb_interval: Duration,
-    hb_timeout: Duration,
-}
-
-impl Actor for ChatSocket {
-    type Context = ws::WebsocketContext<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        self.hb(ctx);
-    }
-
-    fn stopped(&mut self, ctx: &mut Self::Context) {
-        self.addr
-            .do_send(ClientServerMessage::from(ClientCommand::Disconnect(
-                ctx.address().recipient(),
-            )));
-    }
-}
-
-impl Handler<ServerResponse> for ChatSocket {
-    type Result = ();
-
-    fn handle(&mut self, msg: ServerResponse, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(ServerClientMessage::Result(msg.responding_to, msg.message).to_string());
-    }
-}
-
-impl Handler<ServerMessage> for ChatSocket {
-    type Result = ();
-
-    fn handle(&mut self, msg: ServerMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(ServerClientMessage::from(msg).to_string())
-    }
-}
-
-impl ChatSocket {
-    /// Creates a new ChatSocket for the given user going to the given [`Server`].
-    pub fn new(user: ID, hb_interval: Duration, hb_timeout: Duration, addr: Addr<Server>) -> Self {
-        Self {
-            hb: Instant::now(),
-            user,
-            hb_interval,
-            hb_timeout,
-            addr,
-        }
-    }
-
-    /// Updates the heartbeat status or closes the connection if too much time has elapsed since the last heartbeat ping.
-    fn hb(&self, ctx: &mut <Self as Actor>::Context) {
-        let timeout = self.hb_timeout.clone();
-        ctx.run_interval(self.hb_interval.clone(), move |act, ctx| {
-            if Instant::now().duration_since(act.hb) > timeout {
-                ctx.stop();
-                return;
-            }
-            ctx.ping(b"");
-        });
-    }
-}
-
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatSocket {
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Text(text)) => {
-                if let Ok(command) = ClientMessage::from_str(&text) {
+    while let Some(msg) = incoming.next().await {
+        let msg = msg?;
+        if let Ok(text) = msg.to_text() {
+            let message = WebSocketMessage::Text(
+                if let Ok(command) = ClientMessage::from_str(text) {
                     match command {
-                        ClientMessage::SendMessage(hub, channel, message) => {
-                            let id = rand::random();
-                            let message = ClientServerMessage {
-                                client_addr: Some(ctx.address().recipient()),
-                                message_id: id,
-                                command: ClientCommand::SendMessage(
-                                    self.user.clone(),
-                                    hub,
-                                    channel,
+                        ClientMessage::SendMessage(hub_id, channel_id, message) => {
+                            if let Ok(result) = addr
+                                .send(client_command::SendMessage {
+                                    user_id: user_id.clone(),
+                                    hub_id,
+                                    channel_id,
                                     message,
-                                ),
-                            };
-                            if let Ok(_) = self.addr.try_send(message) {
-                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                                })
+                                .await
+                            {
+                                result.map_or_else(
+                                    |err| ServerMessage::Error(err),
+                                    |id| ServerMessage::Result(Response::Id(id)),
+                                )
                             } else {
-                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                                ServerMessage::Error(Error::InternalMessageFailed)
                             }
                         }
-                        ClientMessage::SubscribeChannel(hub, channel) => {
-                            let id = rand::random();
-                            let message = ClientServerMessage {
-                                client_addr: Some(ctx.address().recipient()),
-                                message_id: id,
-                                command: ClientCommand::SubscribeChannel(
-                                    self.user.clone(),
-                                    hub,
-                                    channel,
-                                    ctx.address().recipient(),
-                                ),
-                            };
-                            if let Ok(_) = self.addr.try_send(message) {
-                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                        ClientMessage::SubscribeChannel(hub_id, channel_id) => {
+                            if let Ok(result) = addr
+                                .send(client_command::SubscribeChannel {
+                                    user_id: user_id.clone(),
+                                    hub_id,
+                                    channel_id,
+                                    connection_id,
+                                })
+                                .await
+                            {
+                                result.map_or_else(
+                                    |err| ServerMessage::Error(err),
+                                    |_| ServerMessage::Result(Response::Success),
+                                )
                             } else {
-                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                                ServerMessage::Error(Error::InternalMessageFailed)
                             }
                         }
-                        ClientMessage::UnsubscribeChannel(hub, channel) => {
-                            if let Ok(_) = self.addr.try_send(ClientServerMessage::from(
-                                ClientCommand::UnsubscribeChannel(
-                                    hub,
-                                    channel,
-                                    ctx.address().recipient(),
-                                ),
-                            )) {
-                                ctx.text(ServerClientMessage::CommandSent(0).to_string());
+                        ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
+                            if let Ok(_) = addr
+                                .send(client_command::UnsubscribeChannel {
+                                    hub_id,
+                                    channel_id,
+                                    connection_id,
+                                })
+                                .await
+                            {
+                                ServerMessage::Result(Response::Success)
                             } else {
-                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                                ServerMessage::Error(Error::InternalMessageFailed)
                             }
                         }
-                        ClientMessage::StartTyping(hub, channel) => {
-                            let id = rand::random();
-                            let message = ClientServerMessage {
-                                client_addr: Some(ctx.address().recipient()),
-                                message_id: id,
-                                command: ClientCommand::StartTyping(
-                                    self.user.clone(),
-                                    hub,
-                                    channel,
-                                ),
-                            };
-                            if let Ok(_) = self.addr.try_send(message) {
-                                ctx.text(ServerClientMessage::CommandSent(id).to_string());
+                        ClientMessage::StartTyping(hub_id, channel_id) => {
+                            if let Ok(result) = addr
+                                .send(client_command::StartTyping {
+                                    user_id: user_id.clone(),
+                                    hub_id,
+                                    channel_id,
+                                })
+                                .await
+                            {
+                                result.map_or_else(
+                                    |err| ServerMessage::Error(err),
+                                    |_| ServerMessage::Result(Response::Success),
+                                )
                             } else {
-                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                                ServerMessage::Error(Error::InternalMessageFailed)
                             }
                         }
-                        ClientMessage::StopTyping(hub, channel) => {
-                            if let Ok(_) = self.addr.try_send(ClientServerMessage::from(
-                                ClientCommand::StopTyping(self.user.clone(), hub, channel),
-                            )) {
-                                ctx.text(ServerClientMessage::CommandSent(0).to_string());
+                        ClientMessage::StopTyping(hub_id, channel_id) => {
+                            if let Ok(result) = addr
+                                .send(client_command::StopTyping {
+                                    user_id: user_id.clone(),
+                                    hub_id,
+                                    channel_id,
+                                })
+                                .await
+                            {
+                                result.map_or_else(
+                                    |err| ServerMessage::Error(err),
+                                    |_| ServerMessage::Result(Response::Success),
+                                )
                             } else {
-                                ctx.text(ServerClientMessage::CommandFailed.to_string());
+                                ServerMessage::Error(Error::InternalMessageFailed)
+                            }
+                        }
+                        ClientMessage::SubscribeHub(hub_id) => {
+                            if let Ok(result) = addr
+                                .send(client_command::SubscribeHub {
+                                    user_id: user_id.clone(),
+                                    hub_id,
+                                    connection_id,
+                                })
+                                .await
+                            {
+                                result.map_or_else(
+                                    |err| ServerMessage::Error(err),
+                                    |_| ServerMessage::Result(Response::Success),
+                                )
+                            } else {
+                                ServerMessage::Error(Error::InternalMessageFailed)
+                            }
+                        }
+                        ClientMessage::UnsubscribeHub(hub_id) => {
+                            if let Ok(_) = addr
+                                .send(client_command::UnsubscribeHub {
+                                    hub_id,
+                                    connection_id,
+                                })
+                                .await
+                            {
+                                ServerMessage::Result(Response::Success)
+                            } else {
+                                ServerMessage::Error(Error::InternalMessageFailed)
                             }
                         }
                     }
                 } else {
-                    ctx.text(ServerClientMessage::InvalidCommand.to_string());
+                    ServerMessage::InvalidCommand
                 }
-            }
-            Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
-            Ok(ws::Message::Close(reason)) => {
-                self.addr
-                    .send(ClientServerMessage::from(ClientCommand::Disconnect(
-                        ctx.address().recipient(),
-                    )))
-                    .into_actor(self)
-                    .then(|_, _, _| fut::ready(()))
-                    .wait(ctx);
-                ctx.close(reason);
-                ctx.stop();
-            }
-            _ => ctx.stop(),
+                .to_string(),
+            );
+            out_arc.lock().await.send(message).await?;
         }
     }
+    Ok(())
 }

@@ -308,7 +308,7 @@ impl GitHub {
             .client
             .get("https://api.github.com/user")
             .header(USER_AGENT, USER_AGENT_STRING)
-            .header(AUTHORIZATION, "token ".to_owned() + token)
+            .header(AUTHORIZATION, "token ".to_owned() + token.as_str())
             .send()
             .await;
         if let Ok(response) = user_request {
@@ -328,7 +328,7 @@ impl GitHub {
             .client
             .get("https://api.github.com/user/emails")
             .header(USER_AGENT, USER_AGENT_STRING)
-            .header(AUTHORIZATION, "token ".to_owned() + token)
+            .header(AUTHORIZATION, "token ".to_owned() + token.as_str())
             .send()
             .await;
         if let Ok(response) = email_request {

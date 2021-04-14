@@ -4,10 +4,6 @@ use uuid::Uuid;
 
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
 pub mod api;
-/// Async version of [`server`].
-pub mod async_server;
-/// Async version of [`websocket`] (using tungstenite).
-pub mod async_websocket;
 /// Authentication handling.
 pub mod auth;
 /// Message storage and retreival for channels.
