@@ -11,7 +11,10 @@ use serde_json::Value;
 use sha3::{Digest, Sha3_256};
 use tokio::sync::RwLock;
 
-use crate::{config::AuthConfigs, error::AuthError, user::User, Result, ID, USER_AGENT_STRING};
+use crate::{
+    channel::Channel, config::AuthConfigs, error::AuthError, hub::Hub, user::User, Result, ID,
+    USER_AGENT_STRING,
+};
 
 use oauth2::{basic::BasicClient, reqwest::http_client, AuthorizationCode};
 use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
@@ -89,7 +92,7 @@ impl Auth {
             ))),
             sessions: Arc::new(RwLock::new(HashMap::new())),
         };
-        let account = User {
+        let mut account = User {
             id: ID::from_u128(0),
             username: "testuser".to_string(),
             email: "test@example.com".to_string(),
@@ -99,9 +102,16 @@ impl Auth {
             created: Utc::now(),
             service: Service::GitHub,
         };
+        let mut hub = Hub::new("test_hub".to_string(), ID::nil(), &account);
+        account.join_hub(&mut hub).expect(format!("Failed to add test account to test hub.").as_str());
         for n in 1..count {
-            let _ = User {
-                id: ID::from_u128(n as u128),
+            let id = ID::from_u128(n as u128);
+            hub.channels.insert(
+                id.clone(),
+                Channel::new(format!("test_channel_{}.", n), id.clone(), hub.id.clone()),
+            );
+            let mut user = User {
+                id: id.clone(),
                 username: format!("testuser_{}", n),
                 email: format!("testuser_{}@example.com", n),
                 in_hubs: Vec::new(),
@@ -109,10 +119,14 @@ impl Auth {
                 description: String::new(),
                 created: Utc::now(),
                 service: Service::GitHub,
-            }
-            .save()
-            .await;
+            };
+            user.join_hub(&mut hub)
+                .expect(format!("Failed to add test account #{} to test hub.", n).as_str());
+            user.save()
+                .await
+                .expect(format!("Failed to save test account #{}.", n).as_str());
         }
+        hub.save().await.expect("Failed to save test hub.");
         account.save().await.expect("Failed to save test account.");
         let token = "testtoken".to_string();
         let hashed = hash_auth(account.id.clone(), token.clone());

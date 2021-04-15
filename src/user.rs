@@ -68,6 +68,20 @@ impl User {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn new_for_testing(id_num: u128) -> Self {
+        User {
+            id: ID::from_u128(id_num),
+            username: format!("test_user_{}", id_num),
+            email: "test@example.com".to_string(),
+            in_hubs: Vec::new(),
+            status: "Testing stuff.".to_string(),
+            description: "A user for testing purposes.".to_string(),
+            created: Utc::now(),
+            service: Service::GitHub,
+        }
+    }
+
     /// Converts the standard user into a GenericUser, the hashed versions of the hub ID list also use the requester's ID to avoid hash lists or rainbow tables being used.
     pub fn to_generic(&self, requester_id: &ID) -> GenericUser {
         let mut hasher = Sha3_256::new();
@@ -99,7 +113,7 @@ impl User {
     /// * The user could not be added to the hub for any of the reasons outlined in [`Hub::user_join`].
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
-    pub async fn join_hub(&mut self, hub: &mut Hub) -> Result {
+    pub fn join_hub(&mut self, hub: &mut Hub) -> Result {
         if hub.bans.contains(&self.id) {
             Err(Error::Banned)
         } else {

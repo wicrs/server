@@ -437,7 +437,7 @@ pub async fn get_hub_member(actor_id: &ID, hub_id: &ID, user_id: &ID) -> Result<
 pub async fn join_hub(user_id: &ID, hub_id: &ID) -> Result {
     let mut user = User::load(user_id).await?;
     let mut hub = Hub::load(hub_id).await?;
-    user.join_hub(&mut hub).await?;
+    user.join_hub(&mut hub)?;
     hub.save().await?;
     user.save().await
 }

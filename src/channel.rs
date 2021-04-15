@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
+use async_graphql::SimpleObject;
+
 use crate::{error::DataError, hub::HUB_DATA_FOLDER, Result, ID};
 
 /// Text channel, used to group a manage sets of messages.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, SimpleObject)]
 pub struct Channel {
     /// ID of the channel.
     pub id: ID,
