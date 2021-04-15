@@ -202,6 +202,23 @@ impl Hub {
     async fn groups(&self) -> Vec<&PermissionGroup> {
         self.groups.iter().map(|(_, group)| group).collect()
     }
+
+    async fn member_has_permission(&self, id: ID, permission: HubPermission) -> bool {
+        self.members
+            .get(&id)
+            .map_or(false, |m| m.has_permission(permission, self))
+    }
+
+    async fn member_has_channel_permission(
+        &self,
+        id: ID,
+        channel: ID,
+        permission: ChannelPermission,
+    ) -> bool {
+        self.members.get(&id).map_or(false, |m| {
+            m.has_channel_permission(&channel, permission, self)
+        })
+    }
 }
 
 #[Object]
