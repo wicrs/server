@@ -860,7 +860,7 @@ pub async fn get_messages(
 ) -> Result<Vec<Message>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
-    Ok(channel.get_messages(from, to, invert, max).await)
+    Ok(channel.get_messages_between(from, to, invert, max).await)
 }
 
 /// Sets a hub wide permission for a hub member.

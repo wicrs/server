@@ -1,12 +1,14 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    channel::Channel,
+    channel::{Channel, Message},
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
+    server::Server,
     user::{GenericUser, User},
     ID,
 };
+use actix::Addr;
 use async_graphql::*;
 use chrono::{DateTime, Utc};
 
@@ -60,6 +62,78 @@ impl QueryRoot {
             .unwrap()
             .strip(self.requester(ctx).await?)
             .unwrap())
+    }
+}
+
+#[Object]
+impl Channel {
+    async fn id(&self) -> &ID {
+        &self.id
+    }
+
+    async fn name(&self) -> &String {
+        &self.name
+    }
+
+    async fn created(&self) -> &DateTime<Utc> {
+        &self.created
+    }
+
+    async fn description(&self) -> &String {
+        &self.description
+    }
+
+    async fn message(&self, id: ID) -> Option<Message> {
+        self.get_message(&id).await
+    }
+
+    async fn messages(&self, ids: Vec<ID>) -> Vec<Message> {
+        self.get_messages(ids).await
+    }
+
+    async fn search_messages(&self, ctx: &Context<'_>, query: String, limit: u8) -> Vec<ID> {
+        if let Ok(ms_addr) = ctx
+            .data_unchecked::<Arc<Addr<Server>>>()
+            .send(crate::server::GetMessageServer)
+            .await
+        {
+            ms_addr
+                .send(crate::server::SearchMessageIndex {
+                    hub_id: self.hub_id.clone(),
+                    channel_id: self.id.clone(),
+                    limit: limit as usize,
+                    query: query,
+                })
+                .await
+                .map_or(Vec::new(), |r| r.unwrap_or_default())
+        } else {
+            Vec::new()
+        }
+    }
+
+    async fn messages_after(&self, id: ID, max: u8) -> Vec<Message> {
+        self.get_messages_after(&id, max as usize).await
+    }
+
+    async fn messages_between(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        invert: bool,
+        max: u8,
+    ) -> Vec<Message> {
+        self.get_messages_between(from, to, invert, max as usize)
+            .await
+    }
+
+    async fn messages_containing(
+        &self,
+        max: u8,
+        string: String,
+        case_sensitive: bool,
+    ) -> Vec<Message> {
+        self.find_messages_containing(string, case_sensitive, max as usize)
+            .await
     }
 }
 

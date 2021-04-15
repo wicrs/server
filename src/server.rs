@@ -185,9 +185,9 @@ pub enum ServerNotification {
     HubUpdated(ID, HubUpdateType),
 }
 
-/// Tells the [`AsyncServer`] to get an address to it's [`AsyncMessageServer`].
+/// Tells the [`Server`] to get an address to it's [`MessageServer`].
 #[derive(Message)]
-#[rtype(result = "Addr<AsyncMessageServer>")]
+#[rtype(result = "Addr<MessageServer>")]
 pub struct GetMessageServer;
 
 lazy_static! {
@@ -221,14 +221,14 @@ pub type IndexReaderMap = Arc<RwLock<HashMap<(ID, ID), Arc<IndexReader>>>>;
 pub type PendingMessageMap = Arc<RwLock<HashMap<(ID, ID), (u8, ID)>>>;
 
 #[derive(Clone)]
-pub struct AsyncMessageServer {
+pub struct MessageServer {
     indexes: IndexMap,
     index_writers: IndexWriterMap,
     index_readers: IndexReaderMap,
     pending_messages: PendingMessageMap,
 }
 
-impl AsyncMessageServer {
+impl MessageServer {
     pub fn new() -> Self {
         Self {
             indexes: Arc::new(RwLock::new(HashMap::new())),
@@ -317,7 +317,7 @@ impl AsyncMessageServer {
             let json = tokio::fs::read_to_string(path).await?;
             let hub = serde_json::from_str::<Hub>(&json).map_err(|_| DataError::Deserialize)?;
             if let Some(channel) = hub.channels.get(channel_id) {
-                let messages = channel.async_get_all_messages_from(&last_id).await;
+                let messages = channel.get_all_messages_from(&last_id).await;
                 let last_id = if let Some(last) = messages.last() {
                     Some(last.id.clone())
                 } else {
@@ -408,7 +408,7 @@ impl AsyncMessageServer {
     }
 }
 
-impl Actor for AsyncMessageServer {
+impl Actor for MessageServer {
     type Context = Context<Self>;
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
@@ -426,7 +426,7 @@ impl Actor for AsyncMessageServer {
     }
 }
 
-impl Handler<SearchMessageIndex> for AsyncMessageServer {
+impl Handler<SearchMessageIndex> for MessageServer {
     type Result = LocalBoxFuture<'static, Result<Vec<ID>>>;
 
     fn handle(&mut self, msg: SearchMessageIndex, _: &mut Self::Context) -> Self::Result {
@@ -494,7 +494,7 @@ impl Handler<SearchMessageIndex> for AsyncMessageServer {
     }
 }
 
-impl Handler<NewMessageForIndex> for AsyncMessageServer {
+impl Handler<NewMessageForIndex> for MessageServer {
     type Result = LocalBoxFuture<'static, Result>;
 
     fn handle(&mut self, msg: NewMessageForIndex, _: &mut Self::Context) -> Self::Result {
@@ -555,7 +555,7 @@ pub struct Server {
     subscribed_hubs: SubscribedHubMap,
     subscribed: SubscribedMap,
     connected: ConnectedMap,
-    message_server: Addr<AsyncMessageServer>,
+    message_server: Addr<MessageServer>,
 }
 
 impl Server {
@@ -566,7 +566,7 @@ impl Server {
             subscribed_hubs: Arc::new(RwLock::new(HashMap::new())),
             subscribed: Arc::new(RwLock::new(HashMap::new())),
             connected: Arc::new(RwLock::new(HashMap::new())),
-            message_server: AsyncMessageServer::new().start(),
+            message_server: MessageServer::new().start(),
         }
     }
 
@@ -992,7 +992,7 @@ impl Handler<ServerNotification> for Server {
 }
 
 impl Handler<GetMessageServer> for Server {
-    type Result = Addr<AsyncMessageServer>;
+    type Result = Addr<MessageServer>;
 
     fn handle(&mut self, _: GetMessageServer, _: &mut Self::Context) -> Self::Result {
         self.message_server.clone()

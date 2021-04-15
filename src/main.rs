@@ -19,5 +19,5 @@ fn load_config(path: &str) -> wicrs_server::config::Config {
 #[tokio::main]
 async fn main() {
     let config = load_config("config.json");
-    wicrs_server::httpapi::graphql(config).await;
+    wicrs_server::httpapi::start(config).await;
 }

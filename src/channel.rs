@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
-use async_graphql::SimpleObject;
-
 use crate::{error::DataError, hub::HUB_DATA_FOLDER, Result, ID};
 
+use async_graphql::SimpleObject;
+
 /// Text channel, used to group a manage sets of messages.
-#[derive(Serialize, Deserialize, Clone, Debug, SimpleObject)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Channel {
     /// ID of the channel.
     pub id: ID,
@@ -104,6 +104,30 @@ impl Channel {
         result
     }
 
+    /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
+    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            for file in files.iter() {
+                if let Ok(file) = tokio::fs::read(file.path()).await {
+                    let iter = bincode::deserialize::<Message>(&file).into_iter();
+                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
+                    result.append(&mut found);
+                    if ids.len() == result.len() {
+                        return result;
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Gets a set of messages between two times given in milliseconds since Unix Epoch.
     ///
     /// # Arguments
@@ -112,7 +136,7 @@ impl Channel {
     /// * `to` - The latest send time a message can have to be included.
     /// * `invert` - If true messages are returned in order of newest to oldest if false, oldest to newest, search is also done in that order.
     /// * `max` - The maximum number of messages to return.
-    pub async fn get_messages(
+    pub async fn get_messages_between(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -243,7 +267,7 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn async_get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+    pub async fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -254,35 +278,6 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if let Some(_) = iter.position(|m| {
-                        if &m.id == id {
-                            result.push(m);
-                            true
-                        } else {
-                            false
-                        }
-                    }) {
-                        result.append(&mut iter.collect());
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    /// Unlimited synchronus version of [`get_messages_after`] for internal use.
-    pub fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
-        if let Ok(mut dir) = std::fs::read_dir(self.get_folder()) {
-            let mut files = Vec::new();
-            while let Some(Ok(entry)) = dir.next() {
-                if entry.path().is_file() {
-                    files.push(entry)
-                }
-            }
-            for file in files.iter() {
-                if let Ok(file) = std::fs::read(file.path()) {
                     let mut iter = bincode::deserialize::<Message>(&file).into_iter();
                     if let Some(_) = iter.position(|m| {
                         if &m.id == id {
@@ -330,7 +325,7 @@ impl Channel {
 }
 
 /// Represents a message.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
