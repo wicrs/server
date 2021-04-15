@@ -20,16 +20,13 @@ use crate::{
     Result, ID,
 };
 
-use async_graphql::SimpleObject;
-
 /// Relative path of the folder in which Hub information files (`${ID}`) files are stored.
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
 /// Relative path of the folder in which Hub data files are stored (channel directories and messages).
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
 
 /// Represents a member of a hub that maps to a user.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SimpleObject)]
-#[graphql(complex)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HubMember {
     /// ID of the user that the hub member represents.
     pub user: ID,
@@ -42,10 +39,8 @@ pub struct HubMember {
     /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
     /// Hub permission settings that the hub member has.
-    #[graphql(skip)]
     pub hub_permissions: HubPermissions,
     /// Mapping of channel permission settings the hub member has to the channel they apply to.
-    #[graphql(skip)]
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
@@ -201,8 +196,7 @@ impl HubMember {
 }
 
 /// Represents a set of permissions that can be easily given to any hub member.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, SimpleObject)]
-#[graphql(complex)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PermissionGroup {
     /// ID of the group.
     pub id: ID,
@@ -211,10 +205,8 @@ pub struct PermissionGroup {
     /// Array of the IDs of hub members who are members of the group.
     pub members: Vec<ID>,
     /// Hub permission settings that the group has.
-    #[graphql(skip)]
     pub hub_permissions: HubPermissions,
     /// Mapping of channel permission settings the group has to the channel they apply to.
-    #[graphql(skip)]
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
     /// Time in milliseconds since Unix Epoch that the group was created.
     pub created: DateTime<Utc>,
@@ -311,14 +303,11 @@ impl PermissionGroup {
 }
 
 /// Represents a group of users, permission groups and channels.
-#[derive(Serialize, Deserialize, Clone, Debug, SimpleObject)]
-#[graphql(complex)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hub {
     /// Map of channels to their IDs.
-    #[graphql(skip)]
     pub channels: HashMap<ID, Channel>,
     /// Map of hub members to their corresponding user's IDs.
-    #[graphql(skip)]
     pub members: HashMap<ID, HubMember>,
     /// List of IDs of all users that are banned from the hub.
     pub bans: HashSet<ID>,
@@ -329,7 +318,6 @@ pub struct Hub {
     /// ID of the user who owns the hub, also the creator.
     pub owner: ID,
     /// Map of permission groups to their IDs.
-    #[graphql(skip)]
     pub groups: HashMap<ID, PermissionGroup>,
     /// ID of the default permission group to be given to new hub members, for now this is always the "everyone" group.
     pub default_group: ID,

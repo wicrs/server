@@ -1,13 +1,14 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::{
     channel::Channel,
     hub::{Hub, HubMember, PermissionGroup},
-    permission::{ChannelPermissionSet, HubPermissionSet},
+    permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
     user::{GenericUser, User},
     ID,
 };
 use async_graphql::*;
+use chrono::{DateTime, Utc};
 
 pub struct QueryRoot;
 
@@ -62,64 +63,106 @@ impl QueryRoot {
     }
 }
 
-#[ComplexObject]
+#[Object]
 impl Hub {
-    async fn channels(&self) -> Vec<Channel> {
-        self.channels
-            .iter()
-            .map(|(_, channel)| channel.clone())
-            .collect()
+    async fn id(&self) -> &ID {
+        &self.id
     }
-    async fn members(&self) -> Vec<HubMember> {
-        self.members
-            .iter()
-            .map(|(_, member)| member.clone())
-            .collect()
+
+    async fn name(&self) -> &String {
+        &self.name
     }
-    async fn groups(&self) -> Vec<PermissionGroup> {
-        self.groups.iter().map(|(_, group)| group.clone()).collect()
+
+    async fn owner(&self) -> Option<&HubMember> {
+        self.members.get(&self.owner)
+    }
+
+    async fn default_group(&self) -> Option<&PermissionGroup> {
+        self.groups.get(&self.default_group)
+    }
+
+    async fn created(&self) -> &DateTime<Utc> {
+        &self.created
+    }
+
+    async fn description(&self) -> &String {
+        &self.description
+    }
+
+    async fn is_banned(&self, id: ID) -> bool {
+        self.bans.contains(&id)
+    }
+
+    async fn bans(&self) -> &HashSet<ID> {
+        &self.bans
+    }
+
+    async fn is_muted(&self, id: ID) -> bool {
+        self.mutes.contains(&id)
+    }
+
+    async fn mutes(&self) -> &HashSet<ID> {
+        &self.mutes
+    }
+
+    async fn channel(&self, id: ID) -> Option<&Channel> {
+        self.channels.get(&id)
+    }
+
+    async fn channels(&self) -> Vec<&Channel> {
+        self.channels.iter().map(|(_, channel)| channel).collect()
+    }
+
+    async fn member(&self, id: ID) -> Option<&HubMember> {
+        self.members.get(&id)
+    }
+
+    async fn members(&self) -> Vec<&HubMember> {
+        self.members.iter().map(|(_, member)| member).collect()
+    }
+
+    async fn group(&self, id: ID) -> Option<&PermissionGroup> {
+        self.groups.get(&id)
+    }
+
+    async fn groups(&self) -> Vec<&PermissionGroup> {
+        self.groups.iter().map(|(_, group)| group).collect()
     }
 }
 
-#[ComplexObject]
+#[Object]
 impl PermissionGroup {
-    async fn hub_permissions(&self) -> HashMap<String, bool> {
-        self.hub_permissions
-            .iter()
-            .filter_map(|(permission, setting)| {
-                if let Some(setting) = setting {
-                    Some((permission.to_string(), setting.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect()
+    async fn id(&self) -> &ID {
+        &self.id
     }
 
-    async fn channel_permissions(&self) -> HashMap<String, HashMap<String, bool>> {
-        self.channel_permissions
-            .iter()
-            .map(|(channel, permissions)| {
-                (
-                    channel.to_string(),
-                    permissions
-                        .iter()
-                        .filter_map(|(permission, setting)| {
-                            if let Some(setting) = setting {
-                                Some((permission.to_string(), setting.clone()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                )
-            })
-            .collect()
+    async fn name(&self) -> &String {
+        &self.name
     }
-}
 
-#[ComplexObject]
-impl HubMember {
+    async fn members(&self) -> &Vec<ID> {
+        &self.members
+    }
+
+    async fn created(&self) -> &DateTime<Utc> {
+        &self.created
+    }
+
+    async fn is_member(&self, id: ID) -> bool {
+        self.members.contains(&id)
+    }
+
+    async fn hub_permission(&self, permission: HubPermission) -> Option<HubPermissionSet> {
+        if let Some(setting) = self.hub_permissions.get(&permission) {
+            Some(HubPermissionSet {
+                permission,
+                setting: setting.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
     async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
         self.hub_permissions
             .iter()
@@ -134,6 +177,117 @@ impl HubMember {
                 }
             })
             .collect()
+    }
+
+    async fn channel_permission(
+        &self,
+        channel: ID,
+        permission: ChannelPermission,
+    ) -> Option<ChannelPermissionSet> {
+        if let Some(setting) = self.channel_permissions.get(&channel) {
+            setting.get(&permission).map_or(None, |s| {
+                Some(ChannelPermissionSet {
+                    permission,
+                    setting: s.clone(),
+                    channel,
+                })
+            })
+        } else {
+            None
+        }
+    }
+
+    async fn channel_permissions(&self) -> Vec<ChannelPermissionSet> {
+        let mut result = Vec::new();
+        self.channel_permissions
+            .iter()
+            .for_each(|(channel, permissions)| {
+                result.append(
+                    &mut permissions
+                        .iter()
+                        .filter_map(|(permission, setting)| {
+                            if let Some(setting) = setting {
+                                Some(ChannelPermissionSet::from((
+                                    permission.clone(),
+                                    Some(setting.clone()),
+                                    channel.clone(),
+                                )))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<ChannelPermissionSet>>(),
+                )
+            });
+        result
+    }
+}
+
+#[Object]
+impl HubMember {
+    async fn user(&self) -> &ID {
+        &self.user
+    }
+
+    async fn nickname(&self) -> &String {
+        &self.nickname
+    }
+
+    async fn groups(&self) -> &Vec<ID> {
+        &self.groups
+    }
+
+    async fn in_group(&self, id: ID) -> bool {
+        self.groups.contains(&id)
+    }
+
+    async fn joined(&self) -> &DateTime<Utc> {
+        &self.joined
+    }
+
+    async fn hub_permission(&self, permission: HubPermission) -> Option<HubPermissionSet> {
+        if let Some(setting) = self.hub_permissions.get(&permission) {
+            Some(HubPermissionSet {
+                permission,
+                setting: setting.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
+    async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
+        self.hub_permissions
+            .iter()
+            .filter_map(|(permission, setting)| {
+                if let Some(setting) = setting {
+                    Some(HubPermissionSet::from((
+                        permission.clone(),
+                        Some(setting.clone()),
+                    )))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    async fn channel_permission(
+        &self,
+        channel: ID,
+        permission: ChannelPermission,
+    ) -> Option<ChannelPermissionSet> {
+        if let Some(setting) = self.channel_permissions.get(&channel) {
+            setting.get(&permission).map_or(None, |s| {
+                Some(ChannelPermissionSet {
+                    permission,
+                    setting: s.clone(),
+                    channel,
+                })
+            })
+        } else {
+            None
+        }
     }
 
     async fn channel_permissions(&self) -> Vec<ChannelPermissionSet> {

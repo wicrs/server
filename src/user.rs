@@ -69,6 +69,7 @@ impl User {
     }
 
     #[allow(dead_code)]
+    #[cold]
     pub(crate) fn new_for_testing(id_num: u128) -> Self {
         User {
             id: ID::from_u128(id_num),
