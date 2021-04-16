@@ -29,7 +29,7 @@ pub async fn start(config: Config) -> Result {
     let graphql_auth_arc = auth.clone();
     let graphql_server_arc = server.clone();
 
-    println!("Playground: http://localhost:8000");
+    println!("Playground: http://{}", config.address);
 
     let graphql_post = warp::any()
         .map(move || (graphql_auth_arc.clone(), graphql_server_arc.clone()))
