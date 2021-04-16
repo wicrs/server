@@ -208,6 +208,7 @@ lazy_static! {
     };
 }
 
+/// Adds a message to a Tantivy [`IndexWriter`].
 pub fn add_message_to_writer(writer: &mut IndexWriter, message: channel::Message) -> Result {
     writer.add_document(doc!(
         MESSAGE_SCHEMA_FIELDS.id => bincode::serialize(&message.id).map_err(|_| DataError::Serialize)?,
@@ -216,12 +217,38 @@ pub fn add_message_to_writer(writer: &mut IndexWriter, message: channel::Message
     Ok(())
 }
 
-pub type IndexMap = Arc<RwLock<HashMap<(ID, ID), Arc<Index>>>>;
-pub type IndexWriterMap = Arc<RwLock<HashMap<(ID, ID), Arc<Mutex<IndexWriter>>>>>;
-pub type IndexReaderMap = Arc<RwLock<HashMap<(ID, ID), Arc<IndexReader>>>>;
-pub type PendingMessageMap = Arc<RwLock<HashMap<(ID, ID), (u8, ID)>>>;
+/// Logs the given message ID to a file, should be called after any Tantivy commits.
+async fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
+    let log_path_string = format!(
+        "{}/{:x}/{:x}/log",
+        crate::hub::HUB_DATA_FOLDER,
+        hub_id.as_u128(),
+        channel_id.as_u128()
+    );
+    tokio::fs::write(log_path_string, &message_id.as_u128().to_ne_bytes()).await?;
+    Ok(())
+}
 
-#[derive(Clone)]
+async fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(format!(
+            "{}/{:x}/{:x}/log",
+            crate::hub::HUB_DATA_FOLDER,
+            hub_id.as_u128(),
+            channel_id.as_u128()
+        ))
+        .await?;
+    file.write(&message_id.as_u128().to_ne_bytes()).await?;
+    Ok(())
+}
+
+pub type IndexMap = HashMap<(ID, ID), Index>;
+pub type IndexWriterMap = HashMap<(ID, ID), IndexWriter>;
+pub type IndexReaderMap = HashMap<(ID, ID), IndexReader>;
+pub type PendingMessageMap = HashMap<(ID, ID), (u8, ID)>;
+
 pub struct MessageServer {
     indexes: IndexMap,
     index_writers: IndexWriterMap,
@@ -232,42 +259,15 @@ pub struct MessageServer {
 impl MessageServer {
     pub fn new() -> Self {
         Self {
-            indexes: Arc::new(RwLock::new(HashMap::new())),
-            index_writers: Arc::new(RwLock::new(HashMap::new())),
-            index_readers: Arc::new(RwLock::new(HashMap::new())),
-            pending_messages: Arc::new(RwLock::new(HashMap::new())),
+            indexes: HashMap::new(),
+            index_writers: HashMap::new(),
+            index_readers: HashMap::new(),
+            pending_messages: HashMap::new(),
         }
     }
 
-    /// Logs the given message ID to a file, should be called after any Tantivy commits.
-    async fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
-        let log_path_string = format!(
-            "{}/{:x}/{:x}/log",
-            crate::hub::HUB_DATA_FOLDER,
-            hub_id.as_u128(),
-            channel_id.as_u128()
-        );
-        tokio::fs::write(log_path_string, &message_id.as_u128().to_ne_bytes()).await?;
-        Ok(())
-    }
-
-    async fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(format!(
-                "{}/{:x}/{:x}/log",
-                crate::hub::HUB_DATA_FOLDER,
-                hub_id.as_u128(),
-                channel_id.as_u128()
-            ))
-            .await?;
-        file.write(&message_id.as_u128().to_ne_bytes()).await?;
-        Ok(())
-    }
-
     /// Sets up the Tantivy index for a given channel, also makes sure that the index is up to date by commiting any messages sent after the last message sent (logged by [`log_last_message`]).
-    async fn setup_index(&self, hub_id: &ID, channel_id: &ID) -> Result {
+    async fn setup_index(&mut self, hub_id: &ID, channel_id: &ID) -> Result {
         let dir_string = format!(
             "{}/{:x}/{:x}/index",
             crate::hub::HUB_DATA_FOLDER,
@@ -324,54 +324,45 @@ impl MessageServer {
                 }
                 writer.commit().map_err(|_| IndexError::Commit)?;
                 if let Some(last_id) = last_id {
-                    Self::log_last_message(&hub_id, &channel_id, &last_id).await?;
+                    log_last_message(&hub_id, &channel_id, &last_id).await?;
                 }
                 reader.reload().map_err(|_| IndexError::Reload)?;
             }
         }
-        self.indexes
-            .write()
-            .await
-            .insert(key.clone(), Arc::new(index));
-        self.index_readers
-            .write()
-            .await
-            .insert(key.clone(), Arc::new(reader));
-        self.index_writers
-            .write()
-            .await
-            .insert(key.clone(), Arc::new(Mutex::new(writer)));
+        self.indexes.insert(key.clone(), index);
+        self.index_readers.insert(key.clone(), reader);
+        self.index_writers.insert(key.clone(), writer);
         Ok(())
     }
 
     /// Gets a reader for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
-    async fn get_reader(&self, hub_id: &ID, channel_id: &ID) -> Result<Arc<IndexReader>> {
+    async fn get_reader(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&IndexReader> {
         let key = (hub_id.clone(), channel_id.clone());
-        if !self.index_readers.read().await.contains_key(&key) {
+        if !self.index_readers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
-        if let Some(reader) = self.index_readers.read().await.get(&key) {
-            Ok(Arc::clone(reader))
+        if let Some(reader) = self.index_readers.get(&key) {
+            Ok(reader)
         } else {
             Err(IndexError::GetReader.into())
         }
     }
 
     /// Gets a searcher for the Tantivy index for a channel, uses [`get_reader`].
-    async fn get_searcher(&self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
+    async fn get_searcher(&mut self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
         let reader = self.get_reader(hub_id, channel_id).await?;
         let _ = reader.reload();
         Ok(reader.searcher())
     }
 
     /// Gets a writer for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
-    async fn get_writer(&self, hub_id: &ID, channel_id: &ID) -> Result<Arc<Mutex<IndexWriter>>> {
+    async fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
         let key = (hub_id.clone(), channel_id.clone());
-        if !self.index_writers.read().await.contains_key(&key) {
+        if !self.index_writers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
-        if let Some(writer) = self.index_writers.read().await.get(&key) {
-            Ok(Arc::clone(writer))
+        if let Some(writer) = self.index_writers.get_mut(&key) {
+            Ok(writer)
         } else {
             Err(IndexError::GetWriter.into())
         }
@@ -381,11 +372,11 @@ impl MessageServer {
 #[async_trait]
 impl Actor for MessageServer {
     async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
-        for (hc_id, writer_arc) in self.index_writers.write().await.iter() {
-            let _ = writer_arc.lock().await.commit();
-            if let Some((_, id)) = self.pending_messages.read().await.get(&hc_id) {
-                let _ = Self::log_last_message(&hc_id.0, &hc_id.1, id);
+        for (hc_id, writer) in self.index_writers.iter_mut() {
+            if let Some((_, id)) = self.pending_messages.get(&hc_id) {
+                let _ = log_last_message(&hc_id.0, &hc_id.1, id);
             }
+            let _ = writer.commit();
         }
     }
 }
@@ -398,22 +389,20 @@ impl Handler<SearchMessageIndex> for MessageServer {
         msg: SearchMessageIndex,
     ) -> Result<Vec<ID>> {
         {
-            if let Some(pending) = self
-                .pending_messages
-                .read()
-                .await
-                .get(&(msg.hub_id, msg.channel_id))
-            {
+            let pending = {
+                self.pending_messages
+                    .get(&(msg.hub_id, msg.channel_id))
+                    .cloned()
+            };
+            if let Some(pending) = pending {
                 if pending.0 != 0 {
                     let _ = self
                         .get_writer(&msg.hub_id, &msg.channel_id)
                         .await?
-                        .lock()
-                        .await
                         .commit();
-                    Self::log_last_message(&msg.hub_id, &msg.channel_id, &pending.1).await?;
+                    log_last_message(&msg.hub_id, &msg.channel_id, &pending.1).await?;
 
-                    self.pending_messages.write().await.insert(
+                    self.pending_messages.insert(
                         (msg.hub_id.clone(), msg.channel_id.clone()),
                         (0, pending.1.clone()),
                     );
@@ -449,37 +438,32 @@ impl Handler<SearchMessageIndex> for MessageServer {
 #[async_trait]
 impl Handler<NewMessageForIndex> for MessageServer {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: NewMessageForIndex) -> Result {
-        let writer_arc = self.get_writer(&msg.hub_id, &msg.channel_id).await?;
-        let mut writer = writer_arc.lock().await;
-        let message_id = msg.message.id.clone();
-        add_message_to_writer(&mut writer, msg.message)?;
         let mut new_pending: u8;
+        let message_id = msg.message.id.clone();
         if let Some((pending, _)) = self
             .pending_messages
-            .read()
-            .await
             .get(&(msg.hub_id, msg.channel_id))
+            .cloned()
         {
             new_pending = pending + 1;
-            if pending >= &crate::TANTIVY_COMMIT_THRESHOLD {
+            if pending >= crate::TANTIVY_COMMIT_THRESHOLD {
+                let mut writer = self.get_writer(&msg.hub_id, &msg.channel_id).await?;
+                add_message_to_writer(&mut writer, msg.message)?;
                 if let Ok(_) = writer.commit() {
-                    Self::log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
+                    log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
                     new_pending = 0;
                 } else {
                     Err(IndexError::Commit)?
                 }
             } else {
-                Self::log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
+                log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
             }
         } else {
             new_pending = 1;
-            Self::log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
+            log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
         }
-        drop(writer);
         let _ = self
             .pending_messages
-            .write()
-            .await
             .insert((msg.hub_id, msg.channel_id), (new_pending, message_id));
         Ok(())
     }
