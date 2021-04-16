@@ -103,7 +103,9 @@ impl Auth {
             service: Service::GitHub,
         };
         let mut hub = Hub::new("test_hub".to_string(), ID::nil(), &account);
-        account.join_hub(&mut hub).expect(format!("Failed to add test account to test hub.").as_str());
+        account
+            .join_hub(&mut hub)
+            .expect(format!("Failed to add test account to test hub.").as_str());
         for n in 1..count {
             let id = ID::from_u128(n as u128);
             hub.channels.insert(

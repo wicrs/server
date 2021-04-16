@@ -8,9 +8,9 @@ use crate::{
     user::{GenericUser, User},
     ID,
 };
-use actix::Addr;
 use async_graphql::*;
 use chrono::{DateTime, Utc};
+use xactor::Addr;
 
 pub struct QueryRoot;
 
@@ -94,11 +94,11 @@ impl Channel {
     async fn search_messages(&self, ctx: &Context<'_>, query: String, limit: u8) -> Vec<ID> {
         if let Ok(ms_addr) = ctx
             .data_unchecked::<Arc<Addr<Server>>>()
-            .send(crate::server::GetMessageServer)
+            .call(crate::server::GetMessageServer)
             .await
         {
             ms_addr
-                .send(crate::server::SearchMessageIndex {
+                .call(crate::server::SearchMessageIndex {
                     hub_id: self.hub_id.clone(),
                     channel_id: self.id.clone(),
                     limit: limit as usize,

@@ -103,6 +103,7 @@ pub enum Error {
     AlreadyTyping,
     NotTyping,
     InternalMessageFailed,
+    ServerStartFailed,
     Io,
     #[display("{}({0})")]
     Auth(AuthError),
@@ -194,6 +195,7 @@ impl From<&Error> for StatusCode {
             Error::MissingHubPermission(_) => Self::FORBIDDEN,
             Error::NotInHub => Self::NOT_FOUND,
             Error::UserNotFound => Self::NOT_FOUND,
+            Error::ServerStartFailed => Self::INTERNAL_SERVER_ERROR,
             Error::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
             Error::TooBig => Self::BAD_REQUEST,
             Error::CannotAuthenticate => Self::INTERNAL_SERVER_ERROR,

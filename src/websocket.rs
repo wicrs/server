@@ -3,10 +3,10 @@ use std::{str::FromStr, sync::Arc};
 use crate::{channel, server::HubUpdateType};
 use crate::{error::Error, server::Server};
 use crate::{server::client_command, ID};
-use actix::Addr;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_tungstenite::accept_async;
+use xactor::Addr;
 
 use crate::error::Result;
 use parse_display::{Display, FromStr};
@@ -73,7 +73,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
     let connection_id: u128;
     {
         let result = addr
-            .send(client_command::Connect {
+            .call(client_command::Connect {
                 websocket_writer: out_arc.clone(),
             })
             .await
@@ -88,7 +88,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                     match command {
                         ClientMessage::SendMessage(hub_id, channel_id, message) => {
                             if let Ok(result) = addr
-                                .send(client_command::SendMessage {
+                                .call(client_command::SendMessage {
                                     user_id: user_id.clone(),
                                     hub_id,
                                     channel_id,
@@ -106,7 +106,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::SubscribeChannel(hub_id, channel_id) => {
                             if let Ok(result) = addr
-                                .send(client_command::SubscribeChannel {
+                                .call(client_command::SubscribeChannel {
                                     user_id: user_id.clone(),
                                     hub_id,
                                     channel_id,
@@ -124,7 +124,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
                             if let Ok(_) = addr
-                                .send(client_command::UnsubscribeChannel {
+                                .call(client_command::UnsubscribeChannel {
                                     hub_id,
                                     channel_id,
                                     connection_id,
@@ -138,7 +138,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::StartTyping(hub_id, channel_id) => {
                             if let Ok(result) = addr
-                                .send(client_command::StartTyping {
+                                .call(client_command::StartTyping {
                                     user_id: user_id.clone(),
                                     hub_id,
                                     channel_id,
@@ -155,7 +155,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::StopTyping(hub_id, channel_id) => {
                             if let Ok(result) = addr
-                                .send(client_command::StopTyping {
+                                .call(client_command::StopTyping {
                                     user_id: user_id.clone(),
                                     hub_id,
                                     channel_id,
@@ -172,7 +172,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::SubscribeHub(hub_id) => {
                             if let Ok(result) = addr
-                                .send(client_command::SubscribeHub {
+                                .call(client_command::SubscribeHub {
                                     user_id: user_id.clone(),
                                     hub_id,
                                     connection_id,
@@ -189,7 +189,7 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
                         }
                         ClientMessage::UnsubscribeHub(hub_id) => {
                             if let Ok(_) = addr
-                                .send(client_command::UnsubscribeHub {
+                                .call(client_command::UnsubscribeHub {
                                     hub_id,
                                     connection_id,
                                 })

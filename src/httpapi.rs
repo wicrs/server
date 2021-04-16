@@ -7,18 +7,25 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::{http::Response as HttpResponse, Filter};
 
+use crate::error::{Error, Result};
 use crate::graphql_model::QueryRoot;
 use crate::server::Server;
 use crate::ID;
-use actix::{Actor, Addr};
 use async_graphql::Response as AsyncGraphQLResponse;
 use async_graphql::*;
+use xactor::{Actor, Addr};
 
-pub async fn start(config: Config) {
+pub async fn start(config: Config) -> Result {
     let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription).finish();
     let (auth, test_id, test_token) = Auth::for_testing(20).await;
     let auth = Arc::new(RwLock::new(auth));
-    let server = Arc::new(Server::new().start());
+    let server = Arc::new(
+        Server::new()
+            .await?
+            .start()
+            .await
+            .map_err(|_| Error::ServerStartFailed)?,
+    );
     let graphql_auth_arc = auth.clone();
     let graphql_server_arc = server.clone();
 
@@ -70,4 +77,5 @@ pub async fn start(config: Config) {
                 .expect("Unable to parse server bind address."),
         )
         .await;
+    Ok(())
 }
