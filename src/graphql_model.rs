@@ -1,6 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
+    api,
     channel::{Channel, Message},
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
@@ -20,13 +21,13 @@ impl QueryRoot {
         ctx.data_unchecked::<ID>()
     }
 
-    async fn current_user<'a>(&self, ctx: &'a Context<'_>) -> Result<User> {
+    async fn current_user(&self, ctx: &Context<'_>) -> Result<User> {
         Ok(User::load(self.requester(ctx).await?).await.unwrap())
     }
 
-    async fn user<'a>(
+    async fn user(
         &self,
-        ctx: &'a Context<'_>,
+        ctx: &Context<'_>,
         #[graphql(desc = "ID of a user.")] id: ID,
     ) -> Result<GenericUser> {
         Ok(User::load(&id)
@@ -35,9 +36,9 @@ impl QueryRoot {
             .to_generic(self.requester(ctx).await?))
     }
 
-    async fn users<'a>(
+    async fn users(
         &self,
-        ctx: &'a Context<'_>,
+        ctx: &Context<'_>,
         #[graphql(desc = "List of the IDs of the users to get.")] ids: Vec<ID>,
     ) -> Result<Vec<GenericUser>> {
         let mut result = Vec::new();
@@ -52,9 +53,9 @@ impl QueryRoot {
         Ok(result)
     }
 
-    async fn hub<'a>(
+    async fn hub(
         &self,
-        ctx: &'a Context<'_>,
+        ctx: &Context<'_>,
         #[graphql(desc = "ID of a user.")] id: ID,
     ) -> Result<Hub> {
         Ok(Hub::load(&id)
@@ -62,6 +63,89 @@ impl QueryRoot {
             .unwrap()
             .strip(self.requester(ctx).await?)
             .unwrap())
+    }
+}
+
+pub struct MutationRoot;
+
+struct UserMutator {
+    user_id: ID,
+}
+
+impl UserMutator {
+    fn new(user_id: ID) -> Self {
+        Self { user_id }
+    }
+}
+
+#[Object]
+impl UserMutator {
+    async fn username(&self, new_name: String) -> Result<String> {
+        Ok(api::change_username(&self.user_id, new_name).await?)
+    }
+    async fn status(&self, new_status: String) -> Result<String> {
+        Ok(api::change_user_status(&self.user_id, new_status).await?)
+    }
+    async fn description(&self, new_description: String) -> Result<String> {
+        Ok(api::change_user_description(&self.user_id, new_description).await?)
+    }
+    async fn join_hub(&self, hub_id: ID) -> Result<ID> {
+        Ok(api::join_hub(&self.user_id, &hub_id)
+            .await
+            .and(Ok(hub_id))?)
+    }
+    async fn leave_hub(&self, hub_id: ID) -> Result<ID> {
+        Ok(api::leave_hub(&self.user_id, &hub_id)
+            .await
+            .and(Ok(hub_id))?)
+    }
+}
+
+struct HubMutator {
+    user_id: ID,
+    hub_id: ID,
+}
+
+impl HubMutator {
+    fn new(user_id: ID, hub_id: ID) -> Self {
+        Self { user_id, hub_id }
+    }
+}
+
+#[Object]
+impl HubMutator {
+    async fn name(&self, new_name: String) -> Result<String> {
+        Ok(api::rename_hub(&self.user_id, &self.hub_id, new_name).await?)
+    }
+    async fn description(&self, new_description: String) -> Result<String> {
+        Ok(api::change_hub_description(&self.user_id, &self.hub_id, new_description).await?)
+    }
+    async fn ban(&self, user_id: ID) -> Result<ID> {
+        Ok(api::ban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    }
+    async fn unban(&self, user_id: ID) -> Result<ID> {
+        Ok(api::unban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    }
+    async fn mute(&self, user_id: ID) -> Result<ID> {
+        Ok(api::ban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    }
+    async fn unmute(&self, user_id: ID) -> Result<ID> {
+        Ok(api::unmute_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    }
+}
+
+#[Object]
+impl MutationRoot {
+    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
+        ctx.data_unchecked::<ID>()
+    }
+
+    async fn user(&self, ctx: &Context<'_>) -> Result<UserMutator> {
+        Ok(UserMutator::new(*self.requester(ctx).await?))
+    }
+
+    async fn hub(&self, ctx: &Context<'_>, hub_id: ID) -> Result<HubMutator> {
+        Ok(HubMutator::new(*self.requester(ctx).await?, hub_id))
     }
 }
 

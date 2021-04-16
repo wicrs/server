@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use warp::{http::Response as HttpResponse, Filter};
 
 use crate::error::{Error, Result};
-use crate::graphql_model::QueryRoot;
+use crate::graphql_model::{QueryRoot, MutationRoot};
 use crate::server::Server;
 use crate::ID;
 use async_graphql::Response as AsyncGraphQLResponse;
@@ -16,7 +16,7 @@ use async_graphql::*;
 use xactor::{Actor, Addr};
 
 pub async fn start(config: Config) -> Result {
-    let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription).finish();
+    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let (auth, test_id, test_token) = Auth::for_testing(20).await;
     let auth = Arc::new(RwLock::new(auth));
     let server = Arc::new(
@@ -39,7 +39,7 @@ pub async fn start(config: Config) -> Result {
             |(auth, server): (Arc<RwLock<Auth>>, Arc<Addr<Server>>),
              token: String,
              (schema, request): (
-                Schema<QueryRoot, EmptyMutation, EmptySubscription>,
+                Schema<QueryRoot, MutationRoot, EmptySubscription>,
                 async_graphql::Request,
             )| async move {
                 let mut split = token.as_str().split(':');
