@@ -80,24 +80,62 @@ impl UserMutator {
 
 #[Object]
 impl UserMutator {
-    async fn username(&self, new_name: String) -> Result<String> {
-        Ok(api::change_username(&self.user_id, new_name).await?)
+    async fn username(&self, new: String) -> Result<String> {
+        Ok(api::change_username(&self.user_id, new).await?)
     }
-    async fn status(&self, new_status: String) -> Result<String> {
-        Ok(api::change_user_status(&self.user_id, new_status).await?)
+    async fn status(&self, new: String) -> Result<String> {
+        Ok(api::change_user_status(&self.user_id, new).await?)
     }
-    async fn description(&self, new_description: String) -> Result<String> {
-        Ok(api::change_user_description(&self.user_id, new_description).await?)
+    async fn description(&self, new: String) -> Result<String> {
+        Ok(api::change_user_description(&self.user_id, new).await?)
     }
-    async fn join_hub(&self, hub_id: ID) -> Result<ID> {
-        Ok(api::join_hub(&self.user_id, &hub_id)
-            .await
-            .and(Ok(hub_id))?)
+    async fn join_hub(&self, id: ID) -> Result<ID> {
+        Ok(api::join_hub(&self.user_id, &id).await.and(Ok(id))?)
     }
-    async fn leave_hub(&self, hub_id: ID) -> Result<ID> {
-        Ok(api::leave_hub(&self.user_id, &hub_id)
-            .await
-            .and(Ok(hub_id))?)
+    async fn leave_hub(&self, id: ID) -> Result<ID> {
+        Ok(api::leave_hub(&self.user_id, &id).await.and(Ok(id))?)
+    }
+}
+
+struct ChannelMutator {
+    user_id: ID,
+    hub_id: ID,
+    channel_id: ID,
+}
+
+impl ChannelMutator {
+    fn new(user_id: ID, hub_id: ID, channel_id: ID) -> Self {
+        Self {
+            user_id,
+            hub_id,
+            channel_id,
+        }
+    }
+}
+
+#[Object]
+impl ChannelMutator {
+    async fn name(&self, new: String) -> Result<String> {
+        Ok(api::rename_channel(&self.user_id, &self.hub_id, &self.channel_id, new).await?)
+    }
+    async fn description(&self, new: String) -> Result<String> {
+        Ok(
+            api::change_channel_description(&self.user_id, &self.hub_id, &self.channel_id, new)
+                .await?,
+        )
+    }
+    async fn send_message(&self, ctx: &Context<'_>, message: String) -> Result<ID> {
+        let message =
+            api::send_message(&self.user_id, &self.hub_id, &self.channel_id, message).await?;
+        let id = message.id.clone();
+        ctx.data_unchecked::<Arc<Addr<Server>>>()
+            .send(crate::server::ServerNotification::NewMessage(
+                self.hub_id,
+                self.channel_id,
+                message,
+            ))
+            .map_err(|_| crate::error::Error::InternalMessageFailed)?;
+        Ok(id)
     }
 }
 
@@ -114,23 +152,52 @@ impl HubMutator {
 
 #[Object]
 impl HubMutator {
-    async fn name(&self, new_name: String) -> Result<String> {
-        Ok(api::rename_hub(&self.user_id, &self.hub_id, new_name).await?)
+    async fn name(&self, new: String) -> Result<String> {
+        Ok(api::rename_hub(&self.user_id, &self.hub_id, new).await?)
     }
-    async fn description(&self, new_description: String) -> Result<String> {
-        Ok(api::change_hub_description(&self.user_id, &self.hub_id, new_description).await?)
+    async fn description(&self, new: String) -> Result<String> {
+        Ok(api::change_hub_description(&self.user_id, &self.hub_id, new).await?)
     }
-    async fn ban(&self, user_id: ID) -> Result<ID> {
-        Ok(api::ban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    async fn channel(&self, id: ID) -> ChannelMutator {
+        ChannelMutator::new(self.user_id, self.hub_id, id)
     }
-    async fn unban(&self, user_id: ID) -> Result<ID> {
-        Ok(api::unban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    async fn delete_channel(&self, id: ID) -> Result<ID> {
+        Ok(api::delete_channel(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
     }
-    async fn mute(&self, user_id: ID) -> Result<ID> {
-        Ok(api::ban_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    async fn create_channel(&self, name: String) -> Result<Channel> {
+        Ok(api::get_channel(
+            &self.user_id,
+            &self.hub_id,
+            &api::create_channel(&self.user_id, &self.hub_id, name).await?,
+        )
+        .await?)
     }
-    async fn unmute(&self, user_id: ID) -> Result<ID> {
-        Ok(api::unmute_user(&self.user_id, &self.hub_id, &user_id).await.and(Ok(user_id))?)
+    async fn kick(&self, id: ID) -> Result<ID> {
+        Ok(api::kick_user(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
+    }
+    async fn ban(&self, id: ID) -> Result<ID> {
+        Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
+    }
+    async fn unban(&self, id: ID) -> Result<ID> {
+        Ok(api::unban_user(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
+    }
+    async fn mute(&self, id: ID) -> Result<ID> {
+        Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
+    }
+    async fn unmute(&self, id: ID) -> Result<ID> {
+        Ok(api::unmute_user(&self.user_id, &self.hub_id, &id)
+            .await
+            .and(Ok(id))?)
     }
 }
 
@@ -144,8 +211,18 @@ impl MutationRoot {
         Ok(UserMutator::new(*self.requester(ctx).await?))
     }
 
-    async fn hub(&self, ctx: &Context<'_>, hub_id: ID) -> Result<HubMutator> {
-        Ok(HubMutator::new(*self.requester(ctx).await?, hub_id))
+    async fn hub(&self, ctx: &Context<'_>, id: ID) -> Result<HubMutator> {
+        Ok(HubMutator::new(*self.requester(ctx).await?, id))
+    }
+
+    async fn delete_hub(&self, ctx: &Context<'_>, id: ID) -> Result<ID> {
+        Ok(api::delete_hub(self.requester(ctx).await?, &id)
+            .await
+            .and(Ok(id))?)
+    }
+
+    async fn create_hub(&self, ctx: &Context<'_>, name: String) -> Result<Hub> {
+        Ok(Hub::load(&api::create_hub(self.requester(ctx).await?, name).await?).await?)
     }
 }
 

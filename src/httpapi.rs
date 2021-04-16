@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use warp::{http::Response as HttpResponse, Filter};
 
 use crate::error::{Error, Result};
-use crate::graphql_model::{QueryRoot, MutationRoot};
+use crate::graphql_model::{MutationRoot, QueryRoot};
 use crate::server::Server;
 use crate::ID;
 use async_graphql::Response as AsyncGraphQLResponse;
