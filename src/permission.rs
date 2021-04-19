@@ -7,9 +7,12 @@ use std::collections::HashMap;
 /// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
 
+/// Struct that groups a hub permission with a permission setting.
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
 pub struct HubPermissionSet {
+    /// Permission that this permission set is for.
     pub permission: HubPermission,
+    /// Setting for the permission.
     pub setting: Option<bool>,
 }
 
@@ -22,10 +25,14 @@ impl From<(HubPermission, PermissionSetting)> for HubPermissionSet {
     }
 }
 
+/// Datastructure that groups a channel permission setting with the channel ID that it is valid in and a permission setting.
 #[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
 pub struct ChannelPermissionSet {
+    /// Permission that this permission set is for.
     pub permission: ChannelPermission,
+    /// Setting for the permission.
     pub setting: Option<bool>,
+    /// ID of the channel that this permission setting is for.
     pub channel: ID,
 }
 

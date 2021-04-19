@@ -3,6 +3,7 @@ use parse_display::{Display, FromStr};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::Error as TungsteniteError;
+use warp::reject::Reject;
 
 /// General result type for wicrs, error type defaults to [`Error`].
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
@@ -18,6 +19,8 @@ pub enum DataError {
     Serialize,
     DeleteFailed,
 }
+
+impl Reject for DataError {}
 
 /// Errors related to web socket handling.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
@@ -36,6 +39,8 @@ pub enum WebSocketError {
     HttpFormat,
 }
 
+impl Reject for WebSocketError {}
+
 /// Errors related to message indexing and searching (Tantivy).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -52,6 +57,8 @@ pub enum IndexError {
     Reload,
 }
 
+impl Reject for IndexError {}
+
 /// Errors related to authentication.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -63,6 +70,8 @@ pub enum AuthError {
     InvalidSession,
     MalformedIDToken,
 }
+
+impl Reject for AuthError {}
 
 impl From<&AuthError> for StatusCode {
     fn from(error: &AuthError) -> Self {
@@ -112,6 +121,8 @@ pub enum Error {
     #[display("{}({0})")]
     Index(IndexError),
 }
+
+impl Reject for Error {}
 
 impl From<TungsteniteError> for WebSocketError {
     fn from(err: TungsteniteError) -> Self {
