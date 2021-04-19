@@ -3,13 +3,16 @@ use std::{
     mem,
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     channel::{Channel, Message},
     check_name_validity, check_permission,
     error::{DataError, Error},
-    get_system_millis, new_id,
+    new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
@@ -17,7 +20,7 @@ use crate::{
     Result, ID,
 };
 
-/// Relative path of the folder in which Hub information files (`hub.json`) files are stored.
+/// Relative path of the folder in which Hub information files (`${ID}`) files are stored.
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
 /// Relative path of the folder in which Hub data files are stored (channel directories and messages).
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
@@ -28,7 +31,7 @@ pub struct HubMember {
     /// ID of the user that the hub member represents.
     pub user: ID,
     /// Time in milliseconds since Unix Epoch that the user became a member of the hub.
-    pub joined: u128,
+    pub joined: DateTime<Utc>,
     /// ID of the hub that this hub member is in.
     pub hub: ID,
     /// Name used by the hub member.
@@ -49,7 +52,7 @@ impl HubMember {
             user: user.id.clone(),
             hub,
             groups: Vec::new(),
-            joined: get_system_millis(),
+            joined: Utc::now(),
             hub_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
         }
@@ -206,14 +209,14 @@ pub struct PermissionGroup {
     /// Mapping of channel permission settings the group has to the channel they apply to.
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
     /// Time in milliseconds since Unix Epoch that the group was created.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl PermissionGroup {
     /// Creates a new permission group given a name and an ID.
     pub fn new(name: String, id: ID) -> Self {
         Self {
-            created: get_system_millis(),
+            created: Utc::now(),
             id,
             name,
             members: Vec::new(),
@@ -300,7 +303,7 @@ impl PermissionGroup {
 }
 
 /// Represents a group of users, permission groups and channels.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hub {
     /// Map of channels to their IDs.
     pub channels: HashMap<ID, Channel>,
@@ -323,7 +326,7 @@ pub struct Hub {
     /// ID of the hub.
     pub id: ID,
     /// Time the hub was created in milliseconds since Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl Hub {
@@ -349,7 +352,7 @@ impl Hub {
             mutes: HashSet::new(),
             channels: HashMap::new(),
             members,
-            created: get_system_millis(),
+            created: Utc::now(),
         }
     }
 
@@ -546,7 +549,7 @@ impl Hub {
                     let message = Message {
                         id: new_id(),
                         sender: member.user.clone(),
-                        created: get_system_millis(),
+                        created: Utc::now(),
                         content: message,
                     };
                     channel.add_message(message.clone()).await?;
@@ -584,11 +587,15 @@ impl Hub {
     /// * The data could not be written to the disk.
     pub async fn save(&self) -> Result {
         tokio::fs::create_dir_all(HUB_INFO_FOLDER).await?;
-        tokio::fs::write(
-            self.get_info_path(),
-            &bincode::serialize(self).map_err(|_| DataError::Serialize)?,
-        )
-        .await?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(self.get_info_path())
+            .await?;
+        let bytes = bincode::serialize(self).map_err(|_| DataError::Serialize)?;
+        let mut buf: &[u8] = bytes.as_slice();
+        file.write_buf(&mut buf).await?;
+        file.flush().await?;
         Ok(())
     }
 
@@ -607,7 +614,14 @@ impl Hub {
         if !path.exists() {
             return Err(Error::HubNotFound);
         }
-        bincode::deserialize(&tokio::fs::read(path).await?).map_err(|_| DataError::Deserialize)?
+        let mut file = tokio::fs::OpenOptions::new().read(true).open(path).await?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).await?;
+        if let Ok(hub) = bincode::deserialize(&buf) {
+            Ok(hub)
+        } else {
+            Err(DataError::Deserialize.into())
+        }
     }
 
     /// Adds a user to a hub, creating and returning the resulting hub member.
@@ -731,5 +745,22 @@ impl Hub {
         let mut hub = self.clone();
         hub.channels = self.get_channels_for_user(user_id)?;
         Ok(hub)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Hub, User, ID};
+
+    #[tokio::test]
+    async fn save_load() {
+        let user = User::new_for_testing(0);
+        let mut hub = dbg!(Hub::new("test_hub".to_string(), ID::nil(), &user));
+        let _ = tokio::fs::remove_file(&hub.get_info_path()).await;
+        hub.new_channel(&user.id, "test_channel".to_string())
+            .await
+            .expect("Failed to add a channel to the test hub.");
+        hub.save().await.expect("Failed to save the hub.");
+        Hub::load(&hub.id).await.expect("Failed to load the hub.");
     }
 }

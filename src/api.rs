@@ -1,5 +1,6 @@
 use std::{mem, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -436,7 +437,7 @@ pub async fn get_hub_member(actor_id: &ID, hub_id: &ID, user_id: &ID) -> Result<
 pub async fn join_hub(user_id: &ID, hub_id: &ID) -> Result {
     let mut user = User::load(user_id).await?;
     let mut hub = Hub::load(hub_id).await?;
-    user.join_hub(&mut hub).await?;
+    user.join_hub(&mut hub)?;
     hub.save().await?;
     user.save().await
 }
@@ -852,14 +853,14 @@ pub async fn get_messages(
     user_id: &ID,
     hub_id: &ID,
     channel_id: &ID,
-    from: u128,
-    to: u128,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
     invert: bool,
     max: usize,
 ) -> Result<Vec<Message>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
-    Ok(channel.get_messages(from, to, invert, max).await)
+    Ok(channel.get_messages_between(from, to, invert, max).await)
 }
 
 /// Sets a hub wide permission for a hub member.

@@ -2,7 +2,7 @@ use crate::permission::{ChannelPermission, HubPermission};
 use parse_display::{Display, FromStr};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio_tungstenite::tungstenite::Error as TungsteniteError;
+use warp::reject::Reject;
 
 /// General result type for wicrs, error type defaults to [`Error`].
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
@@ -18,6 +18,8 @@ pub enum DataError {
     Serialize,
     DeleteFailed,
 }
+
+impl Reject for DataError {}
 
 /// Errors related to web socket handling.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
@@ -36,6 +38,8 @@ pub enum WebSocketError {
     HttpFormat,
 }
 
+impl Reject for WebSocketError {}
+
 /// Errors related to message indexing and searching (Tantivy).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -52,6 +56,8 @@ pub enum IndexError {
     Reload,
 }
 
+impl Reject for IndexError {}
+
 /// Errors related to authentication.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -63,6 +69,8 @@ pub enum AuthError {
     InvalidSession,
     MalformedIDToken,
 }
+
+impl Reject for AuthError {}
 
 impl From<&AuthError> for StatusCode {
     fn from(error: &AuthError) -> Self {
@@ -97,12 +105,12 @@ pub enum Error {
     TooBig,
     InvalidText,
     MessageSendFailed,
-    #[display("{}({0})")]
-    WebSocket(WebSocketError),
+    Warp,
     CannotAuthenticate,
     AlreadyTyping,
     NotTyping,
     InternalMessageFailed,
+    ServerStartFailed,
     Io,
     #[display("{}({0})")]
     Auth(AuthError),
@@ -112,35 +120,7 @@ pub enum Error {
     Index(IndexError),
 }
 
-impl From<TungsteniteError> for WebSocketError {
-    fn from(err: TungsteniteError) -> Self {
-        match err {
-            TungsteniteError::ConnectionClosed => Self::ConnectionClosed,
-            TungsteniteError::AlreadyClosed => Self::AlreadyClosed,
-            TungsteniteError::Io(_) => Self::Io,
-            TungsteniteError::Tls(_) => Self::Tls,
-            TungsteniteError::Capacity(_) => Self::Capacity,
-            TungsteniteError::Protocol(_) => Self::Protocol,
-            TungsteniteError::SendQueueFull(_) => Self::SendQueueFull,
-            TungsteniteError::Utf8 => Self::Utf8,
-            TungsteniteError::Url(_) => Self::Url,
-            TungsteniteError::Http(_) => Self::Http,
-            TungsteniteError::HttpFormat(_) => Self::HttpFormat,
-        }
-    }
-}
-
-impl From<&WebSocketError> for StatusCode {
-    fn from(err: &WebSocketError) -> Self {
-        match err {
-            WebSocketError::ConnectionClosed => Self::NO_CONTENT,
-            WebSocketError::AlreadyClosed => Self::GONE,
-            WebSocketError::Capacity => Self::PAYLOAD_TOO_LARGE,
-            WebSocketError::SendQueueFull => Self::TOO_MANY_REQUESTS,
-            _ => Self::BAD_REQUEST,
-        }
-    }
-}
+impl Reject for Error {}
 
 impl From<IndexError> for Error {
     fn from(err: IndexError) -> Self {
@@ -148,15 +128,9 @@ impl From<IndexError> for Error {
     }
 }
 
-impl From<WebSocketError> for Error {
-    fn from(err: WebSocketError) -> Self {
-        Self::WebSocket(err)
-    }
-}
-
-impl From<TungsteniteError> for Error {
-    fn from(err: TungsteniteError) -> Self {
-        Self::WebSocket(err.into())
+impl From<warp::Error> for Error {
+    fn from(_: warp::Error) -> Self {
+        Self::Warp
     }
 }
 
@@ -194,6 +168,7 @@ impl From<&Error> for StatusCode {
             Error::MissingHubPermission(_) => Self::FORBIDDEN,
             Error::NotInHub => Self::NOT_FOUND,
             Error::UserNotFound => Self::NOT_FOUND,
+            Error::ServerStartFailed => Self::INTERNAL_SERVER_ERROR,
             Error::UnexpectedServerArg => Self::INTERNAL_SERVER_ERROR,
             Error::TooBig => Self::BAD_REQUEST,
             Error::CannotAuthenticate => Self::INTERNAL_SERVER_ERROR,
@@ -205,7 +180,7 @@ impl From<&Error> for StatusCode {
             Error::Auth(error) => error.into(),
             Error::Data(_) => Self::INTERNAL_SERVER_ERROR,
             Error::Index(_) => Self::INTERNAL_SERVER_ERROR,
-            Error::WebSocket(error) => error.into(),
+            Error::Warp => Self::INTERNAL_SERVER_ERROR,
             Error::Io => Self::INTERNAL_SERVER_ERROR,
         }
     }

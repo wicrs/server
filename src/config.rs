@@ -9,12 +9,6 @@ pub struct Config {
     pub address: String,
     /// Whether or not to show the version of WICRS server on the root webpage (`http(s)://host:port/`)
     pub show_version: bool,
-    /// How often to send heartbeat pings (in milliseconds)
-    pub ws_hb_interval: u64,
-    /// How long before lack of client response causes a timeout (in milliseconds)
-    pub ws_client_timeout: u64,
-    /// How long to wait before commiting new messages to the tantivy search engine in milliseconds, this takes a lot of time, which is why it should be done only periodically
-    pub tantivy_commit_threshold: u8,
 }
 
 /// Configuration for a generic OAuth service.

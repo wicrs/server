@@ -1,5 +1,6 @@
 use std::io::Read;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha3::{
     digest::{ExtendableOutput, Update},
@@ -9,16 +10,17 @@ use sha3::{
 use crate::{
     auth::Service,
     error::{DataError, Error},
-    get_system_millis,
     hub::Hub,
     Result, ID,
 };
 
+use async_graphql::SimpleObject;
+
 /// Relative path to the folder where user data is stored.
 pub const USER_FOLDER: &str = "data/users/";
 
-/// Represents a user, keeps track of which accounts it owns and their metadata.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// Represents a user of WICRS.
+#[derive(SimpleObject, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct User {
     /// ID of the user.
     pub id: ID,
@@ -31,7 +33,7 @@ pub struct User {
     /// The email address used by the user on their OAuth service.
     pub email: String,
     /// Time of creation of the user in milliseconds from Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// The OAuth service the user used to sign up.
     pub service: Service,
     /// A list of the hubs that the user is a member of.
@@ -40,13 +42,13 @@ pub struct User {
 
 /// Represents the publicly available information on a user, (excludes their email address and the service they signed up with) also only includes the generic version of accounts.
 /// Refer to [`User`] for the use of the fields.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(SimpleObject, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GenericUser {
     pub id: ID,
     pub status: String,
     pub description: String,
     pub username: String,
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// Hashed versions of the IDs of the hubs that the user is in.
     pub hubs_hashed: Vec<String>,
 }
@@ -61,8 +63,23 @@ impl User {
             description: String::new(),
             email,
             service,
-            created: get_system_millis(),
+            created: Utc::now(),
             in_hubs: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    #[cold]
+    pub(crate) fn new_for_testing(id_num: u128) -> Self {
+        User {
+            id: ID::from_u128(id_num),
+            username: format!("test_user_{}", id_num),
+            email: "test@example.com".to_string(),
+            in_hubs: Vec::new(),
+            status: "Testing stuff.".to_string(),
+            description: "A user for testing purposes.".to_string(),
+            created: Utc::now(),
+            service: Service::GitHub,
         }
     }
 
@@ -97,7 +114,7 @@ impl User {
     /// * The user could not be added to the hub for any of the reasons outlined in [`Hub::user_join`].
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
-    pub async fn join_hub(&mut self, hub: &mut Hub) -> Result {
+    pub fn join_hub(&mut self, hub: &mut Hub) -> Result {
         if hub.bans.contains(&self.id) {
             Err(Error::Banned)
         } else {

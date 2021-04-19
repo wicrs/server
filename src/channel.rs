@@ -1,5 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
+use chrono::{DateTime, NaiveDateTime, Utc};
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,10 @@ use fs::OpenOptions;
 
 use crate::{error::DataError, hub::HUB_DATA_FOLDER, Result, ID};
 
+use async_graphql::SimpleObject;
+
 /// Text channel, used to group a manage sets of messages.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Channel {
     /// ID of the channel.
     pub id: ID,
@@ -20,7 +23,7 @@ pub struct Channel {
     /// Name of the channel.
     pub name: String,
     /// Date the channel was created in milliseconds since Unix Epoch.
-    pub created: u128,
+    pub created: DateTime<Utc>,
 }
 
 impl Channel {
@@ -31,7 +34,7 @@ impl Channel {
             id,
             hub_id,
             description: String::new(),
-            created: crate::get_system_millis(),
+            created: Utc::now(),
         }
     }
 
@@ -101,6 +104,30 @@ impl Channel {
         result
     }
 
+    /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
+    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    files.push(entry)
+                }
+            }
+            for file in files.iter() {
+                if let Ok(file) = tokio::fs::read(file.path()).await {
+                    let iter = bincode::deserialize::<Message>(&file).into_iter();
+                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
+                    result.append(&mut found);
+                    if ids.len() == result.len() {
+                        return result;
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Gets a set of messages between two times given in milliseconds since Unix Epoch.
     ///
     /// # Arguments
@@ -109,10 +136,10 @@ impl Channel {
     /// * `to` - The latest send time a message can have to be included.
     /// * `invert` - If true messages are returned in order of newest to oldest if false, oldest to newest, search is also done in that order.
     /// * `max` - The maximum number of messages to return.
-    pub async fn get_messages(
+    pub async fn get_messages_between(
         &self,
-        from: u128,
-        to: u128,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
         invert: bool,
         max: usize,
     ) -> Vec<Message> {
@@ -128,11 +155,11 @@ impl Channel {
             if invert {
                 files.reverse() // Reverse the order of the list of files to search in the correct direction if `invert` is true.
             }
-            let div_from = from / 86400000; // Get the day that `from` corresponds to.
-            let div_to = to / 86400000; // Get the day that `to` corresponds to.
+            let div_from = from.timestamp() / 86400; // Get the day that `from` corresponds to.
+            let div_to = to.timestamp() / 86400; // Get the day that `to` corresponds to.
             for file in files.iter().filter(|f| {
                 if let Ok(fname) = f.file_name().into_string() {
-                    if let Ok(n) = u128::from_str(&fname) {
+                    if let Ok(n) = i64::from_str(&fname) {
                         return n >= div_from && n <= div_to; // Check that the file is of a day within the given `to` and `from` times.
                     }
                 }
@@ -240,7 +267,7 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn async_get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+    pub async fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -251,35 +278,6 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if let Some(_) = iter.position(|m| {
-                        if &m.id == id {
-                            result.push(m);
-                            true
-                        } else {
-                            false
-                        }
-                    }) {
-                        result.append(&mut iter.collect());
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    /// Unlimited synchronus version of [`get_messages_after`] for internal use.
-    pub fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
-        if let Ok(mut dir) = std::fs::read_dir(self.get_folder()) {
-            let mut files = Vec::new();
-            while let Some(Ok(entry)) = dir.next() {
-                if entry.path().is_file() {
-                    files.push(entry)
-                }
-            }
-            for file in files.iter() {
-                if let Ok(file) = std::fs::read(file.path()) {
                     let mut iter = bincode::deserialize::<Message>(&file).into_iter();
                     if let Some(_) = iter.position(|m| {
                         if &m.id == id {
@@ -322,23 +320,19 @@ impl Channel {
 
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
     pub async fn get_current_file(&self) -> String {
-        format!(
-            "{}/{}",
-            self.get_folder(),
-            crate::get_system_millis() / 86400000
-        )
+        format!("{}/{}", self.get_folder(), Utc::now().date())
     }
 }
 
 /// Represents a message.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
     /// ID of the user that sent the message.
     pub sender: ID,
     /// Date in milliseconds since Unix Epoch that the message was sent.
-    pub created: u128,
+    pub created: DateTime<Utc>,
     /// The actual text of the message.
     pub content: String,
 }
@@ -349,7 +343,7 @@ impl Display for Message {
             "{:X},{:X},{:X},{}",
             self.id.as_u128(),
             self.sender.as_u128(),
-            self.created,
+            self.created.timestamp_millis() as i64,
             self.content.replace('\n', r#"\n"#)
         ))
     }
@@ -365,12 +359,18 @@ impl FromStr for Message {
                 if let Some(sender_str) = parts.next() {
                     if let Ok(sender) = ID::from_str(sender_str) {
                         if let Some(created_str) = parts.next() {
-                            if let Ok(created) = u128::from_str_radix(created_str, 16) {
+                            if let Ok(created) = i64::from_str_radix(created_str, 16) {
                                 if let Some(content) = parts.next() {
                                     return Ok(Self {
                                         id,
                                         sender,
-                                        created,
+                                        created: DateTime::from_utc(
+                                            NaiveDateTime::from_timestamp(
+                                                created / 1000,
+                                                ((created - created / 1000) * 1000) as u32,
+                                            ),
+                                            Utc,
+                                        ),
                                         content: content.replace(r#"\n"#, "\n"),
                                     });
                                 }
