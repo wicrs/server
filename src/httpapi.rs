@@ -119,6 +119,16 @@ pub async fn start(config: Config) -> Result {
             ))
         });
 
+    let web_socket = warp::path!("v2" / "websocket")
+        .and(auth_filter.clone())
+        .and(warp::ws())
+        .map(move |(id, _), ws: warp::ws::Ws| {
+            let server = server.clone();
+            ws.on_upgrade(move |websocket| async move {
+                let _ = crate::websocket::handle_connection(websocket, id, server).await;
+            })
+        });
+
     let graphql_playground = warp::path!("graphql_playground" / String)
         .and(warp::get())
         .map(move |auth_string: String| {
@@ -133,6 +143,7 @@ pub async fn start(config: Config) -> Result {
 
     let routes = graphql_playground
         .or(graphql_post)
+        .or(web_socket)
         .or(auth_start)
         .or(auth_finish)
         .or(invalidate_token)

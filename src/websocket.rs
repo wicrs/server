@@ -4,14 +4,14 @@ use crate::{channel, server::HubUpdateType};
 use crate::{error::Error, server::Server};
 use crate::{server::client_command, ID};
 use futures_util::{SinkExt, StreamExt};
-use tokio::{net::TcpStream, sync::Mutex};
-use tokio_tungstenite::accept_async;
+use tokio::sync::Mutex;
+use warp::ws::WebSocket;
 use xactor::Addr;
 
 use crate::error::Result;
 use parse_display::{Display, FromStr};
 
-pub use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
+pub use warp::ws::Message as WebSocketMessage;
 
 /// Messages that can be sent to the server by the client
 #[derive(Display, FromStr)]
@@ -66,9 +66,12 @@ pub enum ServerMessage {
     UserStoppedTyping(ID, ID, ID),
 }
 
-pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server>) -> Result {
-    let ws_stream = accept_async(stream).await?;
-    let (outgoing, mut incoming) = ws_stream.split();
+pub async fn handle_connection(
+    websocket: WebSocket,
+    user_id: ID,
+    addr: Arc<Addr<Server>>,
+) -> Result {
+    let (outgoing, mut incoming) = websocket.split();
     let out_arc = Arc::new(Mutex::new(outgoing));
     let connection_id: u128;
     {
@@ -82,8 +85,8 @@ pub async fn handle_connection(stream: TcpStream, user_id: ID, addr: Addr<Server
     }
     while let Some(msg) = incoming.next().await {
         let msg = msg?;
-        if let Ok(text) = msg.to_text() {
-            let message = WebSocketMessage::Text(
+        if let Ok(text) = msg.to_str() {
+            let message = WebSocketMessage::text(
                 if let Ok(command) = ClientMessage::from_str(text) {
                     match command {
                         ClientMessage::SendMessage(hub_id, channel_id, message) => {

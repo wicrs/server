@@ -1,4 +1,3 @@
-use crate::websocket::WebSocketMessage;
 use crate::{
     api, channel, check_permission,
     error::{DataError, IndexError},
@@ -23,23 +22,22 @@ use tantivy::{
     schema::{Field, Schema, FAST, STORED, TEXT},
     Index, IndexReader, IndexWriter, LeasedItem, ReloadPolicy, Searcher,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
-use tokio::{io::AsyncWriteExt, net::TcpStream};
-use tokio_tungstenite::WebSocketStream;
+use warp::ws::Message as WebSocketMessage;
+use warp::ws::WebSocket;
 use xactor::*;
 
 use lazy_static::lazy_static;
 
 pub mod client_command {
-    use super::{
-        message, Arc, Mutex, Result, SplitSink, TcpStream, WebSocketMessage, WebSocketStream, ID,
-    };
+    use super::{message, Arc, Mutex, Result, SplitSink, WebSocket, WebSocketMessage, ID};
 
     /// Disconnects the client by unsubscribing them from everything (does not drop connection).
     #[message(result = "u128")]
     #[derive(Clone, Debug)]
     pub struct Connect {
-        pub websocket_writer: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>,
+        pub websocket_writer: Arc<Mutex<SplitSink<WebSocket, WebSocketMessage>>>,
     }
     /// Disconnects the client by unsubscribing them from everything (does not drop connection).
     #[message(result = "()")]
@@ -473,7 +471,7 @@ pub type SubscribedChannelMap = Arc<RwLock<HashMap<(ID, ID), Arc<RwLock<HashSet<
 pub type SubscribedHubMap = Arc<RwLock<HashMap<ID, Arc<RwLock<HashSet<u128>>>>>>;
 pub type SubscribedMap = Arc<RwLock<HashMap<u128, Arc<RwLock<(HashSet<(ID, ID)>, HashSet<ID>)>>>>>;
 pub type ConnectedMap =
-    Arc<RwLock<HashMap<u128, Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>>>>;
+    Arc<RwLock<HashMap<u128, Arc<Mutex<SplitSink<WebSocket, WebSocketMessage>>>>>>;
 
 /// Server that handles socket clients and manages notifying them of new messages/changes as well as sending messages to be indexed by Tantivy.
 pub struct Server {
@@ -507,7 +505,7 @@ impl Server {
                     let _ = connection
                         .lock()
                         .await
-                        .send(WebSocketMessage::Text(message.to_string()))
+                        .send(WebSocketMessage::text(message.to_string()))
                         .await;
                 }
             }
@@ -527,7 +525,7 @@ impl Server {
                     let _ = connection
                         .lock()
                         .await
-                        .send(WebSocketMessage::Text(message.to_string()))
+                        .send(WebSocketMessage::text(message.to_string()))
                         .await;
                 }
             }
