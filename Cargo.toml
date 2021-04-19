@@ -1,6 +1,6 @@
 [package]
 name = "wicrs_server"
-version = "1.0.0"
+version = "0.11.0"
 authors = ["willemml <willem@leit.so>"]
 edition = "2018"
 license = "GPL-3.0"
@@ -11,7 +11,7 @@ repository = "https://github.com/wicrs/server"
 
 [dependencies]
 base64 = "0.13"
-oauth2 = "3.0"
+oauth2 = "4.0"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"] }
 serde = "1.0"
@@ -22,17 +22,14 @@ sha3 = "0.9"
 tokio = { version = "1.5", default-features = false, features = [
     "macros",
     "fs",
-    "time",
-    "rt",
-    "net",
     "sync",
+    "rt",
     "rt-multi-thread",
 ] }
 async-trait = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["async-await", "sink", "std"] }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 xactor = { version = "0.7", features = ["runtime-tokio"], default-features = false }
-tokio-tungstenite = "0.14"
 lazy_static = "1.4"
 futures = "0.3"
 parse-display = "0.4"
