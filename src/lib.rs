@@ -3,8 +3,6 @@ use uuid::Uuid;
 
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
 pub mod api;
-/// Authentication handling.
-pub mod auth;
 /// Message storage and retreival for channels.
 pub mod channel;
 /// Various objects for storing configuration.
@@ -21,8 +19,6 @@ pub mod hub;
 pub mod permission;
 /// Server implementation.
 pub mod server;
-/// User management.
-pub mod user;
 /// Definition of the WebSocket API.
 pub mod websocket;
 

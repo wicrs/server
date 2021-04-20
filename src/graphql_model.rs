@@ -6,7 +6,6 @@ use crate::{
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
     server::Server,
-    user::{GenericUser, User},
     ID,
 };
 use async_graphql::*;
@@ -19,37 +18,6 @@ pub struct QueryRoot;
 impl QueryRoot {
     async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
         ctx.data_unchecked::<ID>()
-    }
-
-    async fn current_user(&self, ctx: &Context<'_>) -> Result<User> {
-        Ok(User::load(self.requester(ctx).await?).await.unwrap())
-    }
-
-    async fn user(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "ID of a user.")] id: ID,
-    ) -> Result<GenericUser> {
-        Ok(User::load(&id)
-            .await
-            .unwrap()
-            .to_generic(self.requester(ctx).await?))
-    }
-
-    async fn users(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "List of the IDs of the users to get.")] ids: Vec<ID>,
-    ) -> Result<Vec<GenericUser>> {
-        let mut result = Vec::new();
-        for id in ids {
-            result.push(
-                User::load(&id)
-                    .await?
-                    .to_generic(self.requester(ctx).await?),
-            );
-        }
-        Ok(result)
     }
 
     async fn hub(
@@ -77,38 +45,6 @@ impl QueryRoot {
 }
 
 pub struct MutationRoot;
-
-struct UserMutator {
-    user_id: ID,
-}
-
-impl UserMutator {
-    fn new(user_id: ID) -> Self {
-        Self { user_id }
-    }
-}
-
-#[Object]
-impl UserMutator {
-    async fn username(&self, #[graphql(desc = "New username.")] new: String) -> Result<String> {
-        Ok(api::change_username(&self.user_id, new).await?)
-    }
-    async fn status(&self, #[graphql(desc = "New status.")] new: String) -> Result<String> {
-        Ok(api::change_user_status(&self.user_id, new).await?)
-    }
-    async fn description(
-        &self,
-        #[graphql(desc = "New description.")] new: String,
-    ) -> Result<String> {
-        Ok(api::change_user_description(&self.user_id, new).await?)
-    }
-    async fn join_hub(&self, #[graphql(desc = "ID of the hub to join.")] id: ID) -> Result<ID> {
-        Ok(api::join_hub(&self.user_id, &id).await.and(Ok(id))?)
-    }
-    async fn leave_hub(&self, #[graphql(desc = "ID of the hub to leave.")] id: ID) -> Result<ID> {
-        Ok(api::leave_hub(&self.user_id, &id).await.and(Ok(id))?)
-    }
-}
 
 struct ChannelMutator {
     user_id: ID,
@@ -240,10 +176,6 @@ impl HubMutator {
 impl MutationRoot {
     async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
         ctx.data_unchecked::<ID>()
-    }
-
-    async fn user(&self, ctx: &Context<'_>) -> Result<UserMutator> {
-        Ok(UserMutator::new(*self.requester(ctx).await?))
     }
 
     async fn hub(
@@ -624,10 +556,6 @@ impl PermissionGroup {
 impl HubMember {
     async fn user(&self) -> &ID {
         &self.user
-    }
-
-    async fn nickname(&self) -> &String {
-        &self.nickname
     }
 
     async fn groups(&self) -> &Vec<ID> {

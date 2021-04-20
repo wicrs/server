@@ -16,7 +16,6 @@ use crate::{
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
-    user::User,
     Result, ID,
 };
 
@@ -34,8 +33,6 @@ pub struct HubMember {
     pub joined: DateTime<Utc>,
     /// ID of the hub that this hub member is in.
     pub hub: ID,
-    /// Name used by the hub member.
-    pub nickname: String,
     /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
     /// Hub permission settings that the hub member has.
@@ -46,23 +43,15 @@ pub struct HubMember {
 
 impl HubMember {
     /// Creates a new hub member based on a user and the ID of the hub they are part of.
-    pub fn new(user: &User, hub: ID) -> Self {
+    pub fn new(user_id: &ID, hub: ID) -> Self {
         Self {
-            nickname: user.username.clone(),
-            user: user.id.clone(),
+            user: user_id.clone(),
             hub,
             groups: Vec::new(),
             joined: Utc::now(),
             hub_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
         }
-    }
-
-    /// Changes the nickname of the hub member or returns an error if [`check_name_validity`] fails.
-    pub fn set_nickname(&mut self, nickname: String) -> Result {
-        check_name_validity(&nickname)?;
-        self.nickname = nickname;
-        Ok(())
     }
 
     /// Adds the hub member to a permission group.
@@ -331,8 +320,8 @@ pub struct Hub {
 
 impl Hub {
     /// Creates a new hub given the ID of the user who should be the owner, the name and the ID the hub should have.
-    pub fn new(name: String, id: ID, creator: &User) -> Self {
-        let creator_id = creator.id.clone();
+    pub fn new(name: String, id: ID, creator: &ID) -> Self {
+        let creator_id = creator.clone();
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
         let mut owner = HubMember::new(creator, id.clone());
         let mut members = HashMap::new();
@@ -632,8 +621,8 @@ impl Hub {
     /// limited to just this case:
     ///
     /// * The default permission group could not be found.
-    pub fn user_join(&mut self, user: &User) -> Result<HubMember> {
-        let mut member = HubMember::new(user, self.id.clone());
+    pub fn user_join(&mut self, user_id: &ID) -> Result<HubMember> {
+        let mut member = HubMember::new(user_id, self.id.clone());
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
             self.members.insert(member.user.clone(), member.clone());
@@ -652,11 +641,11 @@ impl Hub {
     ///
     /// * The user is not in the hub.
     /// * One of the permission groups the user was in could not be found in the hub.
-    pub fn user_leave(&mut self, user: &User) -> Result {
-        if let Some(member) = self.members.get_mut(&user.id) {
+    pub fn user_leave(&mut self, user_id: &ID) -> Result {
+        if let Some(member) = self.members.get_mut(user_id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
-                self.members.remove(&user.id);
+                self.members.remove(user_id);
                 Ok(())
             } else {
                 Err(Error::GroupNotFound)
@@ -676,14 +665,9 @@ impl Hub {
     /// * The user could not be removed from the hub for any of the reasons outlined in [`Hub::user_leave`].
     /// * The user's data failed to load for any of the reasons outlined in [`User::load`].
     /// * The user's data failed to save for any of the reasons outlined in [`User::save`].
-    pub async fn kick_user(&mut self, user_id: &ID) -> Result {
+    pub fn kick_user(&mut self, user_id: &ID) -> Result {
         if self.members.contains_key(user_id) {
-            let mut user = User::load(user_id).await?;
-            self.user_leave(&user)?;
-            if let Some(index) = user.in_hubs.iter().position(|id| id == &self.id) {
-                user.in_hubs.remove(index);
-            }
-            user.save().await?;
+            self.user_leave(user_id)?;
             self.members.remove(&user_id);
         }
         Ok(())
@@ -694,8 +678,8 @@ impl Hub {
     /// # Errors
     ///
     /// Possible errors outlined by [`Hub::kick_user`].
-    pub async fn ban_user(&mut self, user_id: ID) -> Result {
-        self.kick_user(&user_id).await?;
+    pub fn ban_user(&mut self, user_id: ID) -> Result {
+        self.kick_user(&user_id)?;
         self.bans.insert(user_id);
         Ok(())
     }
@@ -750,14 +734,14 @@ impl Hub {
 
 #[cfg(test)]
 mod test {
-    use super::{Hub, User, ID};
+    use super::{Hub, ID};
 
     #[tokio::test]
     async fn save_load() {
-        let user = User::new_for_testing(0);
-        let mut hub = dbg!(Hub::new("test_hub".to_string(), ID::nil(), &user));
+        let id = ID::nil();
+        let mut hub = dbg!(Hub::new("test_hub".to_string(), id.clone(), &id));
         let _ = tokio::fs::remove_file(&hub.get_info_path()).await;
-        hub.new_channel(&user.id, "test_channel".to_string())
+        hub.new_channel(&id, "test_channel".to_string())
             .await
             .expect("Failed to add a channel to the test hub.");
         hub.save().await.expect("Failed to save the hub.");
