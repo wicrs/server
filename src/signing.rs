@@ -3,40 +3,71 @@ use pgp::composed::{
     SignedSecretKey,
 };
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
+use pgp::errors::Error as PGPError;
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
 use pgp::types::{CompressionAlgorithm, SecretKeyTrait};
+use pgp::Deserializable;
 use smallvec::*;
 
-fn create_key() -> (SignedSecretKey, SignedPublicKey) {
-    let mut key_params = SecretKeyParamsBuilder::default();
-    key_params
-        .key_type(KeyType::Rsa(2048))
-        .can_create_certificates(false)
-        .can_sign(true)
-        .primary_user_id("WICRS <wicrs@wic.rs>".into())
-        .preferred_symmetric_algorithms(smallvec![SymmetricKeyAlgorithm::AES256,])
-        .preferred_hash_algorithms(smallvec![HashAlgorithm::SHA2_256,])
-        .preferred_compression_algorithms(smallvec![CompressionAlgorithm::ZLIB,]);
-    let secret_key_params = key_params
-        .build()
-        .expect("Must be able to create secret key params");
-    let secret_key = secret_key_params
-        .generate()
-        .expect("Failed to generate a plain key.");
-    let passwd_fn = || String::new();
-    let secret_key = secret_key
-        .sign(passwd_fn)
-        .expect("Must be able to sign its own metadata");
-    let public_key = secret_key
-        .public_key()
-        .sign(&secret_key, passwd_fn)
-        .expect("Failed to sign public key.");
-    (secret_key, public_key)
+pub const SECRET_KEY_PATH: &str = "data/secret_key";
+
+pub struct KeyPair {
+    pub secret_key: SignedSecretKey,
+    pub public_key: SignedPublicKey,
+}
+
+impl KeyPair {
+    pub fn new<S: Into<String>>(id: S) -> Result<Self, PGPError> {
+        let secret_key = SecretKeyParamsBuilder::default()
+            .key_type(KeyType::Rsa(2048))
+            .can_create_certificates(false)
+            .can_sign(true)
+            .primary_user_id(id.into())
+            .preferred_symmetric_algorithms(smallvec![SymmetricKeyAlgorithm::AES256,])
+            .preferred_hash_algorithms(smallvec![HashAlgorithm::SHA2_256,])
+            .preferred_compression_algorithms(smallvec![CompressionAlgorithm::ZLIB,])
+            .build()?
+            .generate()?;
+        let passwd_fn = || String::new();
+        let secret_key = secret_key.sign(passwd_fn)?;
+        let public_key = secret_key.public_key().sign(&secret_key, passwd_fn)?;
+        Ok(Self {
+            secret_key,
+            public_key,
+        })
+    }
+
+    pub fn save_secret_key(&self) -> Result<(), PGPError> {
+        std::fs::write(SECRET_KEY_PATH, self.secret_key.to_armored_bytes(None)?)?;
+        Ok(())
+    }
+
+    pub fn load() -> Result<Self, PGPError> {
+        let secret_key =
+            SignedSecretKey::from_string(&std::fs::read_to_string(SECRET_KEY_PATH)?)?.0;
+        let passwd_fn = || String::new();
+        let public_key = secret_key.public_key().sign(&secret_key, passwd_fn)?;
+        Ok(Self {
+            secret_key,
+            public_key,
+        })
+    }
 }
 
 pub fn sign_and_verify() {
-    let (secret_key, public_key) = create_key();
+    let KeyPair {
+        secret_key,
+        public_key,
+    } = if let Ok(key_pair) = KeyPair::load() {
+        key_pair
+    } else {
+        let key_pair =
+            KeyPair::new("WICRS Server <server@wic.rs>").expect("Failed to create a new key pair.");
+        let _ = key_pair.save_secret_key();
+        key_pair
+    };
+
     println!(
         "secret_key_id: {}",
         hex::encode(secret_key.key_id().to_vec())
