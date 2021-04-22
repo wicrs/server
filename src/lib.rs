@@ -22,6 +22,8 @@ pub mod server;
 /// Definition of the WebSocket API.
 pub mod websocket;
 
+pub mod signing;
+
 /// String to identify the version of the library, used for external requests.
 pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
 
