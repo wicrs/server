@@ -30,9 +30,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of a user.")] id: ID,
     ) -> Result<GenericUser> {
-        let user = User::load(&id)
-            .await
-            .unwrap();
+        let user = User::load(&id).await.unwrap();
 
         Ok(user.to_generic(self.requester(ctx).await?))
     }
@@ -44,8 +42,7 @@ impl QueryRoot {
     ) -> Result<Vec<GenericUser>> {
         let mut result = Vec::new();
         for id in ids {
-            let user = User::load(&id)
-                .await?;
+            let user = User::load(&id).await?;
 
             result.push(user.to_generic(self.requester(ctx).await?));
         }
@@ -57,9 +54,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of a hub.")] id: ID,
     ) -> Result<Hub> {
-        let hub = Hub::load(&id)
-            .await
-            .unwrap();
+        let hub = Hub::load(&id).await.unwrap();
 
         Ok(hub.strip(self.requester(ctx).await?)?)
     }
@@ -552,7 +547,9 @@ impl PermissionGroup {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        self.hub_permissions.get(&permission).map(|setting| HubPermissionSet {
+        self.hub_permissions
+            .get(&permission)
+            .map(|setting| HubPermissionSet {
                 permission,
                 setting: *setting,
             })
@@ -562,10 +559,9 @@ impl PermissionGroup {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                setting.as_ref().map(|setting| HubPermissionSet::from((
-                        *permission,
-                        Some(*setting),
-                    )))
+                setting
+                    .as_ref()
+                    .map(|setting| HubPermissionSet::from((*permission, Some(*setting))))
             })
             .collect()
     }
@@ -577,10 +573,10 @@ impl PermissionGroup {
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
             setting.get(&permission).map(|s| ChannelPermissionSet {
-                    permission,
-                    setting: *s,
-                    channel,
-                })
+                permission,
+                setting: *s,
+                channel,
+            })
         } else {
             None
         }
@@ -595,11 +591,9 @@ impl PermissionGroup {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            setting.as_ref().map(|setting| ChannelPermissionSet::from((
-                                    *permission,
-                                    Some(*setting),
-                                    *channel,
-                                )))
+                            setting.as_ref().map(|setting| {
+                                ChannelPermissionSet::from((*permission, Some(*setting), *channel))
+                            })
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )
@@ -637,7 +631,9 @@ impl HubMember {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        self.hub_permissions.get(&permission).map(|setting| HubPermissionSet {
+        self.hub_permissions
+            .get(&permission)
+            .map(|setting| HubPermissionSet {
                 permission,
                 setting: *setting,
             })
@@ -647,10 +643,9 @@ impl HubMember {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                setting.as_ref().map(|setting| HubPermissionSet::from((
-                        *permission,
-                        Some(*setting),
-                    )))
+                setting
+                    .as_ref()
+                    .map(|setting| HubPermissionSet::from((*permission, Some(*setting))))
             })
             .collect()
     }
@@ -662,10 +657,10 @@ impl HubMember {
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
             setting.get(&permission).map(|s| ChannelPermissionSet {
-                    permission,
-                    setting: *s,
-                    channel,
-                })
+                permission,
+                setting: *s,
+                channel,
+            })
         } else {
             None
         }
@@ -680,11 +675,9 @@ impl HubMember {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            setting.as_ref().map(|setting| ChannelPermissionSet::from((
-                                    *permission,
-                                    Some(*setting),
-                                    *channel,
-                                )))
+                            setting.as_ref().map(|setting| {
+                                ChannelPermissionSet::from((*permission, Some(*setting), *channel))
+                            })
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )

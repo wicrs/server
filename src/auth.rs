@@ -108,10 +108,8 @@ impl Auth {
             .expect("Failed to add test account to test hub.");
         for n in 1..count {
             let id = ID::from_u128(n as u128);
-            hub.channels.insert(
-                id,
-                Channel::new(format!("test_channel_{}.", n), id, hub.id),
-            );
+            hub.channels
+                .insert(id, Channel::new(format!("test_channel_{}.", n), id, hub.id));
             let mut user = User {
                 id,
                 username: format!("testuser_{}", n),
@@ -196,7 +194,10 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.write().await;
         }
-        if sessions_lock.remove(&hash_auth(id, String::new()).0).is_some() {
+        if sessions_lock
+            .remove(&hash_auth(id, String::new()).0)
+            .is_some()
+        {
             let _save = Auth::save_tokens(&sessions_lock);
         }
     }

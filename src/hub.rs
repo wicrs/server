@@ -289,8 +289,9 @@ impl PermissionGroup {
                 }
             }
             if let Some(value) = channel.get(&permission) {
-                if value == &Some(true) ||
-                    (value == &None && self.has_permission(&permission.into())) {
+                if value == &Some(true)
+                    || (value == &None && self.has_permission(&permission.into()))
+                {
                     return true;
                 }
             }

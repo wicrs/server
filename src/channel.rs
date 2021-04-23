@@ -281,10 +281,10 @@ impl Channel {
                     let mut iter = bincode::deserialize::<Message>(&file).into_iter();
                     let contains_message = iter.any(|m| {
                         if &m.id == id {
-                           result.push(m);
-                           true
+                            result.push(m);
+                            true
                         } else {
-                           false
+                            false
                         }
                     });
                     if contains_message {

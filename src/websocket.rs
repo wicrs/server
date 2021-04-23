@@ -99,10 +99,9 @@ pub async fn handle_connection(
                                 })
                                 .await
                             {
-                                result.map_or_else(
-                                    ServerMessage::Error,
-                                    |id| ServerMessage::Result(Response::Id(id)),
-                                )
+                                result.map_or_else(ServerMessage::Error, |id| {
+                                    ServerMessage::Result(Response::Id(id))
+                                })
                             } else {
                                 ServerMessage::Error(Error::InternalMessageFailed)
                             }
@@ -117,10 +116,9 @@ pub async fn handle_connection(
                                 })
                                 .await
                             {
-                                result.map_or_else(
-                                    ServerMessage::Error,
-                                    |_| ServerMessage::Result(Response::Success),
-                                )
+                                result.map_or_else(ServerMessage::Error, |_| {
+                                    ServerMessage::Result(Response::Success)
+                                })
                             } else {
                                 ServerMessage::Error(Error::InternalMessageFailed)
                             }
@@ -132,7 +130,8 @@ pub async fn handle_connection(
                                     channel_id,
                                     connection_id,
                                 })
-                                .await.is_ok()
+                                .await
+                                .is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {
@@ -148,10 +147,9 @@ pub async fn handle_connection(
                                 })
                                 .await
                             {
-                                result.map_or_else(
-                                    ServerMessage::Error,
-                                    |_| ServerMessage::Result(Response::Success),
-                                )
+                                result.map_or_else(ServerMessage::Error, |_| {
+                                    ServerMessage::Result(Response::Success)
+                                })
                             } else {
                                 ServerMessage::Error(Error::InternalMessageFailed)
                             }
@@ -165,10 +163,9 @@ pub async fn handle_connection(
                                 })
                                 .await
                             {
-                                result.map_or_else(
-                                    ServerMessage::Error,
-                                    |_| ServerMessage::Result(Response::Success),
-                                )
+                                result.map_or_else(ServerMessage::Error, |_| {
+                                    ServerMessage::Result(Response::Success)
+                                })
                             } else {
                                 ServerMessage::Error(Error::InternalMessageFailed)
                             }
@@ -182,10 +179,9 @@ pub async fn handle_connection(
                                 })
                                 .await
                             {
-                                result.map_or_else(
-                                    ServerMessage::Error,
-                                    |_| ServerMessage::Result(Response::Success),
-                                )
+                                result.map_or_else(ServerMessage::Error, |_| {
+                                    ServerMessage::Result(Response::Success)
+                                })
                             } else {
                                 ServerMessage::Error(Error::InternalMessageFailed)
                             }
@@ -196,7 +192,8 @@ pub async fn handle_connection(
                                     hub_id,
                                     connection_id,
                                 })
-                                .await.is_ok()
+                                .await
+                                .is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {

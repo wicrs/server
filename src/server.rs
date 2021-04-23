@@ -402,18 +402,14 @@ impl Handler<SearchMessageIndex> for MessageServer {
                         .commit();
                     log_last_message(&msg.hub_id, &msg.channel_id, &pending.1).await?;
 
-                    self.pending_messages.insert(
-                        (msg.hub_id, msg.channel_id),
-                        (0, pending.1),
-                    );
+                    self.pending_messages
+                        .insert((msg.hub_id, msg.channel_id), (0, pending.1));
                 }
             }
         }
         let searcher = self.get_searcher(&msg.hub_id, &msg.channel_id).await?;
-        let query_parser = QueryParser::for_index(
-            searcher.index(),
-            vec![MESSAGE_SCHEMA_FIELDS.content],
-        );
+        let query_parser =
+            QueryParser::for_index(searcher.index(), vec![MESSAGE_SCHEMA_FIELDS.content]);
         let query = query_parser
             .parse_query(&msg.query)
             .map_err(|_| IndexError::ParseQuery)?;
@@ -453,7 +449,7 @@ impl Handler<NewMessageForIndex> for MessageServer {
                     log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
                     new_pending = 0;
                 } else {
-                    return Err(IndexError::Commit.into())
+                    return Err(IndexError::Commit.into());
                 }
             } else {
                 log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
@@ -703,11 +699,7 @@ impl Handler<client_command::StartTyping> for Server {
                 Ok(())
             })?;
         self.send_channel(
-            ServerMessage::UserStartedTyping(
-                msg.user_id,
-                msg.hub_id,
-                msg.channel_id,
-            ),
+            ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id, msg.channel_id),
             msg.hub_id,
             msg.channel_id,
         )
@@ -742,11 +734,7 @@ impl Handler<client_command::StopTyping> for Server {
                 Ok(())
             })?;
         self.send_channel(
-            ServerMessage::UserStoppedTyping(
-                msg.user_id,
-                msg.hub_id,
-                msg.channel_id,
-            ),
+            ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id, msg.channel_id),
             msg.hub_id,
             msg.channel_id,
         )
@@ -815,11 +803,8 @@ impl Handler<ServerNotification> for Server {
                 .await
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
-                self.send_hub(
-                    ServerMessage::HubUpdated(hub_id, update_type),
-                    &hub_id,
-                )
-                .await
+                self.send_hub(ServerMessage::HubUpdated(hub_id, update_type), &hub_id)
+                    .await
             }
         }
     }
