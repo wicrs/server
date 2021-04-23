@@ -135,12 +135,7 @@ pub fn sign_and_verify() -> Result {
 
     let msg_signed = message.sign(&secret_key, passwd_fn)?;
     let msg_armored_str = msg_signed.to_armored_string(None)?;
-    let msg_signature = msg_signed.clone().into_signature().signature;
     println!("{}", msg_armored_str);
-    println!(
-        "issuer: {}",
-        hex::encode(msg_signature.issuer().unwrap().to_vec())
-    );
 
     let _ = println!(
         "{}",
