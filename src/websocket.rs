@@ -17,8 +17,6 @@ pub use warp::ws::Message as WebSocketMessage;
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
 pub enum ClientMessage {
-    #[display("{}({0},{1},\"{2}\")")]
-    SendMessage(ID, ID, String),
     #[display("{}({0})")]
     SubscribeHub(ID),
     #[display("{}({0})")]
@@ -61,14 +59,14 @@ pub enum ServerMessage {
     #[display("{}({0})")]
     Result(Response),
     #[display("{}({0},{1},{2})")]
-    UserStartedTyping(ID, ID, ID),
+    UserStartedTyping(String, ID, ID),
     #[display("{}({0},{1},{2})")]
-    UserStoppedTyping(ID, ID, ID),
+    UserStoppedTyping(String, ID, ID),
 }
 
 pub async fn handle_connection(
     websocket: WebSocket,
-    user_id: ID,
+    user_id: String,
     addr: Arc<Addr<Server>>,
 ) -> Result {
     let (outgoing, mut incoming) = websocket.split();
@@ -90,24 +88,6 @@ pub async fn handle_connection(
             let message = WebSocketMessage::text(
                 if let Ok(command) = ClientMessage::from_str(text) {
                     match command {
-                        ClientMessage::SendMessage(hub_id, channel_id, message) => {
-                            if let Ok(result) = addr
-                                .call(client_command::SendMessage {
-                                    user_id: user_id.clone(),
-                                    hub_id,
-                                    channel_id,
-                                    message,
-                                })
-                                .await
-                            {
-                                result.map_or_else(
-                                    |err| ServerMessage::Error(err.to_string()),
-                                    |id| ServerMessage::Result(Response::Id(id)),
-                                )
-                            } else {
-                                ServerMessage::Error(internal_message_error.clone())
-                            }
-                        }
                         ClientMessage::SubscribeChannel(hub_id, channel_id) => {
                             if let Ok(result) = addr
                                 .call(client_command::SubscribeChannel {

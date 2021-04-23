@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     api,
-    channel::{Channel, Message},
+    channel::Channel,
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
     server::Server,
@@ -16,8 +16,8 @@ pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
-        ctx.data_unchecked::<ID>()
+    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a String {
+        ctx.data_unchecked::<String>()
     }
 
     async fn hub(
@@ -47,13 +47,13 @@ impl QueryRoot {
 pub struct MutationRoot;
 
 struct ChannelMutator {
-    user_id: ID,
+    user_id: String,
     hub_id: ID,
     channel_id: ID,
 }
 
 impl ChannelMutator {
-    fn new(user_id: ID, hub_id: ID, channel_id: ID) -> Self {
+    fn new(user_id: String, hub_id: ID, channel_id: ID) -> Self {
         Self {
             user_id,
             hub_id,
@@ -79,32 +79,15 @@ impl ChannelMutator {
                 .await?,
         )
     }
-    async fn send_message(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "Contents of the message to be sent.")] message: String,
-    ) -> Result<ID> {
-        let message =
-            api::send_message(&self.user_id, &self.hub_id, &self.channel_id, message).await?;
-        let id = message.id.clone();
-        ctx.data_unchecked::<Arc<Addr<Server>>>()
-            .send(crate::server::ServerNotification::NewMessage(
-                self.hub_id,
-                self.channel_id,
-                message,
-            ))
-            .map_err(|_| crate::error::Error::InternalMessageFailed)?;
-        Ok(id)
-    }
 }
 
 struct HubMutator {
-    user_id: ID,
+    user_id: String,
     hub_id: ID,
 }
 
 impl HubMutator {
-    fn new(user_id: ID, hub_id: ID) -> Self {
+    fn new(user_id: String, hub_id: ID) -> Self {
         Self { user_id, hub_id }
     }
 }
@@ -124,7 +107,7 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the channel to get.")] id: ID,
     ) -> ChannelMutator {
-        ChannelMutator::new(self.user_id, self.hub_id, id)
+        ChannelMutator::new(self.user_id.clone(), self.hub_id, id)
     }
     async fn delete_channel(
         &self,
@@ -145,27 +128,39 @@ impl HubMutator {
         )
         .await?)
     }
-    async fn kick(&self, #[graphql(desc = "ID of the user to kick.")] id: ID) -> Result<ID> {
+    async fn kick(
+        &self,
+        #[graphql(desc = "ID of the user to kick.")] id: String,
+    ) -> Result<String> {
         Ok(api::kick_user(&self.user_id, &self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
-    async fn ban(&self, #[graphql(desc = "ID of the user to ban.")] id: ID) -> Result<ID> {
+    async fn ban(&self, #[graphql(desc = "ID of the user to ban.")] id: String) -> Result<String> {
         Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
-    async fn unban(&self, #[graphql(desc = "ID of the user to unban.")] id: ID) -> Result<ID> {
+    async fn unban(
+        &self,
+        #[graphql(desc = "ID of the user to unban.")] id: String,
+    ) -> Result<String> {
         Ok(api::unban_user(&self.user_id, &self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
-    async fn mute(&self, #[graphql(desc = "ID of the user to mute.")] id: ID) -> Result<ID> {
+    async fn mute(
+        &self,
+        #[graphql(desc = "ID of the user to mute.")] id: String,
+    ) -> Result<String> {
         Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
-    async fn unmute(&self, #[graphql(desc = "ID of the user to unmute.")] id: ID) -> Result<ID> {
+    async fn unmute(
+        &self,
+        #[graphql(desc = "ID of the user to unmute.")] id: String,
+    ) -> Result<String> {
         Ok(api::unmute_user(&self.user_id, &self.hub_id, &id)
             .await
             .and(Ok(id))?)
@@ -174,8 +169,8 @@ impl HubMutator {
 
 #[Object]
 impl MutationRoot {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
-        ctx.data_unchecked::<ID>()
+    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a String {
+        ctx.data_unchecked::<String>()
     }
 
     async fn hub(
@@ -183,7 +178,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of the hub to get.")] id: ID,
     ) -> Result<HubMutator> {
-        Ok(HubMutator::new(*self.requester(ctx).await?, id))
+        Ok(HubMutator::new(self.requester(ctx).await?.clone(), id))
     }
 
     async fn delete_hub(
@@ -201,7 +196,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "Name for the new hub.")] name: String,
     ) -> Result<Hub> {
-        Ok(Hub::load(&api::create_hub(self.requester(ctx).await?, name).await?).await?)
+        Ok(Hub::load(&api::create_hub(self.requester(ctx).await?.clone(), name).await?).await?)
     }
 }
 
@@ -221,20 +216,6 @@ impl Channel {
 
     async fn description(&self) -> &String {
         &self.description
-    }
-
-    async fn message(
-        &self,
-        #[graphql(desc = "ID of the message to get.")] id: ID,
-    ) -> Option<Message> {
-        self.get_message(&id).await
-    }
-
-    async fn messages(
-        &self,
-        #[graphql(desc = "IDs of the messages to get.")] ids: Vec<ID>,
-    ) -> Vec<Message> {
-        self.get_messages(ids).await
     }
 
     async fn search_messages(
@@ -260,40 +241,6 @@ impl Channel {
         } else {
             Vec::new()
         }
-    }
-
-    async fn messages_after(
-        &self,
-        #[graphql(desc = "ID of the message before the wanted messages.")] id: ID,
-        #[graphql(desc = "Maximum number of messages to get.")] max: u8,
-    ) -> Vec<Message> {
-        self.get_messages_after(&id, max as usize).await
-    }
-
-    async fn messages_between(
-        &self,
-        #[graphql(desc = "Earliest time a message can be sent to be included.")] from: DateTime<
-            Utc,
-        >,
-        #[graphql(desc = "Latest time a message can be sent to be included.")] to: DateTime<Utc>,
-        #[graphql(
-            desc = "If true messages are returned newest to oldest, if false they are returned oldest to newest."
-        )]
-        invert: bool,
-        #[graphql(desc = "Maximum number of messages to get.")] max: u8,
-    ) -> Vec<Message> {
-        self.get_messages_between(from, to, invert, max as usize)
-            .await
-    }
-
-    async fn messages_containing(
-        &self,
-        #[graphql(desc = "Maximum number of messages to get.")] max: u8,
-        #[graphql(desc = "String to search for in messages.")] string: String,
-        #[graphql(desc = "Whether or not the search is case sensitive.")] case_sensitive: bool,
-    ) -> Vec<Message> {
-        self.find_messages_containing(string, case_sensitive, max as usize)
-            .await
     }
 }
 
@@ -325,23 +272,23 @@ impl Hub {
 
     async fn is_banned(
         &self,
-        #[graphql(desc = "ID of user hub to check the ban status of.")] id: ID,
+        #[graphql(desc = "ID of user hub to check the ban status of.")] id: String,
     ) -> bool {
         self.bans.contains(&id)
     }
 
-    async fn bans(&self) -> &HashSet<ID> {
+    async fn bans(&self) -> &HashSet<String> {
         &self.bans
     }
 
     async fn is_muted(
         &self,
-        #[graphql(desc = "ID of the user to check the mute status of.")] id: ID,
+        #[graphql(desc = "ID of the user to check the mute status of.")] id: String,
     ) -> bool {
         self.mutes.contains(&id)
     }
 
-    async fn mutes(&self) -> &HashSet<ID> {
+    async fn mutes(&self) -> &HashSet<String> {
         &self.mutes
     }
 
@@ -374,14 +321,14 @@ impl Hub {
 
     async fn member(
         &self,
-        #[graphql(desc = "ID of the hub member to get.")] id: ID,
+        #[graphql(desc = "ID of the hub member to get.")] id: String,
     ) -> Option<&HubMember> {
         self.members.get(&id)
     }
 
     async fn members(
         &self,
-        #[graphql(desc = "IDs of the members to get.")] ids: Vec<ID>,
+        #[graphql(desc = "IDs of the members to get.")] ids: Vec<String>,
     ) -> Vec<&HubMember> {
         self.members
             .iter()
@@ -430,7 +377,7 @@ impl Hub {
 
     async fn member_has_permission(
         &self,
-        #[graphql(desc = "ID of the member to check for the permission.")] id: ID,
+        #[graphql(desc = "ID of the member to check for the permission.")] id: String,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> bool {
         self.members
@@ -440,7 +387,7 @@ impl Hub {
 
     async fn member_has_channel_permission(
         &self,
-        #[graphql(desc = "ID of the member to check for the permission.")] id: ID,
+        #[graphql(desc = "ID of the member to check for the permission.")] id: String,
         #[graphql(
             desc = "ID of the channel to check in which to check the setting of the permission."
         )]
@@ -463,7 +410,7 @@ impl PermissionGroup {
         &self.name
     }
 
-    async fn members(&self) -> &Vec<ID> {
+    async fn members(&self) -> &Vec<String> {
         &self.members
     }
 
@@ -471,10 +418,7 @@ impl PermissionGroup {
         &self.created
     }
 
-    async fn is_member(
-        &self,
-        #[graphql(desc = "ID of the user to check for membership of the permission group.")] id: ID,
-    ) -> bool {
+    async fn is_member(&self, id: String) -> bool {
         self.members.contains(&id)
     }
 
@@ -554,8 +498,8 @@ impl PermissionGroup {
 
 #[Object]
 impl HubMember {
-    async fn user(&self) -> &ID {
-        &self.user
+    async fn user(&self) -> &String {
+        &self.user_id
     }
 
     async fn groups(&self) -> &Vec<ID> {

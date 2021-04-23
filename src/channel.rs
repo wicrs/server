@@ -64,7 +64,7 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: Message) -> Result {
+    pub async fn add_message(&self, message: String) -> Result {
         let file = OpenOptions::new()
             .create(true)
             .append(true)

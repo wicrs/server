@@ -1,6 +1,4 @@
-use crate::{
-    api, channel, check_permission, hub::Hub, websocket::ServerMessage, Error, Result, ID,
-};
+use crate::{channel, check_permission, hub::Hub, websocket::ServerMessage, Error, Result, ID};
 use async_trait::async_trait;
 use futures::stream::SplitSink;
 use futures::SinkExt;
@@ -45,7 +43,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Clone, Debug)]
     pub struct SubscribeHub {
-        pub user_id: ID,
+        pub user_id: String,
         pub hub_id: ID,
         pub connection_id: u128,
     }
@@ -60,7 +58,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct SubscribeChannel {
-        pub user_id: ID,
+        pub user_id: String,
         pub hub_id: ID,
         pub channel_id: ID,
         pub connection_id: u128,
@@ -77,7 +75,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct StartTyping {
-        pub user_id: ID,
+        pub user_id: String,
         pub hub_id: ID,
         pub channel_id: ID,
     }
@@ -85,18 +83,9 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct StopTyping {
-        pub user_id: ID,
+        pub user_id: String,
         pub hub_id: ID,
         pub channel_id: ID,
-    }
-    /// Tells the server to send the given message in the given channel, also notifies other clients that are subscribed to the channel of the new message.
-    #[message(result = "Result<ID>")]
-    #[derive(Debug, Clone)]
-    pub struct SendMessage {
-        pub user_id: ID,
-        pub hub_id: ID,
-        pub channel_id: ID,
-        pub message: String,
     }
 }
 
@@ -735,44 +724,6 @@ impl Handler<client_command::StopTyping> for Server {
         )
         .await;
         Ok(())
-    }
-}
-
-#[async_trait]
-impl Handler<client_command::SendMessage> for Server {
-    async fn handle(
-        &mut self,
-        _ctx: &mut Context<Self>,
-        msg: client_command::SendMessage,
-    ) -> Result<ID> {
-        Hub::load(&msg.hub_id)
-            .await
-            .and_then(|hub| {
-                if let Ok(member) = hub.get_member(&msg.user_id) {
-                    Ok((hub, member))
-                } else {
-                    Err(Error::MemberNotFound)
-                }
-            })
-            .and_then(|(hub, user)| {
-                check_permission!(
-                    user,
-                    &msg.channel_id,
-                    crate::permission::ChannelPermission::Write,
-                    hub
-                );
-                Ok(())
-            })?;
-        let message =
-            api::send_message(&msg.user_id, &msg.hub_id, &msg.channel_id, msg.message).await?;
-        let message_id = message.id.clone();
-        self.send_channel(
-            ServerMessage::ChatMessage(msg.hub_id.clone(), msg.channel_id.clone(), message.id),
-            msg.hub_id,
-            msg.channel_id,
-        )
-        .await;
-        Ok(message_id)
     }
 }
 

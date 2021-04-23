@@ -37,6 +37,8 @@ pub enum Error {
     TooBig,
     #[error("not utf-8 bytes")]
     InvalidText,
+    #[error("bad message format")]
+    InvalidMessage,
     #[error("user already typing")]
     AlreadyTyping,
     #[error("user not typing")]

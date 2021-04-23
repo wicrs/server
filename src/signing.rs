@@ -1,14 +1,19 @@
-use crate::channel::Message;
+use std::convert::TryFrom;
+
 use crate::error::Result;
-use pgp::composed::{
-    key::SecretKeyParamsBuilder, KeyType, Message as OpenPGPMessage, SignedPublicKey,
-    SignedSecretKey,
-};
+use crate::{channel::Message, error::Error};
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
 use pgp::types::{CompressionAlgorithm, SecretKeyTrait};
 use pgp::Deserializable;
+use pgp::{
+    composed::{
+        key::SecretKeyParamsBuilder, KeyType, Message as OpenPGPMessage, SignedPublicKey,
+        SignedSecretKey,
+    },
+    types::PublicKeyTrait,
+};
 use smallvec::*;
 
 pub const SECRET_KEY_PATH: &str = "data/secret_key";
@@ -56,9 +61,60 @@ impl KeyPair {
     }
 }
 
-//pub fn sign_message(message: Message, secret_key: &SignedSecretKey) -> Result<OpenPGPMessage> {}
+impl Message {
+    pub fn sign<F: FnOnce() -> String>(
+        &self,
+        secret_key: &impl SecretKeyTrait,
+        password: F,
+    ) -> Result<OpenPGPMessage> {
+        Ok(OpenPGPMessage::try_from(self)?.sign(&secret_key, password, HashAlgorithm::SHA3_512)?)
+    }
+}
 
-pub fn sign_and_verify() {
+impl TryFrom<&Message> for OpenPGPMessage {
+    type Error = serde_json::Error;
+
+    fn try_from(m: &Message) -> Result<Self, Self::Error> {
+        Ok(OpenPGPMessage::Literal(LiteralData::from_str(
+            &m.id.to_string(),
+            &serde_json::to_string(&m)?,
+        )))
+    }
+}
+
+impl TryFrom<&OpenPGPMessage> for Message {
+    type Error = Error;
+
+    fn try_from(value: &OpenPGPMessage) -> Result<Self, Self::Error> {
+        Ok(serde_json::from_str(
+            &value
+                .get_literal()
+                .map_or_else(|| Err(Error::InvalidMessage), |s| Ok(s))?
+                .to_string()
+                .map_or_else(|| Err(Error::InvalidMessage), |s| Ok(s))?,
+        )?)
+    }
+}
+
+pub fn sign_final<F: FnOnce() -> String>(
+    message_str: &str,
+    server_public_key: &impl PublicKeyTrait,
+    client_secret_key: &impl SecretKeyTrait,
+    password: F,
+) -> Result<OpenPGPMessage> {
+    let pgp_message = OpenPGPMessage::from_string(message_str)?.0;
+    pgp_message.verify(server_public_key)?;
+    let message = Message::try_from(&pgp_message)?;
+    Ok(
+        OpenPGPMessage::Literal(LiteralData::from_str(&message.id.to_string(), message_str)).sign(
+            client_secret_key,
+            password,
+            HashAlgorithm::SHA3_512,
+        )?,
+    )
+}
+
+pub fn sign_and_verify() -> Result {
     let KeyPair {
         secret_key,
         public_key,
@@ -74,37 +130,18 @@ pub fn sign_and_verify() {
     println!("key_id: {}\n", hex::encode(secret_key.key_id().to_vec()));
 
     let message = Message::new("test".into(), "this is a test message".into());
-    let message_json = serde_json::to_string(&message).unwrap();
 
     let passwd_fn = || String::new();
 
-    let msg_signed = OpenPGPMessage::Literal(LiteralData::from_str(
-        &message.id.to_string(),
-        &message_json,
-    ))
-    .sign(&secret_key, passwd_fn, HashAlgorithm::SHA2_256)
-    .expect("Failed to sign message.");
-    let msg_armored_str = msg_signed
-        .to_armored_string(None)
-        .expect("Failed to turn signature into string.");
+    let msg_signed = message.sign(&secret_key, passwd_fn)?;
+    let msg_armored_str = msg_signed.to_armored_string(None)?;
     println!("{}", msg_armored_str);
 
     let _ = println!(
         "{}",
-        serde_json::from_str::<'_, Message>(
-            &OpenPGPMessage::from_string(&msg_armored_str)
-                .unwrap()
-                .0
-                .get_literal()
-                .unwrap()
-                .to_string()
-                .unwrap()
-        )
-        .unwrap()
+        Message::try_from(&OpenPGPMessage::from_string(&msg_armored_str)?.0)?
     );
 
-    msg_signed
-        .verify(&public_key)
-        .map(|_| println!("Verification successful."))
-        .expect("Failed to verify the message.");
+    let _ = sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;
+    Ok(())
 }
