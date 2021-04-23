@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     channel::{Channel, Message},
     check_name_validity, check_permission,
-    error::{DataError, Error},
+    error::Error,
     new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
@@ -535,12 +535,7 @@ impl Hub {
                 check_permission!(member, channel_id, ChannelPermission::Read, self);
                 check_permission!(member, channel_id, ChannelPermission::Write, self);
                 if let Some(channel) = self.channels.get(&channel_id) {
-                    let message = Message {
-                        id: new_id(),
-                        sender: member.user.clone(),
-                        created: Utc::now(),
-                        content: message,
-                    };
+                    let message = Message::new(member.user.to_string(), message);
                     channel.add_message(message.clone()).await?;
                     Ok(message)
                 } else {
@@ -581,7 +576,7 @@ impl Hub {
             .write(true)
             .open(self.get_info_path())
             .await?;
-        let bytes = bincode::serialize(self).map_err(|_| DataError::Serialize)?;
+        let bytes = bincode::serialize(self)?;
         let mut buf: &[u8] = bytes.as_slice();
         file.write_buf(&mut buf).await?;
         file.flush().await?;
@@ -606,11 +601,7 @@ impl Hub {
         let mut file = tokio::fs::OpenOptions::new().read(true).open(path).await?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf).await?;
-        if let Ok(hub) = bincode::deserialize(&buf) {
-            Ok(hub)
-        } else {
-            Err(DataError::Deserialize.into())
-        }
+        Ok(bincode::deserialize(&buf)?)
     }
 
     /// Adds a user to a hub, creating and returning the resulting hub member.

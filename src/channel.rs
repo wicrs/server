@@ -1,13 +1,14 @@
 use std::{fmt::Display, str::FromStr};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
+use pgp::StandaloneSignature;
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
-use crate::{error::DataError, hub::HUB_DATA_FOLDER, Result, ID};
+use crate::{hub::HUB_DATA_FOLDER, new_id, Result, ID};
 
 use async_graphql::SimpleObject;
 
@@ -69,8 +70,7 @@ impl Channel {
             .append(true)
             .open(self.get_current_file().await)
             .await?;
-        bincode::serialize_into(file.into_std().await, &message)
-            .map_err(|_| DataError::Serialize)?;
+        bincode::serialize_into(file.into_std().await, &message)?;
         Ok(())
     }
 
@@ -330,56 +330,37 @@ pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
     /// ID of the user that sent the message.
-    pub sender: ID,
+    pub sender: String,
     /// Date in milliseconds since Unix Epoch that the message was sent.
     pub created: DateTime<Utc>,
     /// The actual text of the message.
     pub content: String,
 }
 
-impl Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{:X},{:X},{:X},{}",
-            self.id.as_u128(),
-            self.sender.as_u128(),
-            self.created.timestamp_millis() as i64,
-            self.content.replace('\n', r#"\n"#)
-        ))
+impl Message {
+    pub fn new(sender: String, content: String) -> Self {
+        Self {
+            sender,
+            content,
+            created: Utc::now(),
+            id: new_id(),
+        }
     }
 }
 
-impl FromStr for Message {
-    type Err = ();
+pub struct ServerSignedMessage {
+    pub message: Message,
+    pub server_signature: StandaloneSignature,
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.splitn(4, ',');
-        if let Some(id_str) = parts.next() {
-            if let Ok(id) = ID::from_str(id_str) {
-                if let Some(sender_str) = parts.next() {
-                    if let Ok(sender) = ID::from_str(sender_str) {
-                        if let Some(created_str) = parts.next() {
-                            if let Ok(created) = i64::from_str_radix(created_str, 16) {
-                                if let Some(content) = parts.next() {
-                                    return Ok(Self {
-                                        id,
-                                        sender,
-                                        created: DateTime::from_utc(
-                                            NaiveDateTime::from_timestamp(
-                                                created / 1000,
-                                                ((created - created / 1000) * 1000) as u32,
-                                            ),
-                                            Utc,
-                                        ),
-                                        content: content.replace(r#"\n"#, "\n"),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return Err(());
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "id: {}, sender: {}, created: {}\n{}",
+            self.id.to_string(),
+            self.sender,
+            self.created.to_rfc3339(),
+            self.content
+        ))
     }
 }

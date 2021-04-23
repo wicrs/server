@@ -1,9 +1,5 @@
 use crate::{
-    api, channel, check_permission,
-    error::{DataError, IndexError},
-    hub::Hub,
-    websocket::ServerMessage,
-    Error, Result, ID,
+    api, channel, check_permission, hub::Hub, websocket::ServerMessage, Error, Result, ID,
 };
 use async_trait::async_trait;
 use futures::stream::SplitSink;
@@ -209,7 +205,7 @@ lazy_static! {
 /// Adds a message to a Tantivy [`IndexWriter`].
 pub fn add_message_to_writer(writer: &mut IndexWriter, message: channel::Message) -> Result {
     writer.add_document(doc!(
-        MESSAGE_SCHEMA_FIELDS.id => bincode::serialize(&message.id).map_err(|_| DataError::Serialize)?,
+        MESSAGE_SCHEMA_FIELDS.id => bincode::serialize(&message.id)?,
         MESSAGE_SCHEMA_FIELDS.content => message.content,
     ));
     Ok(())
@@ -276,17 +272,13 @@ impl MessageServer {
         if !dir_path.is_dir() {
             tokio::fs::create_dir_all(dir_path).await?;
         }
-        let dir = MmapDirectory::open(dir_path).map_err(|_| DataError::Directory)?;
-        let index = Index::open_or_create(dir, MESSAGE_SCHEMA.clone())
-            .map_err(|_| IndexError::OpenCreateIndex)?;
+        let dir = MmapDirectory::open(dir_path)?;
+        let index = Index::open_or_create(dir, MESSAGE_SCHEMA.clone())?;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommit)
-            .try_into()
-            .map_err(|_| IndexError::CreateReader)?;
-        let mut writer = index
-            .writer(50_000_000)
-            .map_err(|_| IndexError::CreateWriter)?;
+            .try_into()?;
+        let mut writer = index.writer(50_000_000)?;
         let key = (hub_id.clone(), channel_id.clone());
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
@@ -308,7 +300,7 @@ impl MessageServer {
                 return Err(Error::HubNotFound);
             }
             let json = tokio::fs::read_to_string(path).await?;
-            let hub = serde_json::from_str::<Hub>(&json).map_err(|_| DataError::Deserialize)?;
+            let hub = serde_json::from_str::<Hub>(&json)?;
             if let Some(channel) = hub.channels.get(channel_id) {
                 let messages = channel.get_all_messages_from(&last_id).await;
                 let last_id = if let Some(last) = messages.last() {
@@ -320,11 +312,11 @@ impl MessageServer {
                 for message in messages {
                     add_message_to_writer(&mut writer, message)?;
                 }
-                writer.commit().map_err(|_| IndexError::Commit)?;
+                writer.commit()?;
                 if let Some(last_id) = last_id {
                     log_last_message(&hub_id, &channel_id, &last_id).await?;
                 }
-                reader.reload().map_err(|_| IndexError::Reload)?;
+                reader.reload()?;
             }
         }
         self.indexes.insert(key.clone(), index);
@@ -342,7 +334,7 @@ impl MessageServer {
         if let Some(reader) = self.index_readers.get(&key) {
             Ok(reader)
         } else {
-            Err(IndexError::GetReader.into())
+            Err(Error::GetIndexReader)
         }
     }
 
@@ -362,7 +354,7 @@ impl MessageServer {
         if let Some(writer) = self.index_writers.get_mut(&key) {
             Ok(writer)
         } else {
-            Err(IndexError::GetWriter.into())
+            Err(Error::GetIndexWriter)
         }
     }
 }
@@ -412,15 +404,11 @@ impl Handler<SearchMessageIndex> for MessageServer {
             searcher.index(),
             vec![MESSAGE_SCHEMA_FIELDS.content.clone()],
         );
-        let query = query_parser
-            .parse_query(&msg.query)
-            .map_err(|_| IndexError::ParseQuery)?;
-        let top_docs = searcher
-            .search(&query, &TopDocs::with_limit(msg.limit))
-            .map_err(|_| IndexError::Search)?;
+        let query = query_parser.parse_query(&msg.query)?;
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(msg.limit))?;
         let mut result = Vec::new();
         for (_score, doc_address) in top_docs {
-            let retrieved_doc = searcher.doc(doc_address).map_err(|_| IndexError::GetDoc)?;
+            let retrieved_doc = searcher.doc(doc_address)?;
             if let Some(value) = retrieved_doc.get_first(MESSAGE_SCHEMA_FIELDS.id.clone()) {
                 if let Some(bytes) = value.bytes_value() {
                     if let Ok(id) = bincode::deserialize::<ID>(bytes) {
@@ -447,12 +435,9 @@ impl Handler<NewMessageForIndex> for MessageServer {
             if pending >= crate::TANTIVY_COMMIT_THRESHOLD {
                 let mut writer = self.get_writer(&msg.hub_id, &msg.channel_id).await?;
                 add_message_to_writer(&mut writer, msg.message)?;
-                if let Ok(_) = writer.commit() {
-                    log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
-                    new_pending = 0;
-                } else {
-                    Err(IndexError::Commit)?
-                }
+                writer.commit()?;
+                log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
+                new_pending = 0;
             } else {
                 log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
             }
@@ -782,7 +767,7 @@ impl Handler<client_command::SendMessage> for Server {
             api::send_message(&msg.user_id, &msg.hub_id, &msg.channel_id, msg.message).await?;
         let message_id = message.id.clone();
         self.send_channel(
-            ServerMessage::ChatMessage(msg.hub_id.clone(), msg.channel_id.clone(), message),
+            ServerMessage::ChatMessage(msg.hub_id.clone(), msg.channel_id.clone(), message.id),
             msg.hub_id,
             msg.channel_id,
         )
@@ -806,7 +791,7 @@ impl Handler<ServerNotification> for Server {
                     })
                     .await;
                 self.send_channel(
-                    ServerMessage::ChatMessage(hub_id, channel_id, m),
+                    ServerMessage::ChatMessage(hub_id, channel_id, m.id),
                     hub_id,
                     channel_id,
                 )

@@ -1,6 +1,6 @@
 use std::{str::FromStr, sync::Arc};
 
-use crate::{channel, server::HubUpdateType};
+use crate::server::HubUpdateType;
 use crate::{error::Error, server::Server};
 use crate::{server::client_command, ID};
 use futures_util::{SinkExt, StreamExt};
@@ -38,7 +38,7 @@ pub enum ClientMessage {
 #[display(style = "SNAKE_CASE")]
 pub enum Response {
     #[display("{}({0})")]
-    Error(Error),
+    Error(String),
     Success,
     #[display("{}({0})")]
     Id(ID),
@@ -49,13 +49,13 @@ pub enum Response {
 #[display(style = "SNAKE_CASE")]
 pub enum ServerMessage {
     #[display("{}({0})")]
-    Error(Error),
+    Error(String),
     InvalidCommand,
     CommandFailed,
     #[display("{}({0})")]
     CommandSent(u128),
     #[display("{}({0},{1},\"{2}\")")]
-    ChatMessage(ID, ID, channel::Message),
+    ChatMessage(ID, ID, ID),
     #[display("{}({0},{1})")]
     HubUpdated(ID, HubUpdateType),
     #[display("{}({0})")]
@@ -83,6 +83,7 @@ pub async fn handle_connection(
             .map_err(|_| Error::InternalMessageFailed)?;
         connection_id = result;
     }
+    let internal_message_error = Error::InternalMessageFailed.to_string();
     while let Some(msg) = incoming.next().await {
         let msg = msg?;
         if let Ok(text) = msg.to_str() {
@@ -100,11 +101,11 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    |err| ServerMessage::Error(err.to_string()),
                                     |id| ServerMessage::Result(Response::Id(id)),
                                 )
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::SubscribeChannel(hub_id, channel_id) => {
@@ -118,11 +119,11 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    |err| ServerMessage::Error(err.to_string()),
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
@@ -136,7 +137,7 @@ pub async fn handle_connection(
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::StartTyping(hub_id, channel_id) => {
@@ -149,11 +150,11 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    |err| ServerMessage::Error(err.to_string()),
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::StopTyping(hub_id, channel_id) => {
@@ -166,11 +167,11 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    |err| ServerMessage::Error(err.to_string()),
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::SubscribeHub(hub_id) => {
@@ -183,11 +184,11 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    |err| ServerMessage::Error(err.to_string()),
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                         ClientMessage::UnsubscribeHub(hub_id) => {
@@ -200,7 +201,7 @@ pub async fn handle_connection(
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {
-                                ServerMessage::Error(Error::InternalMessageFailed)
+                                ServerMessage::Error(internal_message_error.clone())
                             }
                         }
                     }

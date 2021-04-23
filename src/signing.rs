@@ -1,9 +1,10 @@
+use crate::channel::Message;
+use crate::error::Result;
 use pgp::composed::{
     key::SecretKeyParamsBuilder, KeyType, Message as OpenPGPMessage, SignedPublicKey,
     SignedSecretKey,
 };
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
-use pgp::errors::Error as PGPError;
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
 use pgp::types::{CompressionAlgorithm, SecretKeyTrait};
@@ -18,7 +19,7 @@ pub struct KeyPair {
 }
 
 impl KeyPair {
-    pub fn new<S: Into<String>>(id: S) -> Result<Self, PGPError> {
+    pub fn new<S: Into<String>>(id: S) -> Result<Self> {
         let secret_key = SecretKeyParamsBuilder::default()
             .key_type(KeyType::Rsa(2048))
             .can_create_certificates(false)
@@ -38,12 +39,12 @@ impl KeyPair {
         })
     }
 
-    pub fn save_secret_key(&self) -> Result<(), PGPError> {
+    pub fn save_secret_key(&self) -> Result {
         std::fs::write(SECRET_KEY_PATH, self.secret_key.to_armored_bytes(None)?)?;
         Ok(())
     }
 
-    pub fn load() -> Result<Self, PGPError> {
+    pub fn load() -> Result<Self> {
         let secret_key =
             SignedSecretKey::from_string(&std::fs::read_to_string(SECRET_KEY_PATH)?)?.0;
         let passwd_fn = || String::new();
@@ -54,6 +55,8 @@ impl KeyPair {
         })
     }
 }
+
+//pub fn sign_message(message: Message, secret_key: &SignedSecretKey) -> Result<OpenPGPMessage> {}
 
 pub fn sign_and_verify() {
     let KeyPair {
@@ -68,26 +71,37 @@ pub fn sign_and_verify() {
         key_pair
     };
 
-    println!(
-        "secret_key_id: {}",
-        hex::encode(secret_key.key_id().to_vec())
-    );
-    println!(
-        "public_key:\n{}",
-        public_key
-            .to_armored_string(None)
-            .expect("Failed to turn public key into string.")
-    );
+    println!("key_id: {}\n", hex::encode(secret_key.key_id().to_vec()));
+
+    let message = Message::new("test".into(), "this is a test message".into());
+    let message_json = serde_json::to_string(&message).unwrap();
 
     let passwd_fn = || String::new();
 
-    let msg_signed = OpenPGPMessage::Literal(LiteralData::from_str("test", "raw string data"))
-        .sign(&secret_key, passwd_fn, HashAlgorithm::SHA2_256)
-        .expect("Failed to sign message.");
-    let msg_signature_str = msg_signed
+    let msg_signed = OpenPGPMessage::Literal(LiteralData::from_str(
+        &message.id.to_string(),
+        &message_json,
+    ))
+    .sign(&secret_key, passwd_fn, HashAlgorithm::SHA2_256)
+    .expect("Failed to sign message.");
+    let msg_armored_str = msg_signed
         .to_armored_string(None)
         .expect("Failed to turn signature into string.");
-    println!("signature_armored:\n{}", msg_signature_str);
+    println!("{}", msg_armored_str);
+
+    let _ = println!(
+        "{}",
+        serde_json::from_str::<'_, Message>(
+            &OpenPGPMessage::from_string(&msg_armored_str)
+                .unwrap()
+                .0
+                .get_literal()
+                .unwrap()
+                .to_string()
+                .unwrap()
+        )
+        .unwrap()
+    );
 
     msg_signed
         .verify(&public_key)
