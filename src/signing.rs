@@ -67,7 +67,7 @@ impl Message {
         secret_key: &impl SecretKeyTrait,
         password: F,
     ) -> Result<OpenPGPMessage> {
-        Ok(OpenPGPMessage::try_from(self)?.sign(&secret_key, password, HashAlgorithm::SHA3_512)?)
+        Ok(OpenPGPMessage::try_from(self)?.sign(&secret_key, password, HashAlgorithm::SHA2_256)?)
     }
 }
 
@@ -109,7 +109,7 @@ pub fn sign_final<F: FnOnce() -> String>(
         OpenPGPMessage::Literal(LiteralData::from_str(&message.id.to_string(), message_str)).sign(
             client_secret_key,
             password,
-            HashAlgorithm::SHA3_512,
+            HashAlgorithm::SHA2_256,
         )?,
     )
 }
@@ -135,11 +135,16 @@ pub fn sign_and_verify() -> Result {
 
     let msg_signed = message.sign(&secret_key, passwd_fn)?;
     let msg_armored_str = msg_signed.to_armored_string(None)?;
+    let msg_signature = msg_signed.clone().into_signature().signature;
     println!("{}", msg_armored_str);
+    println!(
+        "issuer: {}",
+        hex::encode(msg_signature.issuer().unwrap().to_vec())
+    );
 
     let _ = println!(
         "{}",
-        Message::try_from(&OpenPGPMessage::from_string(&msg_armored_str)?.0)?
+        Message::try_from(&dbg!(OpenPGPMessage::from_string(&msg_armored_str)?.0))?
     );
 
     let _ = sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;

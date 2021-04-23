@@ -34,7 +34,7 @@ warp = "0.3"
 async-graphql = { version = "2.0", features = ["uuid", "string_number", "chrono"] }
 async-graphql-warp = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
-pgp = "0.7"
+pgp = { path = "rpgp" }
 smallvec = "1.6"
 hex = "0.4"
 thiserror = "1.0"
