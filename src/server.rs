@@ -254,14 +254,20 @@ pub struct MessageServer {
     pending_messages: PendingMessageMap,
 }
 
-impl MessageServer {
-    pub fn new() -> Self {
+impl Default for MessageServer {
+    fn default() -> Self {
         Self {
             indexes: HashMap::new(),
             index_writers: HashMap::new(),
             index_readers: HashMap::new(),
             pending_messages: HashMap::new(),
         }
+    }
+}
+
+impl MessageServer {
+    pub fn new() -> Self {
+        MessageServer::default()
     }
 
     /// Sets up the Tantivy index for a given channel, also makes sure that the index is up to date by commiting any messages sent after the last message sent (logged by [`log_last_message`]).
@@ -287,7 +293,7 @@ impl MessageServer {
         let mut writer = index
             .writer(50_000_000)
             .map_err(|_| IndexError::CreateWriter)?;
-        let key = (hub_id.clone(), channel_id.clone());
+        let key = (*hub_id, *channel_id);
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
             crate::hub::HUB_DATA_FOLDER,
@@ -311,11 +317,7 @@ impl MessageServer {
             let hub = serde_json::from_str::<Hub>(&json).map_err(|_| DataError::Deserialize)?;
             if let Some(channel) = hub.channels.get(channel_id) {
                 let messages = channel.get_all_messages_from(&last_id).await;
-                let last_id = if let Some(last) = messages.last() {
-                    Some(last.id.clone())
-                } else {
-                    None
-                };
+                let last_id = messages.last().map(|last| last.id);
 
                 for message in messages {
                     add_message_to_writer(&mut writer, message)?;
@@ -327,15 +329,15 @@ impl MessageServer {
                 reader.reload().map_err(|_| IndexError::Reload)?;
             }
         }
-        self.indexes.insert(key.clone(), index);
-        self.index_readers.insert(key.clone(), reader);
-        self.index_writers.insert(key.clone(), writer);
+        self.indexes.insert(key, index);
+        self.index_readers.insert(key, reader);
+        self.index_writers.insert(key, writer);
         Ok(())
     }
 
     /// Gets a reader for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
     async fn get_reader(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&IndexReader> {
-        let key = (hub_id.clone(), channel_id.clone());
+        let key = (*hub_id, *channel_id);
         if !self.index_readers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
@@ -355,7 +357,7 @@ impl MessageServer {
 
     /// Gets a writer for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
     async fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
-        let key = (hub_id.clone(), channel_id.clone());
+        let key = (*hub_id, *channel_id);
         if !self.index_writers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
@@ -401,8 +403,8 @@ impl Handler<SearchMessageIndex> for MessageServer {
                     log_last_message(&msg.hub_id, &msg.channel_id, &pending.1).await?;
 
                     self.pending_messages.insert(
-                        (msg.hub_id.clone(), msg.channel_id.clone()),
-                        (0, pending.1.clone()),
+                        (msg.hub_id, msg.channel_id),
+                        (0, pending.1),
                     );
                 }
             }
@@ -410,7 +412,7 @@ impl Handler<SearchMessageIndex> for MessageServer {
         let searcher = self.get_searcher(&msg.hub_id, &msg.channel_id).await?;
         let query_parser = QueryParser::for_index(
             searcher.index(),
-            vec![MESSAGE_SCHEMA_FIELDS.content.clone()],
+            vec![MESSAGE_SCHEMA_FIELDS.content],
         );
         let query = query_parser
             .parse_query(&msg.query)
@@ -421,7 +423,7 @@ impl Handler<SearchMessageIndex> for MessageServer {
         let mut result = Vec::new();
         for (_score, doc_address) in top_docs {
             let retrieved_doc = searcher.doc(doc_address).map_err(|_| IndexError::GetDoc)?;
-            if let Some(value) = retrieved_doc.get_first(MESSAGE_SCHEMA_FIELDS.id.clone()) {
+            if let Some(value) = retrieved_doc.get_first(MESSAGE_SCHEMA_FIELDS.id) {
                 if let Some(bytes) = value.bytes_value() {
                     if let Ok(id) = bincode::deserialize::<ID>(bytes) {
                         result.push(id);
@@ -437,7 +439,7 @@ impl Handler<SearchMessageIndex> for MessageServer {
 impl Handler<NewMessageForIndex> for MessageServer {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: NewMessageForIndex) -> Result {
         let mut new_pending: u8;
-        let message_id = msg.message.id.clone();
+        let message_id = msg.message.id;
         if let Some((pending, _)) = self
             .pending_messages
             .get(&(msg.hub_id, msg.channel_id))
@@ -447,11 +449,11 @@ impl Handler<NewMessageForIndex> for MessageServer {
             if pending >= crate::TANTIVY_COMMIT_THRESHOLD {
                 let mut writer = self.get_writer(&msg.hub_id, &msg.channel_id).await?;
                 add_message_to_writer(&mut writer, msg.message)?;
-                if let Ok(_) = writer.commit() {
+                if writer.commit().is_ok() {
                     log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
                     new_pending = 0;
                 } else {
-                    Err(IndexError::Commit)?
+                    return Err(IndexError::Commit.into())
                 }
             } else {
                 log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
@@ -585,12 +587,12 @@ impl Handler<client_command::SubscribeHub> for Server {
         self.subscribed
             .write()
             .await
-            .entry(msg.connection_id.clone())
+            .entry(msg.connection_id)
             .or_default()
             .write()
             .await
             .1
-            .insert(msg.hub_id.clone());
+            .insert(msg.hub_id);
         self.subscribed_hubs
             .write()
             .await
@@ -644,12 +646,12 @@ impl Handler<client_command::SubscribeChannel> for Server {
         self.subscribed
             .write()
             .await
-            .entry(msg.connection_id.clone())
+            .entry(msg.connection_id)
             .or_default()
             .write()
             .await
             .0
-            .insert(key.clone());
+            .insert(key);
         self.subscribed_channels
             .write()
             .await
@@ -703,8 +705,8 @@ impl Handler<client_command::StartTyping> for Server {
         self.send_channel(
             ServerMessage::UserStartedTyping(
                 msg.user_id,
-                msg.hub_id.clone(),
-                msg.channel_id.clone(),
+                msg.hub_id,
+                msg.channel_id,
             ),
             msg.hub_id,
             msg.channel_id,
@@ -742,8 +744,8 @@ impl Handler<client_command::StopTyping> for Server {
         self.send_channel(
             ServerMessage::UserStoppedTyping(
                 msg.user_id,
-                msg.hub_id.clone(),
-                msg.channel_id.clone(),
+                msg.hub_id,
+                msg.channel_id,
             ),
             msg.hub_id,
             msg.channel_id,
@@ -780,9 +782,9 @@ impl Handler<client_command::SendMessage> for Server {
             })?;
         let message =
             api::send_message(&msg.user_id, &msg.hub_id, &msg.channel_id, msg.message).await?;
-        let message_id = message.id.clone();
+        let message_id = message.id;
         self.send_channel(
-            ServerMessage::ChatMessage(msg.hub_id.clone(), msg.channel_id.clone(), message),
+            ServerMessage::ChatMessage(msg.hub_id, msg.channel_id, message),
             msg.hub_id,
             msg.channel_id,
         )
@@ -800,8 +802,8 @@ impl Handler<ServerNotification> for Server {
                 let _ = self
                     .message_server
                     .call(NewMessageForIndex {
-                        hub_id: hub_id.clone(),
-                        channel_id: channel_id.clone(),
+                        hub_id,
+                        channel_id,
                         message: message.clone(),
                     })
                     .await;
@@ -814,7 +816,7 @@ impl Handler<ServerNotification> for Server {
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
                 self.send_hub(
-                    ServerMessage::HubUpdated(hub_id.clone(), update_type),
+                    ServerMessage::HubUpdated(hub_id, update_type),
                     &hub_id,
                 )
                 .await

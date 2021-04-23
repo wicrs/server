@@ -93,8 +93,8 @@ impl User {
             hubs_hashed.push(format!("{:x}", hasher.finalize_reset()));
         }
         GenericUser {
-            id: self.id.clone(),
-            created: self.created.clone(),
+            id: self.id,
+            created: self.created,
             description: self.description.clone(),
             status: self.status.clone(),
             username: self.username.clone(),
@@ -119,7 +119,7 @@ impl User {
             Err(Error::Banned)
         } else {
             hub.user_join(&self)?;
-            self.in_hubs.push(hub.id.clone());
+            self.in_hubs.push(hub.id);
             Ok(())
         }
     }

@@ -92,7 +92,7 @@ pub async fn handle_connection(
                         ClientMessage::SendMessage(hub_id, channel_id, message) => {
                             if let Ok(result) = addr
                                 .call(client_command::SendMessage {
-                                    user_id: user_id.clone(),
+                                    user_id,
                                     hub_id,
                                     channel_id,
                                     message,
@@ -100,7 +100,7 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    ServerMessage::Error,
                                     |id| ServerMessage::Result(Response::Id(id)),
                                 )
                             } else {
@@ -110,7 +110,7 @@ pub async fn handle_connection(
                         ClientMessage::SubscribeChannel(hub_id, channel_id) => {
                             if let Ok(result) = addr
                                 .call(client_command::SubscribeChannel {
-                                    user_id: user_id.clone(),
+                                    user_id,
                                     hub_id,
                                     channel_id,
                                     connection_id,
@@ -118,7 +118,7 @@ pub async fn handle_connection(
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    ServerMessage::Error,
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
@@ -126,13 +126,13 @@ pub async fn handle_connection(
                             }
                         }
                         ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
-                            if let Ok(_) = addr
+                            if addr
                                 .call(client_command::UnsubscribeChannel {
                                     hub_id,
                                     channel_id,
                                     connection_id,
                                 })
-                                .await
+                                .await.is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {
@@ -142,14 +142,14 @@ pub async fn handle_connection(
                         ClientMessage::StartTyping(hub_id, channel_id) => {
                             if let Ok(result) = addr
                                 .call(client_command::StartTyping {
-                                    user_id: user_id.clone(),
+                                    user_id,
                                     hub_id,
                                     channel_id,
                                 })
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    ServerMessage::Error,
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
@@ -159,14 +159,14 @@ pub async fn handle_connection(
                         ClientMessage::StopTyping(hub_id, channel_id) => {
                             if let Ok(result) = addr
                                 .call(client_command::StopTyping {
-                                    user_id: user_id.clone(),
+                                    user_id,
                                     hub_id,
                                     channel_id,
                                 })
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    ServerMessage::Error,
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
@@ -176,14 +176,14 @@ pub async fn handle_connection(
                         ClientMessage::SubscribeHub(hub_id) => {
                             if let Ok(result) = addr
                                 .call(client_command::SubscribeHub {
-                                    user_id: user_id.clone(),
+                                    user_id,
                                     hub_id,
                                     connection_id,
                                 })
                                 .await
                             {
                                 result.map_or_else(
-                                    |err| ServerMessage::Error(err),
+                                    ServerMessage::Error,
                                     |_| ServerMessage::Result(Response::Success),
                                 )
                             } else {
@@ -191,12 +191,12 @@ pub async fn handle_connection(
                             }
                         }
                         ClientMessage::UnsubscribeHub(hub_id) => {
-                            if let Ok(_) = addr
+                            if addr
                                 .call(client_command::UnsubscribeHub {
                                     hub_id,
                                     connection_id,
                                 })
-                                .await
+                                .await.is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {

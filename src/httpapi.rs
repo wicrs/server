@@ -51,7 +51,7 @@ pub async fn start(config: Config) -> Result {
                 let mut split = token.as_str().split(':');
                 if let (Some(id), Some(token)) = (split.next(), split.next()) {
                     if let Ok(id) = ID::parse_str(id) {
-                        if Auth::is_authenticated(auth.clone(), id.clone(), token.into()).await {
+                        if Auth::is_authenticated(auth.clone(), id, token.into()).await {
                             let resp = schema.execute(request.data(id).data(server)).await;
                             return Ok::<_, Infallible>(Response::from(resp));
                         }
@@ -69,12 +69,12 @@ pub async fn start(config: Config) -> Result {
             let mut split = id_token.as_str().split(':');
             if let (Some(id), Some(token)) = (split.next(), split.next()) {
                 if let Ok(id) = ID::parse_str(id) {
-                    if Auth::is_authenticated(auth.clone(), id.clone(), token.into()).await {
+                    if Auth::is_authenticated(auth.clone(), id, token.into()).await {
                         return Ok((id, auth));
                     }
                 }
             }
-            return Err(warp::reject::custom(Error::NotAuthenticated));
+            Err(warp::reject::custom(Error::NotAuthenticated))
         });
 
     let auth_start = warp::path!("v2" / "login" / Service)
@@ -95,7 +95,7 @@ pub async fn start(config: Config) -> Result {
             Ok::<_, Rejection>(warp::reply::json(
                 &Auth::handle_oauth(auth, service, query)
                     .await
-                    .map_err(|err| Rejection::from(err))?,
+                    .map_err(Rejection::from)?,
             ))
         });
 
@@ -135,7 +135,7 @@ pub async fn start(config: Config) -> Result {
             HttpResponse::builder()
                 .header("content-type", "text/html")
                 .body(playground_source(
-                    GraphQLPlaygroundConfig::new(format!("/graphql").as_str())
+                    GraphQLPlaygroundConfig::new("/graphql".to_string().as_str())
                         .with_header("authorization", &auth_string)
                         .subscription_endpoint("/"),
                 ))

@@ -30,10 +30,11 @@ impl QueryRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of a user.")] id: ID,
     ) -> Result<GenericUser> {
-        Ok(User::load(&id)
+        let user = User::load(&id)
             .await
-            .unwrap()
-            .to_generic(self.requester(ctx).await?))
+            .unwrap();
+
+        Ok(user.to_generic(self.requester(ctx).await?))
     }
 
     async fn users(
@@ -43,11 +44,10 @@ impl QueryRoot {
     ) -> Result<Vec<GenericUser>> {
         let mut result = Vec::new();
         for id in ids {
-            result.push(
-                User::load(&id)
-                    .await?
-                    .to_generic(self.requester(ctx).await?),
-            );
+            let user = User::load(&id)
+                .await?;
+
+            result.push(user.to_generic(self.requester(ctx).await?));
         }
         Ok(result)
     }
@@ -57,10 +57,11 @@ impl QueryRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of a hub.")] id: ID,
     ) -> Result<Hub> {
-        Ok(Hub::load(&id)
+        let hub = Hub::load(&id)
             .await
-            .unwrap()
-            .strip(self.requester(ctx).await?)?)
+            .unwrap();
+
+        Ok(hub.strip(self.requester(ctx).await?)?)
     }
 
     async fn hubs(
@@ -70,7 +71,8 @@ impl QueryRoot {
     ) -> Result<Vec<Hub>> {
         let mut result = Vec::new();
         for id in ids {
-            result.push(Hub::load(&id).await?.strip(self.requester(ctx).await?)?);
+            let hub = Hub::load(&id).await?;
+            result.push(hub.strip(self.requester(ctx).await?)?);
         }
         Ok(result)
     }
@@ -150,7 +152,7 @@ impl ChannelMutator {
     ) -> Result<ID> {
         let message =
             api::send_message(&self.user_id, &self.hub_id, &self.channel_id, message).await?;
-        let id = message.id.clone();
+        let id = message.id;
         ctx.data_unchecked::<Arc<Addr<Server>>>()
             .send(crate::server::ServerNotification::NewMessage(
                 self.hub_id,
@@ -318,10 +320,10 @@ impl Channel {
         {
             ms_addr
                 .call(crate::server::SearchMessageIndex {
-                    hub_id: self.hub_id.clone(),
-                    channel_id: self.id.clone(),
+                    hub_id: self.hub_id,
+                    channel_id: self.id,
                     limit: limit as usize,
-                    query: query,
+                    query,
                 })
                 .await
                 .map_or(Vec::new(), |r| r.unwrap_or_default())
@@ -550,28 +552,20 @@ impl PermissionGroup {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        if let Some(setting) = self.hub_permissions.get(&permission) {
-            Some(HubPermissionSet {
+        self.hub_permissions.get(&permission).map(|setting| HubPermissionSet {
                 permission,
-                setting: setting.clone(),
+                setting: *setting,
             })
-        } else {
-            None
-        }
     }
 
     async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((
-                        permission.clone(),
-                        Some(setting.clone()),
+                setting.as_ref().map(|setting| HubPermissionSet::from((
+                        *permission,
+                        Some(*setting),
                     )))
-                } else {
-                    None
-                }
             })
             .collect()
     }
@@ -582,13 +576,11 @@ impl PermissionGroup {
         #[graphql(desc = "Permission to check for.")] permission: ChannelPermission,
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
-            setting.get(&permission).map_or(None, |s| {
-                Some(ChannelPermissionSet {
+            setting.get(&permission).map(|s| ChannelPermissionSet {
                     permission,
-                    setting: s.clone(),
+                    setting: *s,
                     channel,
                 })
-            })
         } else {
             None
         }
@@ -603,15 +595,11 @@ impl PermissionGroup {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            if let Some(setting) = setting {
-                                Some(ChannelPermissionSet::from((
-                                    permission.clone(),
-                                    Some(setting.clone()),
-                                    channel.clone(),
+                            setting.as_ref().map(|setting| ChannelPermissionSet::from((
+                                    *permission,
+                                    Some(*setting),
+                                    *channel,
                                 )))
-                            } else {
-                                None
-                            }
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )
@@ -649,28 +637,20 @@ impl HubMember {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        if let Some(setting) = self.hub_permissions.get(&permission) {
-            Some(HubPermissionSet {
+        self.hub_permissions.get(&permission).map(|setting| HubPermissionSet {
                 permission,
-                setting: setting.clone(),
+                setting: *setting,
             })
-        } else {
-            None
-        }
     }
 
     async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((
-                        permission.clone(),
-                        Some(setting.clone()),
+                setting.as_ref().map(|setting| HubPermissionSet::from((
+                        *permission,
+                        Some(*setting),
                     )))
-                } else {
-                    None
-                }
             })
             .collect()
     }
@@ -681,13 +661,11 @@ impl HubMember {
         channel: ID,
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
-            setting.get(&permission).map_or(None, |s| {
-                Some(ChannelPermissionSet {
+            setting.get(&permission).map(|s| ChannelPermissionSet {
                     permission,
-                    setting: s.clone(),
+                    setting: *s,
                     channel,
                 })
-            })
         } else {
             None
         }
@@ -702,15 +680,11 @@ impl HubMember {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            if let Some(setting) = setting {
-                                Some(ChannelPermissionSet::from((
-                                    permission.clone(),
-                                    Some(setting.clone()),
-                                    channel.clone(),
+                            setting.as_ref().map(|setting| ChannelPermissionSet::from((
+                                    *permission,
+                                    Some(*setting),
+                                    *channel,
                                 )))
-                            } else {
-                                None
-                            }
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )

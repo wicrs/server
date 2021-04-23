@@ -250,7 +250,7 @@ impl Channel {
                     let mut iter =
                         bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
                             .into_iter();
-                    if let Some(_) = iter.position(|m| &m.id == id) {
+                    if iter.any(|m| &m.id == id) {
                         result.append(&mut iter.collect());
                         let len = result.len();
                         if len == max {
@@ -279,14 +279,15 @@ impl Channel {
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
                     let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if let Some(_) = iter.position(|m| {
+                    let contains_message = iter.any(|m| {
                         if &m.id == id {
-                            result.push(m);
-                            true
+                           result.push(m);
+                           true
                         } else {
-                            false
+                           false
                         }
-                    }) {
+                    });
+                    if contains_message {
                         result.append(&mut iter.collect());
                     }
                 }
@@ -380,6 +381,6 @@ impl FromStr for Message {
                 }
             }
         }
-        return Err(());
+        Err(())
     }
 }

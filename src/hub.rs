@@ -49,7 +49,7 @@ impl HubMember {
     pub fn new(user: &User, hub: ID) -> Self {
         Self {
             nickname: user.username.clone(),
-            user: user.id.clone(),
+            user: user.id,
             hub,
             groups: Vec::new(),
             joined: Utc::now(),
@@ -68,10 +68,10 @@ impl HubMember {
     /// Adds the hub member to a permission group.
     pub fn join_group(&mut self, group: &mut PermissionGroup) {
         if !self.groups.contains(&group.id) {
-            self.groups.push(group.id.clone());
+            self.groups.push(group.id);
         }
         if !group.members.contains(&self.user) {
-            group.members.push(self.user.clone());
+            group.members.push(self.user);
         }
     }
 
@@ -100,7 +100,7 @@ impl HubMember {
         let channel_permissions = self
             .channel_permissions
             .entry(*channel)
-            .or_insert(HashMap::new());
+            .or_insert_with(HashMap::new);
         channel_permissions.insert(permission, value);
     }
 
@@ -250,7 +250,7 @@ impl PermissionGroup {
         let channel_permissions = self
             .channel_permissions
             .entry(channel_id)
-            .or_insert(HashMap::new());
+            .or_insert_with(HashMap::new);
         channel_permissions.insert(permission, value);
     }
 
@@ -274,7 +274,7 @@ impl PermissionGroup {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the group has a permission in a specific channel.
@@ -289,16 +289,13 @@ impl PermissionGroup {
                 }
             }
             if let Some(value) = channel.get(&permission) {
-                if value == &Some(true) {
+                if value == &Some(true) ||
+                    (value == &None && self.has_permission(&permission.into())) {
                     return true;
-                } else if value == &None {
-                    if self.has_permission(&permission.into()) {
-                        return true;
-                    }
                 }
             }
         }
-        return false;
+        false
     }
 }
 
@@ -332,21 +329,21 @@ pub struct Hub {
 impl Hub {
     /// Creates a new hub given the ID of the user who should be the owner, the name and the ID the hub should have.
     pub fn new(name: String, id: ID, creator: &User) -> Self {
-        let creator_id = creator.id.clone();
+        let creator_id = creator.id;
         let mut everyone = PermissionGroup::new(String::from("everyone"), new_id());
-        let mut owner = HubMember::new(creator, id.clone());
+        let mut owner = HubMember::new(creator, id);
         let mut members = HashMap::new();
         let mut groups = HashMap::new();
         owner.join_group(&mut everyone);
         owner.set_permission(HubPermission::All, Some(true));
-        members.insert(creator_id.clone(), owner);
-        groups.insert(everyone.id.clone(), everyone.clone());
+        members.insert(creator_id, owner);
+        groups.insert(everyone.id, everyone.clone());
         Self {
             name,
             id,
             groups,
             description: String::new(),
-            default_group: everyone.id.clone(),
+            default_group: everyone.id,
             owner: creator_id,
             bans: HashSet::new(),
             mutes: HashSet::new(),
@@ -375,7 +372,7 @@ impl Hub {
         while self.channels.contains_key(&id) {
             id = new_id();
         }
-        let channel = Channel::new(name, id.clone(), self.id.clone());
+        let channel = Channel::new(name, id, self.id);
         channel.create_dir().await?;
         {
             self.get_member_mut(member_id)?.set_channel_permission(
@@ -384,7 +381,7 @@ impl Hub {
                 Some(true),
             );
         }
-        self.channels.insert(id.clone(), channel);
+        self.channels.insert(id, channel);
         Ok(id)
     }
 
@@ -450,18 +447,16 @@ impl Hub {
     ) -> Result<String> {
         if new_description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
             Err(Error::TooBig)
-        } else {
-            if let Some(user) = self.members.get(user_id) {
-                check_permission!(user, channel_id, ChannelPermission::Read, self);
-                check_permission!(user, channel_id, ChannelPermission::Configure, self);
-                if let Some(channel) = self.channels.get_mut(channel_id) {
-                    Ok(mem::replace(&mut channel.description, new_description))
-                } else {
-                    Err(Error::ChannelNotFound)
-                }
+        } else if let Some(user) = self.members.get(user_id) {
+            check_permission!(user, channel_id, ChannelPermission::Read, self);
+            check_permission!(user, channel_id, ChannelPermission::Configure, self);
+            if let Some(channel) = self.channels.get_mut(channel_id) {
+                Ok(mem::replace(&mut channel.description, new_description))
             } else {
-                Err(Error::NotInHub)
+                Err(Error::ChannelNotFound)
             }
+        } else {
+            Err(Error::NotInHub)
         }
     }
 
@@ -512,7 +507,7 @@ impl Hub {
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, HubPermission::DeleteChannel, self);
             check_permission!(user, channel_id, ChannelPermission::Read, self);
-            if let Some(_) = self.channels.remove(channel_id) {
+            if self.channels.remove(channel_id).is_some() {
                 Ok(())
             } else {
                 Err(Error::ChannelNotFound)
@@ -548,7 +543,7 @@ impl Hub {
                 if let Some(channel) = self.channels.get(&channel_id) {
                     let message = Message {
                         id: new_id(),
-                        sender: member.user.clone(),
+                        sender: member.user,
                         created: Utc::now(),
                         content: message,
                     };
@@ -633,10 +628,10 @@ impl Hub {
     ///
     /// * The default permission group could not be found.
     pub fn user_join(&mut self, user: &User) -> Result<HubMember> {
-        let mut member = HubMember::new(user, self.id.clone());
+        let mut member = HubMember::new(user, self.id);
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
-            self.members.insert(member.user.clone(), member.clone());
+            self.members.insert(member.user, member.clone());
             Ok(member)
         } else {
             Err(Error::GroupNotFound)
@@ -726,7 +721,7 @@ impl Hub {
             let mut result = HashMap::new();
             for channel in self.channels.clone() {
                 if user.has_channel_permission(&channel.0, ChannelPermission::Read, &hub_im) {
-                    result.insert(channel.0.clone(), channel.1.clone());
+                    result.insert(channel.0, channel.1.clone());
                 }
             }
             Ok(result)

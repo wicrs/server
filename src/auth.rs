@@ -105,15 +105,15 @@ impl Auth {
         let mut hub = Hub::new("test_hub".to_string(), ID::nil(), &account);
         account
             .join_hub(&mut hub)
-            .expect(format!("Failed to add test account to test hub.").as_str());
+            .expect("Failed to add test account to test hub.");
         for n in 1..count {
             let id = ID::from_u128(n as u128);
             hub.channels.insert(
-                id.clone(),
-                Channel::new(format!("test_channel_{}.", n), id.clone(), hub.id.clone()),
+                id,
+                Channel::new(format!("test_channel_{}.", n), id, hub.id),
             );
             let mut user = User {
-                id: id.clone(),
+                id,
                 username: format!("testuser_{}", n),
                 email: format!("testuser_{}@example.com", n),
                 in_hubs: Vec::new(),
@@ -123,15 +123,15 @@ impl Auth {
                 service: Service::GitHub,
             };
             user.join_hub(&mut hub)
-                .expect(format!("Failed to add test account #{} to test hub.", n).as_str());
+                .unwrap_or_else(|_| panic!("Failed to add test account #{} to test hub.", n));
             user.save()
                 .await
-                .expect(format!("Failed to save test account #{}.", n).as_str());
+                .unwrap_or_else(|_| panic!("Failed to save test account #{}.", n));
         }
         hub.save().await.expect("Failed to save test hub.");
         account.save().await.expect("Failed to save test account.");
         let token = "testtoken".to_string();
-        let hashed = hash_auth(account.id.clone(), token.clone());
+        let hashed = hash_auth(account.id, token.clone());
         let mut map = HashMap::new();
         map.insert(
             hashed.1,
@@ -149,7 +149,7 @@ impl Auth {
     fn save_tokens(sessions: &HashMap<String, HashMap<String, DateTime<Utc>>>) -> Result {
         std::fs::write(
             SESSION_FILE,
-            serde_json::to_string(sessions).unwrap_or("{}".to_string()),
+            serde_json::to_string(sessions).unwrap_or_else(|_| "{}".to_string()),
         )
         .map_err(|e| e.into())
     }
@@ -167,7 +167,7 @@ impl Auth {
                 return map;
             }
         }
-        return HashMap::new();
+        HashMap::new()
     }
 
     /// Checks if a given token and user ID match and are authenticated.
@@ -196,7 +196,7 @@ impl Auth {
             sessions_arc = lock.sessions.clone();
             sessions_lock = sessions_arc.write().await;
         }
-        if let Some(_) = sessions_lock.remove(&hash_auth(id, String::new()).0) {
+        if sessions_lock.remove(&hash_auth(id, String::new()).0).is_some() {
             let _save = Auth::save_tokens(&sessions_lock);
         }
     }
@@ -212,7 +212,7 @@ impl Auth {
         }
         let (hashed_id, hashed_token) = hash_auth(id, token);
         if let Some(tokens) = sessions_lock.get_mut(&hashed_id) {
-            if let Some(_) = tokens.remove(&hashed_token) {
+            if tokens.remove(&hashed_token).is_some() {
                 let _save = Auth::save_tokens(&sessions_lock);
             }
         }
@@ -291,7 +291,7 @@ impl Auth {
                 sessions_arc = lock.sessions.clone();
                 sessions_lock = sessions_arc.write().await;
             }
-            let hashed = hash_auth(id.clone(), token.clone());
+            let hashed = hash_auth(id, token.clone());
             if let Some(tokens) = sessions_lock.get_mut(&hashed.0) {
                 tokens.insert(hashed.1, expires);
             } else {
@@ -305,10 +305,7 @@ impl Auth {
                 .for_each(|v| v.1.retain(|_, v| v > &mut now.clone()));
             let _write = Auth::save_tokens(&sessions_lock);
         }
-        Ok(IDToken {
-            id: id,
-            token: token,
-        })
+        Ok(IDToken { id, token })
     }
 }
 
@@ -337,12 +334,12 @@ impl GitHub {
     }
 
     /// Get the ID of the user that the given auth token belongs to.
-    async fn get_id(&self, token: &String) -> Result<String, AuthError> {
+    async fn get_id(&self, token: &str) -> Result<String, AuthError> {
         let user_request = self
             .client
             .get("https://api.github.com/user")
             .header(USER_AGENT, USER_AGENT_STRING)
-            .header(AUTHORIZATION, "token ".to_owned() + token.as_str())
+            .header(AUTHORIZATION, "token ".to_owned() + token)
             .send()
             .await;
         if let Ok(response) = user_request {
@@ -357,12 +354,12 @@ impl GitHub {
     }
 
     /// Get the email address of the user that the given auth token belongs to.
-    async fn get_email(&self, token: &String) -> Result<String, AuthError> {
+    async fn get_email(&self, token: &str) -> Result<String, AuthError> {
         let email_request = self
             .client
             .get("https://api.github.com/user/emails")
             .header(USER_AGENT, USER_AGENT_STRING)
-            .header(AUTHORIZATION, "token ".to_owned() + token.as_str())
+            .header(AUTHORIZATION, "token ".to_owned() + token)
             .send()
             .await;
         if let Ok(response) = email_request {
@@ -384,7 +381,7 @@ impl GitHub {
     }
 
     /// Gets the login session associated to the given `state`.
-    async fn get_session(&self, state: &String) -> Option<LoginSession> {
+    async fn get_session(&self, state: &str) -> Option<LoginSession> {
         let arc = self.sessions.clone();
         let mut lock = arc.lock().await;
         lock.remove(state)

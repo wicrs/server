@@ -191,21 +191,21 @@ pub async fn create_hub<S: Into<String>>(owner_id: &ID, name: S) -> Result<ID> {
         id = new_id();
     }
     let mut owner = User::load(owner_id).await?;
-    let mut new_hub = Hub::new(name, id.clone(), &owner);
+    let mut new_hub = Hub::new(name, id, &owner);
     let channel_id = new_hub.new_channel(owner_id, "chat".to_string()).await?;
     if let Some(group) = new_hub.groups.get_mut(&new_hub.default_group) {
         group.set_channel_permission(
-            channel_id.clone(),
+            channel_id,
             crate::permission::ChannelPermission::Read,
             Some(true),
         );
         group.set_channel_permission(
-            channel_id.clone(),
+            channel_id,
             crate::permission::ChannelPermission::Write,
             Some(true),
         );
     }
-    owner.in_hubs.push(id.clone());
+    owner.in_hubs.push(id);
     owner.save().await?;
     new_hub.save().await?;
     Ok(id)
@@ -469,9 +469,9 @@ async fn hub_user_op(actor_id: &ID, hub_id: &ID, user_id: &ID, op: HubPermission
     check_permission!(member, op, hub);
     match op {
         HubPermission::Kick => hub.kick_user(user_id).await?,
-        HubPermission::Ban => hub.ban_user(user_id.clone()).await?,
+        HubPermission::Ban => hub.ban_user(*user_id).await?,
         HubPermission::Unban => hub.unban_user(user_id),
-        HubPermission::Mute => hub.mute_user(user_id.clone()),
+        HubPermission::Mute => hub.mute_user(*user_id),
         HubPermission::Unmute => hub.unmute_user(user_id),
         _ => return Err(Error::UnexpectedServerArg),
     }
