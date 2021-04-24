@@ -50,7 +50,7 @@ pub enum Error {
     #[error("IO serror")]
     Io(#[from] std::io::Error),
     #[error("JSON error")]
-    JSON(#[from] serde_json::Error),
+    Json(#[from] serde_json::Error),
     #[error("Bincode error")]
     Bincode(#[from] bincode::Error),
     #[error("Tantivy error")]
@@ -70,7 +70,7 @@ pub enum Error {
     #[error("Warp error")]
     Warp(#[from] warp::Error),
     #[error("PGP error")]
-    PGP(#[from] pgp::errors::Error),
+    Pgp(#[from] pgp::errors::Error),
     #[error("{0}")]
     Other(String),
 }

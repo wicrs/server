@@ -25,10 +25,8 @@ impl QueryRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of a hub.")] id: ID,
     ) -> Result<Hub> {
-        Ok(Hub::load(&id)
-            .await
-            .unwrap()
-            .strip(self.requester(ctx).await?)?)
+        let hub = Hub::load(id).await?;
+        Ok(hub.strip(self.requester(ctx).await?)?)
     }
 
     async fn hubs(
@@ -38,7 +36,8 @@ impl QueryRoot {
     ) -> Result<Vec<Hub>> {
         let mut result = Vec::new();
         for id in ids {
-            result.push(Hub::load(&id).await?.strip(self.requester(ctx).await?)?);
+            let hub = Hub::load(id).await?;
+            result.push(hub.strip(self.requester(ctx).await?)?);
         }
         Ok(result)
     }
@@ -68,14 +67,14 @@ impl ChannelMutator {
         &self,
         #[graphql(desc = "New name for the channel.")] new: String,
     ) -> Result<String> {
-        Ok(api::rename_channel(&self.user_id, &self.hub_id, &self.channel_id, new).await?)
+        Ok(api::rename_channel(&self.user_id, self.hub_id, self.channel_id, new).await?)
     }
     async fn description(
         &self,
         #[graphql(desc = "New description for the channel.")] new: String,
     ) -> Result<String> {
         Ok(
-            api::change_channel_description(&self.user_id, &self.hub_id, &self.channel_id, new)
+            api::change_channel_description(&self.user_id, self.hub_id, self.channel_id, new)
                 .await?,
         )
     }
@@ -95,13 +94,13 @@ impl HubMutator {
 #[Object]
 impl HubMutator {
     async fn name(&self, #[graphql(desc = "New name for the hub.")] new: String) -> Result<String> {
-        Ok(api::rename_hub(&self.user_id, &self.hub_id, new).await?)
+        Ok(api::rename_hub(&self.user_id, self.hub_id, new).await?)
     }
     async fn description(
         &self,
         #[graphql(desc = "New description for the hub.")] new: String,
     ) -> Result<String> {
-        Ok(api::change_hub_description(&self.user_id, &self.hub_id, new).await?)
+        Ok(api::change_hub_description(&self.user_id, self.hub_id, new).await?)
     }
     async fn channel(
         &self,
@@ -113,7 +112,7 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the channel to delete.")] id: ID,
     ) -> Result<ID> {
-        Ok(api::delete_channel(&self.user_id, &self.hub_id, &id)
+        Ok(api::delete_channel(&self.user_id, self.hub_id, id)
             .await
             .and(Ok(id))?)
     }
@@ -123,8 +122,8 @@ impl HubMutator {
     ) -> Result<Channel> {
         Ok(api::get_channel(
             &self.user_id,
-            &self.hub_id,
-            &api::create_channel(&self.user_id, &self.hub_id, name).await?,
+            self.hub_id,
+            api::create_channel(&self.user_id, self.hub_id, name).await?,
         )
         .await?)
     }
@@ -132,12 +131,12 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the user to kick.")] id: String,
     ) -> Result<String> {
-        Ok(api::kick_user(&self.user_id, &self.hub_id, &id)
+        Ok(api::kick_user(&self.user_id, self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
     async fn ban(&self, #[graphql(desc = "ID of the user to ban.")] id: String) -> Result<String> {
-        Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
+        Ok(api::ban_user(&self.user_id, self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
@@ -145,7 +144,7 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the user to unban.")] id: String,
     ) -> Result<String> {
-        Ok(api::unban_user(&self.user_id, &self.hub_id, &id)
+        Ok(api::unban_user(&self.user_id, self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
@@ -153,7 +152,7 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the user to mute.")] id: String,
     ) -> Result<String> {
-        Ok(api::ban_user(&self.user_id, &self.hub_id, &id)
+        Ok(api::ban_user(&self.user_id, self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
@@ -161,7 +160,7 @@ impl HubMutator {
         &self,
         #[graphql(desc = "ID of the user to unmute.")] id: String,
     ) -> Result<String> {
-        Ok(api::unmute_user(&self.user_id, &self.hub_id, &id)
+        Ok(api::unmute_user(&self.user_id, self.hub_id, &id)
             .await
             .and(Ok(id))?)
     }
@@ -186,7 +185,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "ID of the hub to delete.")] id: ID,
     ) -> Result<ID> {
-        Ok(api::delete_hub(self.requester(ctx).await?, &id)
+        Ok(api::delete_hub(self.requester(ctx).await?, id)
             .await
             .and(Ok(id))?)
     }
@@ -196,7 +195,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         #[graphql(desc = "Name for the new hub.")] name: String,
     ) -> Result<Hub> {
-        Ok(Hub::load(&api::create_hub(self.requester(ctx).await?.clone(), name).await?).await?)
+        Ok(Hub::load(api::create_hub(self.requester(ctx).await?.clone(), name).await?).await?)
     }
 }
 
@@ -231,10 +230,10 @@ impl Channel {
         {
             ms_addr
                 .call(crate::server::SearchMessageIndex {
-                    hub_id: self.hub_id.clone(),
-                    channel_id: self.id.clone(),
+                    hub_id: self.hub_id,
+                    channel_id: self.id,
                     limit: limit as usize,
-                    query: query,
+                    query,
                 })
                 .await
                 .map_or(Vec::new(), |r| r.unwrap_or_default())
@@ -395,7 +394,7 @@ impl Hub {
         #[graphql(desc = "Permission to check for.")] permission: ChannelPermission,
     ) -> bool {
         self.members.get(&id).map_or(false, |m| {
-            m.has_channel_permission(&channel, permission, self)
+            m.has_channel_permission(channel, permission, self)
         })
     }
 }
@@ -429,7 +428,7 @@ impl PermissionGroup {
         if let Some(setting) = self.hub_permissions.get(&permission) {
             Some(HubPermissionSet {
                 permission,
-                setting: setting.clone(),
+                setting: *setting,
             })
         } else {
             None
@@ -441,10 +440,7 @@ impl PermissionGroup {
             .iter()
             .filter_map(|(permission, setting)| {
                 if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((
-                        permission.clone(),
-                        Some(setting.clone()),
-                    )))
+                    Some(HubPermissionSet::from((*permission, Some(*setting))))
                 } else {
                     None
                 }
@@ -458,12 +454,10 @@ impl PermissionGroup {
         #[graphql(desc = "Permission to check for.")] permission: ChannelPermission,
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
-            setting.get(&permission).map_or(None, |s| {
-                Some(ChannelPermissionSet {
-                    permission,
-                    setting: s.clone(),
-                    channel,
-                })
+            setting.get(&permission).map(|s| ChannelPermissionSet {
+                permission,
+                setting: *s,
+                channel,
             })
         } else {
             None
@@ -481,9 +475,9 @@ impl PermissionGroup {
                         .filter_map(|(permission, setting)| {
                             if let Some(setting) = setting {
                                 Some(ChannelPermissionSet::from((
-                                    permission.clone(),
-                                    Some(setting.clone()),
-                                    channel.clone(),
+                                    *permission,
+                                    Some(*setting),
+                                    *channel,
                                 )))
                             } else {
                                 None
@@ -524,7 +518,7 @@ impl HubMember {
         if let Some(setting) = self.hub_permissions.get(&permission) {
             Some(HubPermissionSet {
                 permission,
-                setting: setting.clone(),
+                setting: *setting,
             })
         } else {
             None
@@ -536,10 +530,7 @@ impl HubMember {
             .iter()
             .filter_map(|(permission, setting)| {
                 if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((
-                        permission.clone(),
-                        Some(setting.clone()),
-                    )))
+                    Some(HubPermissionSet::from((*permission, Some(*setting))))
                 } else {
                     None
                 }
@@ -553,12 +544,10 @@ impl HubMember {
         channel: ID,
     ) -> Option<ChannelPermissionSet> {
         if let Some(setting) = self.channel_permissions.get(&channel) {
-            setting.get(&permission).map_or(None, |s| {
-                Some(ChannelPermissionSet {
-                    permission,
-                    setting: s.clone(),
-                    channel,
-                })
+            setting.get(&permission).map(|s| ChannelPermissionSet {
+                permission,
+                setting: *s,
+                channel,
             })
         } else {
             None
@@ -576,9 +565,9 @@ impl HubMember {
                         .filter_map(|(permission, setting)| {
                             if let Some(setting) = setting {
                                 Some(ChannelPermissionSet::from((
-                                    permission.clone(),
-                                    Some(setting.clone()),
-                                    channel.clone(),
+                                    *permission,
+                                    Some(*setting),
+                                    *channel,
                                 )))
                             } else {
                                 None

@@ -107,13 +107,14 @@ pub async fn handle_connection(
                             }
                         }
                         ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
-                            if let Ok(_) = addr
+                            if addr
                                 .call(client_command::UnsubscribeChannel {
                                     hub_id,
                                     channel_id,
                                     connection_id,
                                 })
                                 .await
+                                .is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {
@@ -172,12 +173,13 @@ pub async fn handle_connection(
                             }
                         }
                         ClientMessage::UnsubscribeHub(hub_id) => {
-                            if let Ok(_) = addr
+                            if addr
                                 .call(client_command::UnsubscribeHub {
                                     hub_id,
                                     connection_id,
                                 })
                                 .await
+                                .is_ok()
                             {
                                 ServerMessage::Result(Response::Success)
                             } else {

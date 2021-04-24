@@ -80,6 +80,7 @@ macro_rules! check_permission {
 }
 
 /// Type used to represent IDs throughout wicrs.
+#[allow(clippy::upper_case_acronyms)]
 pub type ID = Uuid;
 
 /// Generates a new random ID.

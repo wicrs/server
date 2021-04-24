@@ -201,7 +201,7 @@ pub fn add_message_to_writer(writer: &mut IndexWriter, message: channel::Message
 }
 
 /// Logs the given message ID to a file, should be called after any Tantivy commits.
-async fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
+async fn log_last_message(hub_id: ID, channel_id: ID, message_id: ID) -> Result {
     let log_path_string = format!(
         "{}/{:x}/{:x}/log",
         crate::hub::HUB_DATA_FOLDER,
@@ -212,7 +212,7 @@ async fn log_last_message(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Resu
     Ok(())
 }
 
-async fn log_if_nologs(hub_id: &ID, channel_id: &ID, message_id: &ID) -> Result {
+async fn log_if_nologs(hub_id: ID, channel_id: ID, message_id: ID) -> Result {
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -250,7 +250,7 @@ impl MessageServer {
     }
 
     /// Sets up the Tantivy index for a given channel, also makes sure that the index is up to date by commiting any messages sent after the last message sent (logged by [`log_last_message`]).
-    async fn setup_index(&mut self, hub_id: &ID, channel_id: &ID) -> Result {
+    async fn setup_index(&mut self, hub_id: ID, channel_id: ID) -> Result {
         let dir_string = format!(
             "{}/{:x}/{:x}/index",
             crate::hub::HUB_DATA_FOLDER,
@@ -268,7 +268,7 @@ impl MessageServer {
             .reload_policy(ReloadPolicy::OnCommit)
             .try_into()?;
         let mut writer = index.writer(50_000_000)?;
-        let key = (hub_id.clone(), channel_id.clone());
+        let key = (hub_id, channel_id);
         let log_path_string = format!(
             "{}/{:x}/{:x}/log",
             crate::hub::HUB_DATA_FOLDER,
@@ -290,10 +290,10 @@ impl MessageServer {
             }
             let json = tokio::fs::read_to_string(path).await?;
             let hub = serde_json::from_str::<Hub>(&json)?;
-            if let Some(channel) = hub.channels.get(channel_id) {
-                let messages = channel.get_all_messages_from(&last_id).await;
+            if let Some(channel) = hub.channels.get(&channel_id) {
+                let messages = channel.get_all_messages_from(last_id).await;
                 let last_id = if let Some(last) = messages.last() {
-                    Some(last.id.clone())
+                    Some(last.id)
                 } else {
                     None
                 };
@@ -303,20 +303,20 @@ impl MessageServer {
                 }
                 writer.commit()?;
                 if let Some(last_id) = last_id {
-                    log_last_message(&hub_id, &channel_id, &last_id).await?;
+                    log_last_message(hub_id, channel_id, last_id).await?;
                 }
                 reader.reload()?;
             }
         }
-        self.indexes.insert(key.clone(), index);
-        self.index_readers.insert(key.clone(), reader);
-        self.index_writers.insert(key.clone(), writer);
+        self.indexes.insert(key, index);
+        self.index_readers.insert(key, reader);
+        self.index_writers.insert(key, writer);
         Ok(())
     }
 
     /// Gets a reader for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
-    async fn get_reader(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&IndexReader> {
-        let key = (hub_id.clone(), channel_id.clone());
+    async fn get_reader(&mut self, hub_id: ID, channel_id: ID) -> Result<&IndexReader> {
+        let key = (hub_id, channel_id);
         if !self.index_readers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
@@ -328,15 +328,15 @@ impl MessageServer {
     }
 
     /// Gets a searcher for the Tantivy index for a channel, uses [`get_reader`].
-    async fn get_searcher(&mut self, hub_id: &ID, channel_id: &ID) -> Result<LeasedItem<Searcher>> {
+    async fn get_searcher(&mut self, hub_id: ID, channel_id: ID) -> Result<LeasedItem<Searcher>> {
         let reader = self.get_reader(hub_id, channel_id).await?;
         let _ = reader.reload();
         Ok(reader.searcher())
     }
 
     /// Gets a writer for a Tantivy index, also runs [`setup_index`] if it hasn't already been run for the given channel.
-    async fn get_writer(&mut self, hub_id: &ID, channel_id: &ID) -> Result<&mut IndexWriter> {
-        let key = (hub_id.clone(), channel_id.clone());
+    async fn get_writer(&mut self, hub_id: ID, channel_id: ID) -> Result<&mut IndexWriter> {
+        let key = (hub_id, channel_id);
         if !self.index_writers.contains_key(&key) {
             self.setup_index(hub_id, channel_id).await?;
         }
@@ -348,12 +348,18 @@ impl MessageServer {
     }
 }
 
+impl Default for MessageServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Actor for MessageServer {
     async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
         for (hc_id, writer) in self.index_writers.iter_mut() {
             if let Some((_, id)) = self.pending_messages.get(&hc_id) {
-                let _ = log_last_message(&hc_id.0, &hc_id.1, id);
+                let _ = log_last_message(hc_id.0, hc_id.1, *id);
             }
             let _ = writer.commit();
         }
@@ -375,30 +381,23 @@ impl Handler<SearchMessageIndex> for MessageServer {
             };
             if let Some(pending) = pending {
                 if pending.0 != 0 {
-                    let _ = self
-                        .get_writer(&msg.hub_id, &msg.channel_id)
-                        .await?
-                        .commit();
-                    log_last_message(&msg.hub_id, &msg.channel_id, &pending.1).await?;
+                    let _ = self.get_writer(msg.hub_id, msg.channel_id).await?.commit();
+                    log_last_message(msg.hub_id, msg.channel_id, pending.1).await?;
 
-                    self.pending_messages.insert(
-                        (msg.hub_id.clone(), msg.channel_id.clone()),
-                        (0, pending.1.clone()),
-                    );
+                    self.pending_messages
+                        .insert((msg.hub_id, msg.channel_id), (0, pending.1));
                 }
             }
         }
-        let searcher = self.get_searcher(&msg.hub_id, &msg.channel_id).await?;
-        let query_parser = QueryParser::for_index(
-            searcher.index(),
-            vec![MESSAGE_SCHEMA_FIELDS.content.clone()],
-        );
+        let searcher = self.get_searcher(msg.hub_id, msg.channel_id).await?;
+        let query_parser =
+            QueryParser::for_index(searcher.index(), vec![MESSAGE_SCHEMA_FIELDS.content]);
         let query = query_parser.parse_query(&msg.query)?;
         let top_docs = searcher.search(&query, &TopDocs::with_limit(msg.limit))?;
         let mut result = Vec::new();
         for (_score, doc_address) in top_docs {
             let retrieved_doc = searcher.doc(doc_address)?;
-            if let Some(value) = retrieved_doc.get_first(MESSAGE_SCHEMA_FIELDS.id.clone()) {
+            if let Some(value) = retrieved_doc.get_first(MESSAGE_SCHEMA_FIELDS.id) {
                 if let Some(bytes) = value.bytes_value() {
                     if let Ok(id) = bincode::deserialize::<ID>(bytes) {
                         result.push(id);
@@ -414,7 +413,7 @@ impl Handler<SearchMessageIndex> for MessageServer {
 impl Handler<NewMessageForIndex> for MessageServer {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: NewMessageForIndex) -> Result {
         let mut new_pending: u8;
-        let message_id = msg.message.id.clone();
+        let message_id = msg.message.id;
         if let Some((pending, _)) = self
             .pending_messages
             .get(&(msg.hub_id, msg.channel_id))
@@ -422,17 +421,17 @@ impl Handler<NewMessageForIndex> for MessageServer {
         {
             new_pending = pending + 1;
             if pending >= crate::TANTIVY_COMMIT_THRESHOLD {
-                let mut writer = self.get_writer(&msg.hub_id, &msg.channel_id).await?;
+                let mut writer = self.get_writer(msg.hub_id, msg.channel_id).await?;
                 add_message_to_writer(&mut writer, msg.message)?;
                 writer.commit()?;
-                log_last_message(&msg.hub_id, &msg.channel_id, &message_id).await?;
+                log_last_message(msg.hub_id, msg.channel_id, message_id).await?;
                 new_pending = 0;
             } else {
-                log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
+                log_if_nologs(msg.hub_id, msg.channel_id, message_id).await?;
             }
         } else {
             new_pending = 1;
-            log_if_nologs(&msg.hub_id, &msg.channel_id, &message_id).await?;
+            log_if_nologs(msg.hub_id, msg.channel_id, message_id).await?;
         }
         let _ = self
             .pending_messages
@@ -553,18 +552,18 @@ impl Handler<client_command::SubscribeHub> for Server {
         _ctx: &mut Context<Self>,
         msg: client_command::SubscribeHub,
     ) -> Result {
-        Hub::load(&msg.hub_id)
+        Hub::load(msg.hub_id)
             .await
             .and_then(|hub| hub.get_member(&msg.user_id))?;
         self.subscribed
             .write()
             .await
-            .entry(msg.connection_id.clone())
+            .entry(msg.connection_id)
             .or_default()
             .write()
             .await
             .1
-            .insert(msg.hub_id.clone());
+            .insert(msg.hub_id);
         self.subscribed_hubs
             .write()
             .await
@@ -596,7 +595,7 @@ impl Handler<client_command::SubscribeChannel> for Server {
         _ctx: &mut Context<Self>,
         msg: client_command::SubscribeChannel,
     ) -> Result {
-        Hub::load(&msg.hub_id)
+        Hub::load(msg.hub_id)
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
@@ -608,7 +607,7 @@ impl Handler<client_command::SubscribeChannel> for Server {
             .and_then(|(hub, user)| {
                 check_permission!(
                     user,
-                    &msg.channel_id,
+                    msg.channel_id,
                     crate::permission::ChannelPermission::Read,
                     hub
                 );
@@ -618,12 +617,12 @@ impl Handler<client_command::SubscribeChannel> for Server {
         self.subscribed
             .write()
             .await
-            .entry(msg.connection_id.clone())
+            .entry(msg.connection_id)
             .or_default()
             .write()
             .await
             .0
-            .insert(key.clone());
+            .insert(key);
         self.subscribed_channels
             .write()
             .await
@@ -656,7 +655,7 @@ impl Handler<client_command::StartTyping> for Server {
         _ctx: &mut Context<Self>,
         msg: client_command::StartTyping,
     ) -> Result {
-        Hub::load(&msg.hub_id)
+        Hub::load(msg.hub_id)
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
@@ -668,18 +667,14 @@ impl Handler<client_command::StartTyping> for Server {
             .and_then(|(hub, user)| {
                 check_permission!(
                     user,
-                    &msg.channel_id,
+                    msg.channel_id,
                     crate::permission::ChannelPermission::Write,
                     hub
                 );
                 Ok(())
             })?;
         self.send_channel(
-            ServerMessage::UserStartedTyping(
-                msg.user_id,
-                msg.hub_id.clone(),
-                msg.channel_id.clone(),
-            ),
+            ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id, msg.channel_id),
             msg.hub_id,
             msg.channel_id,
         )
@@ -695,7 +690,7 @@ impl Handler<client_command::StopTyping> for Server {
         _ctx: &mut Context<Self>,
         msg: client_command::StopTyping,
     ) -> Result {
-        Hub::load(&msg.hub_id)
+        Hub::load(msg.hub_id)
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
@@ -707,18 +702,14 @@ impl Handler<client_command::StopTyping> for Server {
             .and_then(|(hub, user)| {
                 check_permission!(
                     user,
-                    &msg.channel_id,
+                    msg.channel_id,
                     crate::permission::ChannelPermission::Write,
                     hub
                 );
                 Ok(())
             })?;
         self.send_channel(
-            ServerMessage::UserStoppedTyping(
-                msg.user_id,
-                msg.hub_id.clone(),
-                msg.channel_id.clone(),
-            ),
+            ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id, msg.channel_id),
             msg.hub_id,
             msg.channel_id,
         )
@@ -736,9 +727,9 @@ impl Handler<ServerNotification> for Server {
                 let _ = self
                     .message_server
                     .call(NewMessageForIndex {
-                        hub_id: hub_id.clone(),
-                        channel_id: channel_id.clone(),
-                        message: message.clone(),
+                        hub_id,
+                        channel_id,
+                        message,
                     })
                     .await;
                 self.send_channel(
@@ -749,11 +740,8 @@ impl Handler<ServerNotification> for Server {
                 .await
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
-                self.send_hub(
-                    ServerMessage::HubUpdated(hub_id.clone(), update_type),
-                    &hub_id,
-                )
-                .await
+                self.send_hub(ServerMessage::HubUpdated(hub_id, update_type), &hub_id)
+                    .await
             }
         }
     }

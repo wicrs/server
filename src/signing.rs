@@ -89,9 +89,9 @@ impl TryFrom<&OpenPGPMessage> for Message {
         Ok(serde_json::from_str(
             &value
                 .get_literal()
-                .map_or_else(|| Err(Error::InvalidMessage), |s| Ok(s))?
+                .map_or_else(|| Err(Error::InvalidMessage), Ok)?
                 .to_string()
-                .map_or_else(|| Err(Error::InvalidMessage), |s| Ok(s))?,
+                .map_or_else(|| Err(Error::InvalidMessage), Ok)?,
         )?)
     }
 }

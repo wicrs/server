@@ -33,8 +33,10 @@ pub async fn start(config: Config) -> Result {
                 Schema<QueryRoot, MutationRoot, EmptySubscription>,
                 async_graphql::Request,
             )| async move {
-                let resp = schema.execute(request.data(server).data("test".to_string())).await;
-                return Ok::<_, Infallible>(Response::from(resp));
+                let resp = schema
+                    .execute(request.data(server).data("test".to_string()))
+                    .await;
+                Ok::<_, Infallible>(Response::from(resp))
             },
         );
 
@@ -44,7 +46,9 @@ pub async fn start(config: Config) -> Result {
             .map(move |ws: warp::ws::Ws| {
                 let server = server.clone();
                 ws.on_upgrade(move |websocket| async move {
-                    let _ = crate::websocket::handle_connection(websocket, "test".to_string(), server).await;
+                    let _ =
+                        crate::websocket::handle_connection(websocket, "test".to_string(), server)
+                            .await;
                 })
             });
 
@@ -52,8 +56,7 @@ pub async fn start(config: Config) -> Result {
         HttpResponse::builder()
             .header("content-type", "text/html")
             .body(playground_source(
-                GraphQLPlaygroundConfig::new(format!("/graphql").as_str())
-                    .subscription_endpoint("/"),
+                GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/"),
             ))
     });
 

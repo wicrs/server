@@ -236,7 +236,7 @@ impl Channel {
     }
 
     /// Gets all messages that were sent after the message with the given ID.
-    pub async fn get_messages_after(&self, id: &ID, max: usize) -> Vec<Message> {
+    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -250,7 +250,7 @@ impl Channel {
                     let mut iter =
                         bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
                             .into_iter();
-                    if let Some(_) = iter.position(|m| &m.id == id) {
+                    if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                         let len = result.len();
                         if len == max {
@@ -267,7 +267,7 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
+    pub async fn get_all_messages_from(&self, id: ID) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
@@ -276,17 +276,11 @@ impl Channel {
                     files.push(entry)
                 }
             }
+
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
                     let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if let Some(_) = iter.position(|m| {
-                        if &m.id == id {
-                            result.push(m);
-                            true
-                        } else {
-                            false
-                        }
-                    }) {
+                    if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                     }
                 }
@@ -296,7 +290,7 @@ impl Channel {
     }
 
     /// Get the first message with the given ID.
-    pub async fn get_message(&self, id: &ID) -> Option<Message> {
+    pub async fn get_message(&self, id: ID) -> Option<Message> {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -308,7 +302,7 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     if let Some(msg) = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .find(|m: &Message| &m.id == id)
+                        .find(|m: &Message| m.id == id)
                     {
                         return Some(msg);
                     }
