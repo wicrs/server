@@ -1,7 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
 use chrono::{DateTime, Utc};
-use pgp::StandaloneSignature;
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
@@ -340,11 +339,6 @@ impl Message {
             id: new_id(),
         }
     }
-}
-
-pub struct ServerSignedMessage {
-    pub message: Message,
-    pub server_signature: StandaloneSignature,
 }
 
 impl Display for Message {

@@ -70,7 +70,8 @@ pub enum Error {
     #[error("Warp error")]
     Warp(#[from] warp::Error),
     #[error("PGP error")]
-    Pgp(#[from] pgp::errors::Error),
+    #[allow(clippy::upper_case_acronyms)]
+    PGP(#[from] pgp::errors::Error),
     #[error("{0}")]
     Other(String),
 }

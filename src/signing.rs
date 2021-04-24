@@ -141,7 +141,7 @@ pub fn sign_and_verify() -> Result {
 
     let _ = println!(
         "{}",
-        Message::try_from(&dbg!(OpenPGPMessage::from_string(&msg_armored_str)?.0))?
+        Message::try_from(&OpenPGPMessage::from_string(&msg_armored_str)?.0)?
     );
 
     let _ = sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;
