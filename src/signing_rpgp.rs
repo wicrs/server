@@ -16,7 +16,8 @@ use pgp::{
 };
 use smallvec::*;
 
-pub const SECRET_KEY_PATH: &str = "data/secret_key";
+pub const SECRET_KEY_PATH: &str = "data/secret_key_rpgp";
+pub const PUBLIC_KEY_PATH: &str = "data/secret_key_rpgp.pub";
 
 pub struct KeyPair {
     pub secret_key: SignedSecretKey,
@@ -44,16 +45,17 @@ impl KeyPair {
         })
     }
 
-    pub fn save_secret_key(&self) -> Result {
+    pub fn save(&self) -> Result {
         std::fs::write(SECRET_KEY_PATH, self.secret_key.to_armored_bytes(None)?)?;
+        std::fs::write(PUBLIC_KEY_PATH, self.public_key.to_armored_bytes(None)?)?;
         Ok(())
     }
 
     pub fn load() -> Result<Self> {
         let secret_key =
             SignedSecretKey::from_string(&std::fs::read_to_string(SECRET_KEY_PATH)?)?.0;
-        let passwd_fn = || String::new();
-        let public_key = secret_key.public_key().sign(&secret_key, passwd_fn)?;
+        let public_key =
+            SignedPublicKey::from_string(&std::fs::read_to_string(PUBLIC_KEY_PATH)?)?.0;
         Ok(Self {
             secret_key,
             public_key,
@@ -123,7 +125,7 @@ pub fn sign_and_verify() -> Result {
     } else {
         let key_pair =
             KeyPair::new("WICRS Server <server@wic.rs>").expect("Failed to create a new key pair.");
-        let _ = key_pair.save_secret_key();
+        let _ = key_pair.save();
         key_pair
     };
 

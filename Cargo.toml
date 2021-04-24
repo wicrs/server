@@ -7,8 +7,6 @@ license = "GPL-3.0"
 description = "A server/channel based chat handler backend."
 repository = "https://github.com/wicrs/server"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"] }
@@ -34,7 +32,8 @@ warp = "0.3"
 async-graphql = { version = "2.0", features = ["uuid", "string_number", "chrono"] }
 async-graphql-warp = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
-pgp = "0.7"
+pgp = "0.7.1"
+sequoia-openpgp = "1.1"
 smallvec = "1.6"
 hex = "0.4"
 thiserror = "1.0"
