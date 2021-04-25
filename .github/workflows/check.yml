@@ -36,3 +36,6 @@ jobs:
         with:
           command: clippy
           args: '-- -D warnings -A clippy::upper_case_acronyms'
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
