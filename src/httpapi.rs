@@ -4,7 +4,10 @@ use async_graphql_warp::Response;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
+
+use pgp::Deserializable;
 
 use crate::error::{Error, Result};
 use crate::graphql_model::{MutationRoot, QueryRoot};
@@ -24,19 +27,37 @@ pub async fn start(config: Config) -> Result {
     let graphql_server_arc = server.clone();
 
     let graphql_post = warp::any()
-        .map(move || graphql_server_arc.clone())
+        .map(move || (graphql_server_arc.clone(), schema.clone()))
         .and(warp::path("graphql"))
-        .and(async_graphql_warp::graphql(schema.clone()))
+        .and(warp::body::bytes())
         .and_then(
-            |server: Arc<Addr<Server>>,
-             (schema, request): (
+            |(server, schema): (
+                Arc<Addr<Server>>,
                 Schema<QueryRoot, MutationRoot, EmptySubscription>,
-                async_graphql::Request,
-            )| async move {
-                let resp = schema
-                    .execute(request.data(server).data("test".to_string()))
-                    .await;
-                Ok::<_, Infallible>(Response::from(resp))
+            ),
+             body: warp::hyper::body::Bytes| async move {
+                Ok::<_, Infallible>(
+                    async {
+                        let body = body.to_vec();
+                        let message = pgp::Message::from_bytes(&mut body.as_slice())?;
+                        let content = message
+                            .get_literal()
+                            .ok_or(Error::InvalidMessage)?
+                            .to_string()
+                            .ok_or(Error::InvalidMessage)?;
+                        let signature = message.clone().into_signature().signature;
+                        let key_id = signature.issuer().ok_or(Error::InvalidMessage)?;
+                        let pub_key = crate::signing::get_or_import_public_key(key_id)?;
+                        message.verify(&pub_key)?;
+                        let request = Request::new(content);
+                        let resp = schema
+                            .execute(request.data(server).data(hex::encode(key_id)))
+                            .await;
+                        Ok::<_, Error>(resp)
+                    }
+                    .await
+                    .map_or_else(|e| e.into_response(), |o| Response::from(o).into_response()),
+                )
             },
         );
 

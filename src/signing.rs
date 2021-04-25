@@ -2,7 +2,6 @@ use std::convert::TryFrom;
 
 use crate::error::Result;
 use crate::{channel::Message, error::Error};
-use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
 use pgp::types::{CompressionAlgorithm, SecretKeyTrait};
@@ -14,10 +13,15 @@ use pgp::{
     },
     types::PublicKeyTrait,
 };
+use pgp::{
+    crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm},
+    types::KeyId,
+};
 use smallvec::*;
 
 pub const SECRET_KEY_PATH: &str = "data/secret_key.asc";
 pub const PUBLIC_KEY_PATH: &str = "data/public_key.asc";
+pub const USER_PUBLIC_KEY_FOLDER: &str = "data/user_public_keys/";
 
 pub struct KeyPair {
     pub secret_key: SignedSecretKey,
@@ -109,6 +113,21 @@ impl Message {
         }
         Err(Error::InvalidMessage)
     }
+
+    pub fn sign_final<F: FnOnce() -> String>(
+        message_str: &str,
+        server_public_key: &impl PublicKeyTrait,
+        client_secret_key: &impl SecretKeyTrait,
+        password: F,
+    ) -> Result<OpenPGPMessage> {
+        let pgp_message = OpenPGPMessage::from_string(message_str)?.0;
+        pgp_message.verify(server_public_key)?;
+        let message = Message::try_from(&pgp_message)?;
+        Ok(
+            OpenPGPMessage::Literal(LiteralData::from_str(&message.id.to_string(), message_str))
+                .sign(client_secret_key, password, HashAlgorithm::SHA2_256)?,
+        )
+    }
 }
 
 impl TryFrom<&Message> for OpenPGPMessage {
@@ -152,22 +171,31 @@ impl TryFrom<OpenPGPMessage> for Message {
     }
 }
 
-pub fn sign_final<F: FnOnce() -> String>(
-    message_str: &str,
-    server_public_key: &impl PublicKeyTrait,
-    client_secret_key: &impl SecretKeyTrait,
-    password: F,
-) -> Result<OpenPGPMessage> {
-    let pgp_message = OpenPGPMessage::from_string(message_str)?.0;
-    pgp_message.verify(server_public_key)?;
-    let message = Message::try_from(&pgp_message)?;
-    Ok(
-        OpenPGPMessage::Literal(LiteralData::from_str(&message.id.to_string(), message_str)).sign(
-            client_secret_key,
-            password,
-            HashAlgorithm::SHA2_256,
-        )?,
-    )
+// Unsafe, here for reference if for some reason this is needed (appears to work with `pgp = "0.7.1"`)
+// This was only thought of because the signature field in [`StandaloneSignature`] was private in the latest version of rpgp (at the time "0.7.1").
+//
+// pub trait GetSignature {
+//     fn get_signature(self) -> Signature;
+// }
+
+// impl GetSignature for StandaloneSignature {
+//     fn get_signature(self) -> Signature {
+//         struct StandaloneSignature {
+//             signature: Signature,
+//         }
+//         let transmuted: StandaloneSignature = unsafe { std::mem::transmute(self) };
+//         transmuted.signature
+//     }
+// }
+
+pub fn get_or_import_public_key(key_id: &KeyId) -> Result<SignedPublicKey> {
+    let file_name = format!("{}{}", USER_PUBLIC_KEY_FOLDER, hex::encode(key_id.as_ref()));
+    let path = std::path::Path::new(&file_name);
+    if path.is_file() {
+        Ok(SignedPublicKey::from_string(&std::fs::read_to_string(path)?)?.0)
+    } else {
+        Err(Error::PublicKeyNotFound)
+    }
 }
 
 pub fn sign_and_verify() -> Result {
@@ -175,8 +203,6 @@ pub fn sign_and_verify() -> Result {
         secret_key,
         public_key,
     } = KeyPair::load_or_create("WICRS Server <server@wic.rs>")?;
-
-    println!("key_id: {}\n", hex::encode(secret_key.key_id().to_vec()));
 
     let message = Message::new("test".into(), "this is a test message".into());
 
@@ -187,10 +213,20 @@ pub fn sign_and_verify() -> Result {
 
     println!("{}\n", msg_armored_str);
 
-    let final_message = sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;
+    let final_message = Message::sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;
     let final_message_str = final_message.to_armored_string(None)?;
 
     println!("{}\n", final_message_str);
+
+    let signature = final_message.into_signature().signature;
+
+    println!(
+        "sig_issuer id: {:?}\npublic_key id: {:?}\npublic_key user_id: {}\npublic_key fp: {}\n",
+        signature.issuer(),
+        public_key.key_id(),
+        public_key.details.users.first().unwrap().id,
+        hex::encode(public_key.fingerprint())
+    );
 
     let _ = println!(
         "{}",

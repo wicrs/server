@@ -72,6 +72,8 @@ pub enum Error {
     #[error("PGP error")]
     #[allow(clippy::upper_case_acronyms)]
     PGP(#[from] pgp::errors::Error),
+    #[error("could not find a pgp public key with that ID")]
+    PublicKeyNotFound,
     #[error("{0}")]
     Other(String),
 }
@@ -104,5 +106,13 @@ impl From<&Error> for StatusCode {
             Error::NotTyping => Self::CONFLICT,
             _ => Self::INTERNAL_SERVER_ERROR,
         }
+    }
+}
+
+impl warp::reply::Reply for Error {
+    fn into_response(self) -> warp::reply::Response {
+        let mut response = warp::reply::Response::new(warp::hyper::Body::from(self.to_string()));
+        *response.status_mut() = (&self).into();
+        response
     }
 }
