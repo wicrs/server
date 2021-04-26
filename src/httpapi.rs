@@ -79,7 +79,7 @@ pub async fn start(config: Config) -> Result {
                         ))
                         .sign(
                             &key_pair.secret_key,
-                            || String::new(),
+                            String::new,
                             HashAlgorithm::SHA2_256,
                         )?;
                         let mut reply = HttpResponse::<String>::default();
