@@ -2,9 +2,6 @@ use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
 use tokio::sync::RwLock;
 
-use chrono::Duration;
-use chrono::Utc;
-
 use xactor::{Actor, Addr};
 
 use std::collections::HashMap;
@@ -20,8 +17,6 @@ use warp::{http::Response as HttpResponse, Filter};
 
 use pgp::crypto::HashAlgorithm;
 use pgp::packet::LiteralData;
-use pgp::types::KeyTrait;
-use pgp::Deserializable;
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
 
@@ -68,34 +63,10 @@ pub async fn start(config: Config) -> Result {
 
     let signed_body = public_key_filter.and(warp::body::bytes()).and_then(
         |requester_public_key: SignedPublicKey, body: Bytes| async move {
-            async {
-                let message =
-                    OpenPGPMessage::from_armor_single(std::io::Cursor::new(body.to_vec()))?.0;
-                message.verify(&requester_public_key)?;
-                let message = message.decompress()?;
-                if let pgp::composed::message::Message::Signed {
-                    message,
-                    one_pass_signature: _,
-                    signature,
-                } = message
-                {
-                    let sig_time = signature.created().ok_or(Error::InvalidMessage)?;
-                    let expire = Utc::now()
-                        .checked_add_signed(Duration::seconds(10))
-                        .ok_or(Error::UnexpectedServerArg)?;
-                    if sig_time > &expire {
-                        return Err(Error::InvalidMessage);
-                    }
-                    let message = message.ok_or(Error::InvalidMessage)?;
-                    let literal_message = message.get_literal().ok_or(Error::InvalidMessage)?;
-
-                    let content = String::from_utf8(literal_message.data().to_vec())?;
-                    Ok((content, hex::encode(requester_public_key.fingerprint())))
-                } else {
-                    Err(Error::InvalidMessage)
-                }
-            }
-            .await
+            crate::signing::verify_message_extract(
+                &requester_public_key,
+                std::io::Cursor::new(body.to_vec()),
+            )
             .map_err(warp::reject::custom)
         },
     );
@@ -186,34 +157,37 @@ pub async fn start(config: Config) -> Result {
         );
 
     let web_socket = warp::path!("v2" / "websocket")
-        .map(move || (auth_list_ws.clone(), server.clone()))
-        .and(warp::ws())
-        .and(signed_body)
+        .map(move || auth_list_ws.clone())
+        .and(public_key_filter)
+        .and(warp::header("signed-ws-key"))
         .and_then(
-            |(auth_list, server): (WsAuthList, ServerAddr),
-             ws: Ws,
-             (content, fingerprint): (String, String)| async move {
-                let read = auth_list.read().await;
-                if let Some(key) = read.get(&fingerprint) {
-                    if key == &content {
-                        drop(read);
-                        let _ = auth_list.write().await.remove(&fingerprint);
-                        let server = server.clone();
-                        return Ok(ws
-                            .on_upgrade(move |websocket| async move {
-                                let _ = crate::websocket::handle_connection(
-                                    websocket,
-                                    fingerprint,
-                                    server,
-                                )
-                                .await;
-                            })
-                            .into_response());
+            |auth_list: WsAuthList, public_key: SignedPublicKey, message: String| async move {
+                async {
+                    let message_bytes = message.as_bytes();
+                    let (client_key, fingerprint) = crate::signing::verify_message_extract(
+                        &public_key,
+                        std::io::Cursor::new(message_bytes.to_vec()),
+                    )?;
+                    let read = auth_list.read().await;
+                    if let Some(key) = read.get(&fingerprint) {
+                        if key == &client_key {
+                            drop(read);
+                            let _ = auth_list.write().await.remove(&fingerprint);
+                        }
                     }
+                    Ok::<_, Error>(fingerprint)
                 }
-                Err(Error::WsNotAuthenticated).map_err(warp::reject::custom)
+                .await
+                .map_err(warp::reject::custom)
             },
-        );
+        )
+        .map(move |fingerprint: String| (server.clone(), fingerprint))
+        .and(warp::ws())
+        .map(move |(server, fingerprint): (ServerAddr, String), ws: Ws| {
+            ws.on_upgrade(move |websocket| async move {
+                let _ = crate::websocket::handle_connection(websocket, fingerprint, server).await;
+            })
+        });
 
     let routes = graphql_post.or(web_socket).or(pre_web_socket);
     warp::serve(routes)

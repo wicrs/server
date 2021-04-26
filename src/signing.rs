@@ -1,7 +1,11 @@
-use std::convert::TryFrom;
+use std::{
+    convert::TryFrom,
+    io::{Read, Seek},
+};
 
 use crate::error::Result;
 use crate::{channel::Message, error::Error};
+use chrono::{Duration, Utc};
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
@@ -197,6 +201,36 @@ pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicK
         Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
     } else {
         Err(Error::PublicKeyNotFound)
+    }
+}
+
+pub fn verify_message_extract<R: Read + Seek>(
+    public_key: &SignedPublicKey,
+    message: R,
+) -> Result<(String, String)> {
+    let message = OpenPGPMessage::from_armor_single(message)?.0;
+    message.verify(&public_key)?;
+    let message = message.decompress()?;
+    if let pgp::composed::message::Message::Signed {
+        message,
+        one_pass_signature: _,
+        signature,
+    } = message
+    {
+        let sig_time = signature.created().ok_or(Error::InvalidMessage)?;
+        let expire = Utc::now()
+            .checked_add_signed(Duration::seconds(10))
+            .ok_or(Error::UnexpectedServerArg)?;
+        if sig_time > &expire {
+            return Err(Error::InvalidMessage);
+        }
+        let message = message.ok_or(Error::InvalidMessage)?;
+        let literal_message = message.get_literal().ok_or(Error::InvalidMessage)?;
+
+        let content = String::from_utf8(literal_message.data().to_vec())?;
+        Ok((content, hex::encode(public_key.fingerprint())))
+    } else {
+        Err(Error::InvalidMessage)
     }
 }
 
