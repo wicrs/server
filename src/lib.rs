@@ -79,7 +79,7 @@ macro_rules! check_permission {
     };
 }
 
-/// Type used to represent IDs throughout wicrs.
+/// Type used to represent IDs of non user objects throughout wicrs.
 #[allow(clippy::upper_case_acronyms)]
 pub type ID = Uuid;
 

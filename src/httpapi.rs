@@ -1,4 +1,4 @@
-use async_graphql::*;
+use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
 use tokio::sync::RwLock;
 
@@ -7,13 +7,14 @@ use chrono::Utc;
 
 use xactor::{Actor, Addr};
 
-use static_assertions::_core::convert::TryInto;
-
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use warp::hyper::body::Bytes;
+use warp::ws::Ws;
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
@@ -29,6 +30,11 @@ use crate::error::{Error, Result};
 use crate::graphql_model::{MutationRoot, QueryRoot};
 use crate::server::Server;
 use crate::signing::KeyPair;
+
+type SchemaType = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+type WsAuthList = Arc<RwLock<HashMap<String, String>>>;
+type ServerAddr = Arc<Addr<Server>>;
+type KeyPairArc = Arc<KeyPair>;
 
 pub async fn start(config: Config) -> Result {
     let key_pair = Arc::new(KeyPair::load_or_create("WICRS Server <server@wic.rs>")?);
@@ -53,7 +59,7 @@ pub async fn start(config: Config) -> Result {
     });
 
     let signed_body = public_key_filter.and(warp::body::bytes()).and_then(
-        |requester_public_key: SignedPublicKey, body: warp::hyper::body::Bytes| async move {
+        |requester_public_key: SignedPublicKey, body: Bytes| async move {
             async {
                 let message =
                     OpenPGPMessage::from_armor_single(std::io::Cursor::new(body.to_vec()))?.0;
@@ -91,15 +97,11 @@ pub async fn start(config: Config) -> Result {
         .and(warp::path("graphql"))
         .and(signed_body)
         .and_then(
-            |(server, schema, key_pair): (
-                Arc<Addr<Server>>,
-                Schema<QueryRoot, MutationRoot, EmptySubscription>,
-                Arc<KeyPair>,
-            ),
+            |(server, schema, key_pair): (ServerAddr, SchemaType, KeyPairArc),
              (content, fingerprint): (String, String)| async move {
                 Ok::<_, Infallible>(
                     async {
-                        let request = Request::new(content);
+                        let request = GraphQLRequest::new(content);
                         let resp = schema
                             .execute(request.data(server).data(hex::encode(fingerprint)))
                             .await;
@@ -146,14 +148,14 @@ pub async fn start(config: Config) -> Result {
             },
         );
 
-    let auth_list: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    let auth_list: WsAuthList = Arc::new(RwLock::new(HashMap::new()));
     let auth_list_ws = auth_list.clone();
 
     let pre_web_socket = warp::path!("v2" / "websocket_init")
         .map(move || (auth_list.clone(), key_pair_ws.clone()))
         .and(signed_body)
         .and_then(
-            |(auth_list, key_pair): (Arc<RwLock<HashMap<String, String>>>, Arc<KeyPair>),
+            |(auth_list, key_pair): (WsAuthList, KeyPairArc),
              (content, fingerprint): (String, String)| async move {
                 async {
                     if content == format!("websocket_connect {}", fingerprint) {
@@ -180,12 +182,13 @@ pub async fn start(config: Config) -> Result {
         .and(warp::ws())
         .and(signed_body)
         .and_then(
-            |(auth_list, server): (Arc<RwLock<HashMap<String, String>>>, Arc<Addr<Server>>),
-             ws: warp::ws::Ws,
+            |(auth_list, server): (WsAuthList, ServerAddr),
+             ws: Ws,
              (content, fingerprint): (String, String)| async move {
-                if let Some(key) = auth_list.read().await.get(&fingerprint) {
+                let read = auth_list.read().await;
+                if let Some(key) = read.get(&fingerprint) {
                     if key == &content {
-                        drop(key);
+                        drop(read);
                         let _ = auth_list.write().await.remove(&fingerprint);
                         let server = server.clone();
                         return Ok(ws
@@ -200,7 +203,7 @@ pub async fn start(config: Config) -> Result {
                             .into_response());
                     }
                 }
-                Err(Error::WSNotAuthenticated).map_err(warp::reject::custom)
+                Err(Error::WsNotAuthenticated).map_err(warp::reject::custom)
             },
         );
 

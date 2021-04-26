@@ -72,7 +72,7 @@ pub enum Error {
     #[error("request expired")]
     Expired,
     #[error("not authenticated for websocket")]
-    WSNotAuthenticated,
+    WsNotAuthenticated,
     #[error("Warp error")]
     Warp(#[from] warp::Error),
     #[error("PGP error")]
