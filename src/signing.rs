@@ -195,7 +195,7 @@ impl TryFrom<OpenPGPMessage> for Message {
 // }
 
 pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
-    let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint);
+    let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint.to_ascii_uppercase());
     let path = std::path::Path::new(&file_name);
     if path.is_file() {
         Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
