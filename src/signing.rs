@@ -2,6 +2,7 @@ use std::convert::TryFrom;
 
 use crate::error::Result;
 use crate::{channel::Message, error::Error};
+use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
 use pgp::types::KeyTrait;
 use pgp::types::{CompressionAlgorithm, SecretKeyTrait};
@@ -13,16 +14,13 @@ use pgp::{
     },
     types::PublicKeyTrait,
 };
-use pgp::{
-    crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm},
-    types::KeyId,
-};
 use smallvec::*;
 
 pub const SECRET_KEY_PATH: &str = "data/secret_key.asc";
 pub const PUBLIC_KEY_PATH: &str = "data/public_key.asc";
 pub const USER_PUBLIC_KEY_FOLDER: &str = "data/user_public_keys/";
 
+#[derive(Clone, Debug)]
 pub struct KeyPair {
     pub secret_key: SignedSecretKey,
     pub public_key: SignedPublicKey,
@@ -188,8 +186,8 @@ impl TryFrom<OpenPGPMessage> for Message {
 //     }
 // }
 
-pub fn get_or_import_public_key(key_id: &KeyId) -> Result<SignedPublicKey> {
-    let file_name = format!("{}{}", USER_PUBLIC_KEY_FOLDER, hex::encode(key_id.as_ref()));
+pub fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
+    let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint);
     let path = std::path::Path::new(&file_name);
     if path.is_file() {
         Ok(SignedPublicKey::from_string(&std::fs::read_to_string(path)?)?.0)
@@ -218,14 +216,10 @@ pub fn sign_and_verify() -> Result {
 
     println!("{}\n", final_message_str);
 
-    let signature = final_message.into_signature().signature;
-
     println!(
-        "sig_issuer id: {:?}\npublic_key id: {:?}\npublic_key user_id: {}\npublic_key fp: {}\n",
-        signature.issuer(),
+        "public_key id: {:?}\npublic_key user_id: {}\n",
         public_key.key_id(),
         public_key.details.users.first().unwrap().id,
-        hex::encode(public_key.fingerprint())
     );
 
     let _ = println!(

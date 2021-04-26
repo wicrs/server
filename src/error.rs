@@ -1,3 +1,5 @@
+use std::string::FromUtf8Error;
+
 use crate::permission::{ChannelPermission, HubPermission};
 use reqwest::StatusCode;
 use thiserror::Error;
@@ -81,6 +83,12 @@ pub enum Error {
 impl From<String> for Error {
     fn from(s: String) -> Self {
         Self::Other(s)
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(_: FromUtf8Error) -> Self {
+        Self::InvalidText
     }
 }
 
