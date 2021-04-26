@@ -1,9 +1,19 @@
-use crate::config::Config;
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
+use async_graphql::*;
+
+use tokio::sync::RwLock;
+
+use chrono::Duration;
+use chrono::Utc;
+
+use xactor::{Actor, Addr};
+
 use static_assertions::_core::convert::TryInto;
+
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
@@ -14,15 +24,15 @@ use pgp::Deserializable;
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
 
+use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::graphql_model::{MutationRoot, QueryRoot};
 use crate::server::Server;
 use crate::signing::KeyPair;
-use async_graphql::*;
-use xactor::{Actor, Addr};
 
 pub async fn start(config: Config) -> Result {
-    let key_pair = KeyPair::load_or_create("WICRS Server <server@wic.rs>")?;
+    let key_pair = Arc::new(KeyPair::load_or_create("WICRS Server <server@wic.rs>")?);
+    let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
         Server::new()
@@ -42,36 +52,56 @@ pub async fn start(config: Config) -> Result {
             .map_err(warp::reject::custom)
     });
 
+    let signed_body = public_key_filter.and(warp::body::bytes()).and_then(
+        |requester_public_key: SignedPublicKey, body: warp::hyper::body::Bytes| async move {
+            async {
+                let message =
+                    OpenPGPMessage::from_armor_single(std::io::Cursor::new(body.to_vec()))?.0;
+                message.verify(&requester_public_key)?;
+                let message = message.decompress()?;
+                if let pgp::composed::message::Message::Signed {
+                    message,
+                    one_pass_signature: _,
+                    signature,
+                } = message
+                {
+                    let sig_time = signature.created().ok_or(Error::InvalidMessage)?;
+                    let expire = Utc::now()
+                        .checked_add_signed(Duration::seconds(10))
+                        .ok_or(Error::UnexpectedServerArg)?;
+                    if sig_time > &expire {
+                        return Err(Error::InvalidMessage);
+                    }
+                    let message = message.ok_or(Error::InvalidMessage)?;
+                    let literal_message = message.get_literal().ok_or(Error::InvalidMessage)?;
+
+                    let content = String::from_utf8(literal_message.data().to_vec())?;
+                    Ok((content, hex::encode(requester_public_key.fingerprint())))
+                } else {
+                    Err(Error::InvalidMessage)
+                }
+            }
+            .await
+            .map_err(warp::reject::custom)
+        },
+    );
+
     let graphql_post = warp::any()
         .map(move || (graphql_server_arc.clone(), schema.clone(), key_pair.clone()))
         .and(warp::path("graphql"))
-        .and(warp::body::bytes())
-        .and(public_key_filter)
+        .and(signed_body)
         .and_then(
             |(server, schema, key_pair): (
                 Arc<Addr<Server>>,
                 Schema<QueryRoot, MutationRoot, EmptySubscription>,
-                KeyPair,
+                Arc<KeyPair>,
             ),
-             body: warp::hyper::body::Bytes,
-             public_key: SignedPublicKey| async move {
+             (content, fingerprint): (String, String)| async move {
                 Ok::<_, Infallible>(
                     async {
-                        let message =
-                            OpenPGPMessage::from_armor_single(std::io::Cursor::new(body.to_vec()))?
-                                .0;
-                        message.verify(&public_key)?;
-                        let message = message.decompress()?;
-                        let literal_message = message.get_literal().ok_or(Error::InvalidMessage)?;
-
-                        let content = String::from_utf8(literal_message.data().to_vec())?;
                         let request = Request::new(content);
                         let resp = schema
-                            .execute(
-                                request
-                                    .data(server)
-                                    .data(hex::encode(public_key.fingerprint())),
-                            )
+                            .execute(request.data(server).data(hex::encode(fingerprint)))
                             .await;
                         let message = OpenPGPMessage::Literal(LiteralData::from_str(
                             "",
@@ -116,27 +146,65 @@ pub async fn start(config: Config) -> Result {
             },
         );
 
-    let web_socket =
-        warp::path!("v2" / "websocket")
-            .and(warp::ws())
-            .map(move |ws: warp::ws::Ws| {
-                let server = server.clone();
-                ws.on_upgrade(move |websocket| async move {
-                    let _ =
-                        crate::websocket::handle_connection(websocket, "test".to_string(), server)
-                            .await;
-                })
-            });
+    let auth_list: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    let auth_list_ws = auth_list.clone();
 
-    let graphql_playground = warp::path("graphql_playground").and(warp::get()).map(|| {
-        HttpResponse::builder()
-            .header("content-type", "text/html")
-            .body(playground_source(
-                GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/"),
-            ))
-    });
+    let pre_web_socket = warp::path!("v2" / "websocket_init")
+        .map(move || (auth_list.clone(), key_pair_ws.clone()))
+        .and(signed_body)
+        .and_then(
+            |(auth_list, key_pair): (Arc<RwLock<HashMap<String, String>>>, Arc<KeyPair>),
+             (content, fingerprint): (String, String)| async move {
+                async {
+                    if content == format!("websocket_connect {}", fingerprint) {
+                        let key = rand::random::<u128>().to_string();
+                        auth_list.write().await.insert(fingerprint, key.clone());
+                        let resp = OpenPGPMessage::Literal(LiteralData::from_str(
+                            "websocket_connect_key",
+                            &key,
+                        ))
+                        .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
+                        .to_armored_string(None)?;
+                        Ok::<_, Error>(HttpResponse::new(resp))
+                    } else {
+                        Err(Error::InvalidMessage)
+                    }
+                }
+                .await
+                .map_err(warp::reject::custom)
+            },
+        );
 
-    let routes = graphql_playground.or(graphql_post).or(web_socket);
+    let web_socket = warp::path!("v2" / "websocket")
+        .map(move || (auth_list_ws.clone(), server.clone()))
+        .and(warp::ws())
+        .and(signed_body)
+        .and_then(
+            |(auth_list, server): (Arc<RwLock<HashMap<String, String>>>, Arc<Addr<Server>>),
+             ws: warp::ws::Ws,
+             (content, fingerprint): (String, String)| async move {
+                if let Some(key) = auth_list.read().await.get(&fingerprint) {
+                    if key == &content {
+                        drop(key);
+                        let _ = auth_list.write().await.remove(&fingerprint);
+                        let server = server.clone();
+                        return Ok(ws
+                            .on_upgrade(move |websocket| async move {
+                                let _ = crate::websocket::handle_connection(
+                                    websocket,
+                                    fingerprint,
+                                    server,
+                                )
+                                .await;
+                            })
+                            .into_response());
+                    }
+                }
+                Err(Error::WSNotAuthenticated).map_err(warp::reject::custom)
+            },
+        );
+
+    let routes = graphql_post.or(web_socket).or(pre_web_socket);
     warp::serve(routes)
         .run(
             config

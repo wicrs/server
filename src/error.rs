@@ -69,6 +69,10 @@ pub enum Error {
     GetIndexWriter,
     #[error("could not get a Tantivy index reader")]
     GetIndexReader,
+    #[error("request expired")]
+    Expired,
+    #[error("not authenticated for websocket")]
+    WSNotAuthenticated,
     #[error("Warp error")]
     Warp(#[from] warp::Error),
     #[error("PGP error")]
