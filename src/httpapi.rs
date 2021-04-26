@@ -29,7 +29,7 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::graphql_model::{MutationRoot, QueryRoot};
 use crate::server::Server;
-use crate::signing::KeyPair;
+use crate::signing::{self, KeyPair};
 
 type SchemaType = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 type WsAuthList = Arc<RwLock<HashMap<String, String>>>;
@@ -37,7 +37,14 @@ type ServerAddr = Arc<Addr<Server>>;
 type KeyPairArc = Arc<KeyPair>;
 
 pub async fn start(config: Config) -> Result {
-    let key_pair = Arc::new(KeyPair::load_or_create("WICRS Server <server@wic.rs>")?);
+    let key_pair = Arc::new(
+        KeyPair::load_or_create(
+            "WICRS Server <server@wic.rs>",
+            signing::SECRET_KEY_PATH,
+            signing::PUBLIC_KEY_PATH,
+        )
+        .await?,
+    );
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
@@ -51,6 +58,7 @@ pub async fn start(config: Config) -> Result {
 
     let public_key_filter = warp::header("pgp-fingerprint").and_then(|header: String| async move {
         crate::signing::get_or_import_public_key(&header)
+            .await
             .and_then(|key| {
                 key.verify()?;
                 Ok(key)

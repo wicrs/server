@@ -47,29 +47,33 @@ impl KeyPair {
         })
     }
 
-    pub fn save(&self) -> Result {
-        std::fs::write(SECRET_KEY_PATH, self.secret_key.to_armored_bytes(None)?)?;
-        std::fs::write(PUBLIC_KEY_PATH, self.public_key.to_armored_bytes(None)?)?;
+    pub async fn save(&self, secret_key_path: &str, public_key_path: &str) -> Result {
+        tokio::fs::write(secret_key_path, self.secret_key.to_armored_bytes(None)?).await?;
+        tokio::fs::write(public_key_path, self.public_key.to_armored_bytes(None)?).await?;
         Ok(())
     }
 
-    pub fn load() -> Result<Self> {
+    pub async fn load(secret_key_path: &str, public_key_path: &str) -> Result<Self> {
         let secret_key =
-            SignedSecretKey::from_string(&std::fs::read_to_string(SECRET_KEY_PATH)?)?.0;
+            SignedSecretKey::from_string(&tokio::fs::read_to_string(secret_key_path).await?)?.0;
         let public_key =
-            SignedPublicKey::from_string(&std::fs::read_to_string(PUBLIC_KEY_PATH)?)?.0;
+            SignedPublicKey::from_string(&tokio::fs::read_to_string(public_key_path).await?)?.0;
         Ok(Self {
             secret_key,
             public_key,
         })
     }
 
-    pub fn load_or_create<S: Into<String>>(id: S) -> Result<Self> {
-        let result = if let Ok(key_pair) = KeyPair::load() {
+    pub async fn load_or_create<S: Into<String>>(
+        id: S,
+        secret_key_path: &str,
+        public_key_path: &str,
+    ) -> Result<Self> {
+        let result = if let Ok(key_pair) = KeyPair::load(secret_key_path, public_key_path).await {
             key_pair
         } else {
             let key_pair = KeyPair::new(id)?;
-            key_pair.save()?;
+            key_pair.save(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await?;
             key_pair
         };
         Ok(result)
@@ -186,21 +190,26 @@ impl TryFrom<OpenPGPMessage> for Message {
 //     }
 // }
 
-pub fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
+pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
     let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint);
     let path = std::path::Path::new(&file_name);
     if path.is_file() {
-        Ok(SignedPublicKey::from_string(&std::fs::read_to_string(path)?)?.0)
+        Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
     } else {
         Err(Error::PublicKeyNotFound)
     }
 }
 
-pub fn sign_and_verify() -> Result {
+pub async fn sign_and_verify() -> Result {
     let KeyPair {
         secret_key,
         public_key,
-    } = KeyPair::load_or_create("WICRS Server <server@wic.rs>")?;
+    } = KeyPair::load_or_create(
+        "WICRS Server <server@wic.rs>",
+        SECRET_KEY_PATH,
+        PUBLIC_KEY_PATH,
+    )
+    .await?;
 
     let message = Message::new("test".into(), "this is a test message".into());
 
