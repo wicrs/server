@@ -1,7 +1,4 @@
-use std::{
-    convert::TryFrom,
-    io::{Read, Seek},
-};
+use std::convert::TryFrom;
 
 use crate::error::Result;
 use crate::{channel::Message, error::Error};
@@ -195,7 +192,11 @@ impl TryFrom<OpenPGPMessage> for Message {
 // }
 
 pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
-    let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint.to_ascii_uppercase());
+    let file_name = format!(
+        "{}{}.asc",
+        USER_PUBLIC_KEY_FOLDER,
+        fingerprint.to_ascii_uppercase()
+    );
     let path = std::path::Path::new(&file_name);
     if path.is_file() {
         Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
@@ -204,11 +205,11 @@ pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicK
     }
 }
 
-pub fn verify_message_extract<R: Read + Seek>(
+pub fn verify_message_extract(
     public_key: &SignedPublicKey,
-    message: R,
+    message: String,
 ) -> Result<(String, String)> {
-    let message = OpenPGPMessage::from_armor_single(message)?.0;
+    let message = OpenPGPMessage::from_string(&message)?.0;
     message.verify(&public_key)?;
     let message = message.decompress()?;
     if let pgp::composed::message::Message::Signed {
@@ -228,7 +229,7 @@ pub fn verify_message_extract<R: Read + Seek>(
         let literal_message = message.get_literal().ok_or(Error::InvalidMessage)?;
 
         let content = String::from_utf8(literal_message.data().to_vec())?;
-        Ok((content, hex::encode(public_key.fingerprint())))
+        Ok((content, hex::encode_upper(public_key.fingerprint())))
     } else {
         Err(Error::InvalidMessage)
     }

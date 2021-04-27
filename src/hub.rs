@@ -719,7 +719,7 @@ mod test {
     #[tokio::test]
     async fn save_load() {
         let id = ID::nil();
-        let mut hub = dbg!(Hub::new("test_hub".to_string(), id, id.to_string()));
+        let mut hub = Hub::new("test_hub".to_string(), id, id.to_string());
         let _ = tokio::fs::remove_file(&hub.get_info_path()).await;
         hub.new_channel(&id.to_string(), "test_channel".to_string())
             .await

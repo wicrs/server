@@ -1,10 +1,7 @@
 use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
-use tokio::sync::RwLock;
-
 use xactor::{Actor, Addr};
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
 use std::net::SocketAddr;
@@ -27,7 +24,6 @@ use crate::server::Server;
 use crate::signing::{self, KeyPair};
 
 type SchemaType = Schema<QueryRoot, MutationRoot, EmptySubscription>;
-type WsAuthList = Arc<RwLock<HashMap<String, String>>>;
 type ServerAddr = Arc<Addr<Server>>;
 type KeyPairArc = Arc<KeyPair>;
 
@@ -65,7 +61,8 @@ pub async fn start(config: Config) -> Result {
         |requester_public_key: SignedPublicKey, body: Bytes| async move {
             crate::signing::verify_message_extract(
                 &requester_public_key,
-                std::io::Cursor::new(body.to_vec()),
+                String::from_utf8(body.to_vec())
+                    .map_err(|_| warp::reject::custom(Error::InvalidText))?,
             )
             .map_err(warp::reject::custom)
         },
@@ -82,7 +79,7 @@ pub async fn start(config: Config) -> Result {
                     async {
                         let request = GraphQLRequest::new(content);
                         let resp = schema
-                            .execute(request.data(server).data(hex::encode(fingerprint)))
+                            .execute(request.data(server).data(hex::encode_upper(fingerprint)))
                             .await;
                         let message = OpenPGPMessage::Literal(LiteralData::from_str(
                             "",
@@ -127,69 +124,24 @@ pub async fn start(config: Config) -> Result {
             },
         );
 
-    let auth_list: WsAuthList = Arc::new(RwLock::new(HashMap::new()));
-    let auth_list_ws = auth_list.clone();
-
-    let pre_web_socket = warp::path!("v2" / "websocket_init")
-        .map(move || (auth_list.clone(), key_pair_ws.clone()))
-        .and(signed_body)
-        .and_then(
-            |(auth_list, key_pair): (WsAuthList, KeyPairArc),
-             (content, fingerprint): (String, String)| async move {
-                async {
-                    if content == format!("websocket_connect {}", fingerprint) {
-                        let key = rand::random::<u128>().to_string();
-                        auth_list.write().await.insert(fingerprint, key.clone());
-                        let resp = OpenPGPMessage::Literal(LiteralData::from_str(
-                            "websocket_connect_key",
-                            &key,
-                        ))
-                        .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
-                        .to_armored_string(None)?;
-                        Ok::<_, Error>(HttpResponse::new(resp))
-                    } else {
-                        Err(Error::InvalidMessage)
-                    }
-                }
-                .await
-                .map_err(warp::reject::custom)
+    let web_socket = warp::path!("v2" / "websocket")
+        .map(move || (server.clone(), key_pair_ws.clone()))
+        .and(public_key_filter)
+        .and(warp::ws())
+        .map(
+            move |(server, key_pair): (ServerAddr, KeyPairArc),
+                  public_key: SignedPublicKey,
+                  ws: Ws| {
+                ws.on_upgrade(move |websocket| async move {
+                    let _ = crate::websocket::handle_connection(
+                        websocket, public_key, key_pair, server,
+                    )
+                    .await;
+                })
             },
         );
 
-    let web_socket = warp::path!("v2" / "websocket")
-        .map(move || auth_list_ws.clone())
-        .and(public_key_filter)
-        .and(warp::header("signed-ws-key"))
-        .and_then(
-            |auth_list: WsAuthList, public_key: SignedPublicKey, message: String| async move {
-                async {
-                    let message_bytes = message.as_bytes();
-                    let (client_key, fingerprint) = crate::signing::verify_message_extract(
-                        &public_key,
-                        std::io::Cursor::new(message_bytes.to_vec()),
-                    )?;
-                    let read = auth_list.read().await;
-                    if let Some(key) = read.get(&fingerprint) {
-                        if key == &client_key {
-                            drop(read);
-                            let _ = auth_list.write().await.remove(&fingerprint);
-                        }
-                    }
-                    Ok::<_, Error>(fingerprint)
-                }
-                .await
-                .map_err(warp::reject::custom)
-            },
-        )
-        .map(move |fingerprint: String| (server.clone(), fingerprint))
-        .and(warp::ws())
-        .map(move |(server, fingerprint): (ServerAddr, String), ws: Ws| {
-            ws.on_upgrade(move |websocket| async move {
-                let _ = crate::websocket::handle_connection(websocket, fingerprint, server).await;
-            })
-        });
-
-    let routes = graphql_post.or(web_socket).or(pre_web_socket);
+    let routes = graphql_post.or(web_socket);
     warp::serve(routes)
         .run(
             config
