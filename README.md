@@ -1,11 +1,14 @@
 # WICRS Server
 
+[![wic.rs](https://img.shields.io/badge/https-wic.rs-green)](https://wic.rs)
 [![crates.io](https://img.shields.io/crates/v/wicrs_server.svg)](https://crates.io/crates/wicrs_server)
 [![docs.rs](https://docs.rs/wicrs_server/badge.svg)](https://docs.rs/wicrs_server)
 [![Discord](https://img.shields.io/discord/822858421064958033?label=discord)](https://discord.gg/dAbjENCdfJ)
 [![Matrix](https://img.shields.io/matrix/wicrs:matrix.org?server_fqdn=matrix.org&label=matrix)](https://matrix.to/#/+wicrs:matrix.org)
 
-A server for handling chat rooms and messaging groups written in rust.
+A server for handling chat rooms and messaging groups written in Rust.
+
+**Website**: [wic.rs](https://wic.rs)
 
 ## Build
 
@@ -43,12 +46,11 @@ Once this is done run the server by executing `cargo run` or `cargo run --releas
 
 ## Developing and Contributing
 
-To contribute fork the GitHub repo and make your changes, for changes to be accepted your fork must pass all of the tests, to run the tests go to the root directory of the project and run `cargo test`. If you add any features make sure to add tests to ensure they work, it is also important that you add documentation for any features you add and explain what they are for, if your PR addresses an issue, you probably do not need to explain your changes. Another important thing is that you cannot use unstable (nightly) features when contributing to this repo.
+For information on developing and contributing please read the [contributing guidelines](https://github.com/wicrs/server/blob/master/CONTRIBUTING.md).
 
 ## Versioning
 
-This project adheres to [Semantic Versioning](http://semver.org/). However until 1.0.0 comes there
-will be the following rules:
+This project adheres to [Semantic Versioning](http://semver.org/). However until 1.0.0 comes the following rules apply:
 
 - Any API/ABI breaking changes will result in minor version bumping.
 - API extending features results in patch version bumping.

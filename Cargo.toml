@@ -6,6 +6,7 @@ edition = "2018"
 license = "GPL-3.0"
 description = "A server/channel based chat handler backend."
 repository = "https://github.com/wicrs/server"
+homepage = "https://wic.rs"
 
 [dependencies]
 rand = "0.8"
