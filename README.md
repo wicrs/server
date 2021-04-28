@@ -8,8 +8,6 @@
 
 A server for handling chat rooms and messaging groups written in Rust.
 
-**Website**: [wic.rs](https://wic.rs)
-
 ## Build
 
 Install Rust by following [these](https://www.rust-lang.org/tools/install) instructions.
