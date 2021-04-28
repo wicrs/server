@@ -78,6 +78,9 @@ pub enum Error {
     #[error("PGP error")]
     #[allow(clippy::upper_case_acronyms)]
     PGP(#[from] pgp::errors::Error),
+    #[error("ID error")]
+    #[allow(clippy::upper_case_acronyms)]
+    ID(#[from] uuid::Error),
     #[error("could not find a pgp public key with that ID")]
     PublicKeyNotFound,
     #[error("{0}")]
@@ -101,21 +104,21 @@ impl Reject for Error {}
 impl From<&Error> for StatusCode {
     fn from(error: &Error) -> Self {
         match error {
-            Error::InvalidName => Self::BAD_REQUEST,
-            Error::Banned => Self::FORBIDDEN,
-            Error::ChannelNotFound => Self::NOT_FOUND,
-            Error::GroupNotFound => Self::NOT_FOUND,
-            Error::HubNotFound => Self::NOT_FOUND,
-            Error::MemberNotFound => Self::NOT_FOUND,
-            Error::MessageNotFound => Self::NOT_FOUND,
-            Error::Muted => Self::FORBIDDEN,
-            Error::MissingChannelPermission(_) => Self::FORBIDDEN,
-            Error::MissingHubPermission(_) => Self::FORBIDDEN,
-            Error::NotInHub => Self::NOT_FOUND,
-            Error::TooBig => Self::BAD_REQUEST,
-            Error::InvalidText => Self::BAD_REQUEST,
-            Error::AlreadyTyping => Self::CONFLICT,
-            Error::NotTyping => Self::CONFLICT,
+            Error::Banned
+            | Error::Muted
+            | Error::MissingChannelPermission(_)
+            | Error::MissingHubPermission(_) => Self::FORBIDDEN,
+            Error::ChannelNotFound
+            | Error::GroupNotFound
+            | Error::MemberNotFound
+            | Error::MessageNotFound
+            | Error::NotInHub => Self::NOT_FOUND,
+            Error::ID(_)
+            | Error::PGP(_)
+            | Error::InvalidText
+            | Error::TooBig
+            | Error::InvalidName => Self::BAD_REQUEST,
+            Error::AlreadyTyping | Error::NotTyping => Self::CONFLICT,
             _ => Self::INTERNAL_SERVER_ERROR,
         }
     }

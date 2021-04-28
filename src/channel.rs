@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use tokio::fs;
@@ -322,6 +322,10 @@ impl Channel {
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
+    /// ID of the hub the message was sent in.
+    pub hub_id: ID,
+    /// ID of the channel the message was sent in.
+    pub channel_id: ID,
     /// ID of the user that sent the message.
     pub sender: String,
     /// Date in milliseconds since Unix Epoch that the message was sent.
@@ -331,24 +335,14 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new(sender: String, content: String) -> Self {
+    pub fn new(sender: String, content: String, hub_id: ID, channel_id: ID) -> Self {
         Self {
             sender,
             content,
+            channel_id,
+            hub_id,
             created: Utc::now(),
             id: new_id(),
         }
-    }
-}
-
-impl Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "id: {}, sender: {}, created: {}\n{}",
-            self.id.to_string(),
-            self.sender,
-            self.created.to_rfc3339(),
-            self.content
-        ))
     }
 }

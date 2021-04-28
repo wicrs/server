@@ -398,10 +398,28 @@ impl Hub {
         }
     }
 
+    /// Checks if the user with the given ID is in the hub.
+    pub fn is_member(&self, member_id: &str) -> bool {
+        self.members.contains_key(member_id)
+    }
+
+    /// Checks if the user with the given ID is in the hub, if not in hub also checks if banned.
+    pub fn check_membership(&self, member_id: &str) -> Result<()> {
+        if self.is_member(member_id) {
+            Ok(())
+        } else {
+            Err(if self.bans.contains(member_id) {
+                Error::Banned
+            } else {
+                Error::NotInHub
+            })
+        }
+    }
+
     /// Gets a reference to the hub member, returns an error if the member could not be found.
-    pub fn get_member(&self, member_id: &str) -> Result<HubMember> {
+    pub fn get_member(&self, member_id: &str) -> Result<&HubMember> {
         if let Some(member) = self.members.get(member_id) {
-            Ok(member.clone())
+            Ok(member)
         } else {
             Err(Error::MemberNotFound)
         }

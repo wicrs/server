@@ -17,11 +17,19 @@ use pgp::packet::LiteralData;
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
 
-use crate::config::Config;
-use crate::error::{Error, Result};
-use crate::graphql_model::{MutationRoot, QueryRoot};
 use crate::server::Server;
 use crate::signing::{self, KeyPair};
+use crate::ID;
+use crate::{channel::Message, config::Config};
+use crate::{
+    error::{Error, Result},
+    hub::Hub,
+    permission::ChannelPermission,
+};
+use crate::{
+    graphql_model::{MutationRoot, QueryRoot},
+    server::ServerNotification,
+};
 
 type SchemaType = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 type ServerAddr = Arc<Addr<Server>>;
@@ -45,6 +53,9 @@ pub async fn start(config: Config) -> Result {
             .await
             .map_err(|_| Error::ServerStartFailed)?,
     );
+    let send_message_server_arc = server.clone();
+    let key_pair_send = key_pair.clone();
+    let key_pair_send_init = key_pair.clone();
     let graphql_server_arc = server.clone();
 
     let public_key_filter = warp::header("pgp-fingerprint").and_then(|header: String| async move {
@@ -116,10 +127,66 @@ pub async fn start(config: Config) -> Result {
                         Ok::<_, Error>(response)
                     }
                     .await
-                    .map_or_else(
-                        |e| e.into_response(),
-                        |query_response| query_response.into_response(),
-                    ),
+                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                )
+            },
+        );
+
+    let send_message_init = warp::any()
+        .map(move || key_pair_send_init.clone())
+        .and(warp::path!("v2" / "send_message_init" / String / String))
+        .and(signed_body)
+        .and_then(
+            |key_pair: KeyPairArc,
+             hub_id: String,
+             channel_id: String,
+             (content, sender): (String, String)| async move {
+                Ok::<_, Infallible>(
+                    async {
+                        let hub_id = ID::parse_str(&hub_id)?;
+                        let hub = Hub::load(hub_id).await?;
+                        let channel_id = ID::parse_str(&channel_id)?;
+                        let member = hub.get_member(&sender)?;
+                        crate::check_permission!(
+                            &member,
+                            channel_id,
+                            ChannelPermission::Write,
+                            &hub
+                        );
+                        Ok::<_, Error>(
+                            Message::new(sender, content, hub_id, channel_id)
+                                .sign(&key_pair.secret_key, String::new)?
+                                .to_armored_string(None)?,
+                        )
+                    }
+                    .await
+                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                )
+            },
+        );
+
+    let send_message = warp::any()
+        .map(move || (key_pair_send.clone(), send_message_server_arc.clone()))
+        .and(warp::path!("v2" / "send_message"))
+        .and(public_key_filter)
+        .and(warp::body::bytes())
+        .and_then(
+            |(key_pair, server): (KeyPairArc, ServerAddr),
+             client_public_key: SignedPublicKey,
+             body: Bytes| async move {
+                Ok::<_, Infallible>(
+                    async {
+                        let body = String::from_utf8(body.to_vec())?;
+                        let message = Message::from_double_signed_verify(
+                            &body,
+                            &key_pair.public_key,
+                            &client_public_key,
+                        )?;
+                        let _ = server.send(ServerNotification::NewMessage(message));
+                        Ok::<_, Error>(warp::reply())
+                    }
+                    .await
+                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
                 )
             },
         );
@@ -141,7 +208,10 @@ pub async fn start(config: Config) -> Result {
             },
         );
 
-    let routes = graphql_post.or(web_socket);
+    let routes = graphql_post
+        .or(web_socket)
+        .or(send_message_init)
+        .or(send_message);
     warp::serve(routes)
         .run(
             config

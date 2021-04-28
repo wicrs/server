@@ -165,7 +165,7 @@ pub enum HubUpdateType {
 #[message(result = "()")]
 #[derive(Debug, Clone)]
 pub enum ServerNotification {
-    NewMessage(ID, ID, channel::Message),
+    NewMessage(channel::Message),
     HubUpdated(ID, HubUpdateType),
 }
 
@@ -554,7 +554,7 @@ impl Handler<client_command::SubscribeHub> for Server {
     ) -> Result {
         Hub::load(msg.hub_id)
             .await
-            .and_then(|hub| hub.get_member(&msg.user_id))?;
+            .and_then(|hub| Ok(hub.get_member(&msg.user_id)?.clone()))?;
         self.subscribed
             .write()
             .await
@@ -599,6 +599,7 @@ impl Handler<client_command::SubscribeChannel> for Server {
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
+                    let member = member.clone();
                     Ok((hub, member))
                 } else {
                     Err(Error::MemberNotFound)
@@ -659,6 +660,7 @@ impl Handler<client_command::StartTyping> for Server {
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
+                    let member = member.clone();
                     Ok((hub, member))
                 } else {
                     Err(Error::MemberNotFound)
@@ -694,6 +696,7 @@ impl Handler<client_command::StopTyping> for Server {
             .await
             .and_then(|hub| {
                 if let Ok(member) = hub.get_member(&msg.user_id) {
+                    let member = member.clone();
                     Ok((hub, member))
                 } else {
                     Err(Error::MemberNotFound)
@@ -722,20 +725,20 @@ impl Handler<client_command::StopTyping> for Server {
 impl Handler<ServerNotification> for Server {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ServerNotification) {
         match msg {
-            ServerNotification::NewMessage(hub_id, channel_id, message) => {
+            ServerNotification::NewMessage(message) => {
                 let m = message.clone();
                 let _ = self
                     .message_server
                     .call(NewMessageForIndex {
-                        hub_id,
-                        channel_id,
+                        hub_id: message.hub_id,
+                        channel_id: message.hub_id,
                         message,
                     })
                     .await;
                 self.send_channel(
-                    ServerMessage::ChatMessage(hub_id, channel_id, m.id),
-                    hub_id,
-                    channel_id,
+                    ServerMessage::ChatMessage(m.hub_id, m.channel_id, m.id),
+                    m.hub_id,
+                    m.channel_id,
                 )
                 .await
             }

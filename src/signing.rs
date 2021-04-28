@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
-use crate::error::Result;
 use crate::{channel::Message, error::Error};
+use crate::{error::Result, ID};
 use chrono::{Duration, Utc};
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
@@ -246,7 +246,12 @@ pub async fn sign_and_verify() -> Result {
     )
     .await?;
 
-    let message = Message::new("test".into(), "this is a test message".into());
+    let message = Message::new(
+        "test".into(),
+        "this is a test message".into(),
+        ID::nil(),
+        ID::nil(),
+    );
 
     let passwd_fn = || String::new();
 
@@ -267,7 +272,7 @@ pub async fn sign_and_verify() -> Result {
     );
 
     let _ = println!(
-        "{}",
+        "{:?}",
         Message::from_double_signed_verify(&final_message_str, &public_key, &public_key)?
     );
 

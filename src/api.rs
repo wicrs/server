@@ -180,11 +180,8 @@ pub async fn change_hub_description<S: Into<String> + Clone>(
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn user_banned(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bool> {
     let hub = Hub::load(hub_id).await?;
-    if hub.members.contains_key(actor_id) {
-        Ok(hub.bans.contains(user_id))
-    } else {
-        Err(Error::NotInHub)
-    }
+    hub.check_membership(actor_id)?;
+    Ok(hub.bans.contains(user_id))
 }
 
 /// Checks if a user is muted in a hub.
@@ -204,11 +201,8 @@ pub async fn user_banned(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bo
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn user_muted(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bool> {
     let hub = Hub::load(hub_id).await?;
-    if hub.members.contains_key(actor_id) {
-        Ok(hub.mutes.contains(user_id))
-    } else {
-        Err(Error::NotInHub)
-    }
+    hub.check_membership(actor_id)?;
+    Ok(hub.mutes.contains(user_id))
 }
 
 /// Gets the information on a member of a hub.
@@ -228,12 +222,8 @@ pub async fn user_muted(actor_id: &str, hub_id: ID, user_id: &str) -> Result<boo
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_hub_member(actor_id: &str, hub_id: ID, user_id: &str) -> Result<HubMember> {
     let hub = Hub::load(hub_id).await?;
-    let member = hub.get_member(actor_id)?;
-    if actor_id == user_id {
-        return Ok(member);
-    } else {
-        hub.get_member(user_id)
-    }
+    hub.check_membership(actor_id)?;
+    Ok(hub.get_member(user_id)?.clone())
 }
 
 /// Adds the given user to a hub.
