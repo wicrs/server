@@ -201,9 +201,9 @@ pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicK
 
 pub fn verify_message_extract(
     public_key: &SignedPublicKey,
-    message: String,
+    message: &str,
 ) -> Result<(String, String)> {
-    let message = OpenPGPMessage::from_string(&message)?.0;
+    let message = OpenPGPMessage::from_string(message)?.0;
     message.verify(&public_key)?;
     let message = message.decompress()?;
     if let pgp::composed::message::Message::Signed {

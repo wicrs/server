@@ -40,6 +40,7 @@ pub enum ServerMessage {
     #[display("{}({0})")]
     Error(String),
     InvalidCommand,
+    NotSigned,
     CommandFailed,
     #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, ID),
@@ -72,7 +73,7 @@ pub async fn handle_connection(
     if let Some(msg) = incoming.next().await {
         let msg = msg?;
         if let Ok(text) = msg.to_str() {
-            let message = crate::signing::verify_message_extract(&public_key, text.to_owned())?.0;
+            let message = crate::signing::verify_message_extract(&public_key, text)?.0;
             if message == key {
                 drop((message, key, text));
                 drop(msg);
@@ -92,114 +93,124 @@ pub async fn handle_connection(
                 while let Some(msg) = incoming.next().await {
                     let msg = msg?;
                     if let Ok(text) = msg.to_str() {
-                        let message = WebSocketMessage::text(
-                            if let Ok(command) = ClientMessage::from_str(text) {
-                                match command {
-                                    ClientMessage::SubscribeChannel(hub_id, channel_id) => {
-                                        if let Ok(result) = addr
-                                            .call(client_command::SubscribeChannel {
-                                                user_id: user_id.clone(),
-                                                hub_id,
-                                                channel_id,
-                                                connection_id,
-                                            })
-                                            .await
-                                        {
-                                            result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Success,
-                                            )
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                        if let Ok((command_text, _)) =
+                            crate::signing::verify_message_extract(&public_key, text)
+                        {
+                            let message = WebSocketMessage::text(
+                                if let Ok(command) = ClientMessage::from_str(&command_text) {
+                                    match command {
+                                        ClientMessage::SubscribeChannel(hub_id, channel_id) => {
+                                            if let Ok(result) = addr
+                                                .call(client_command::SubscribeChannel {
+                                                    user_id: user_id.clone(),
+                                                    hub_id,
+                                                    channel_id,
+                                                    connection_id,
+                                                })
+                                                .await
+                                            {
+                                                result.map_or_else(
+                                                    |err| ServerMessage::Error(err.to_string()),
+                                                    |_| ServerMessage::Success,
+                                                )
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
+                                        }
+                                        ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
+                                            if addr
+                                                .call(client_command::UnsubscribeChannel {
+                                                    hub_id,
+                                                    channel_id,
+                                                    connection_id,
+                                                })
+                                                .await
+                                                .is_ok()
+                                            {
+                                                ServerMessage::Success
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
+                                        }
+                                        ClientMessage::StartTyping(hub_id, channel_id) => {
+                                            if let Ok(result) = addr
+                                                .call(client_command::StartTyping {
+                                                    user_id: user_id.clone(),
+                                                    hub_id,
+                                                    channel_id,
+                                                })
+                                                .await
+                                            {
+                                                result.map_or_else(
+                                                    |err| ServerMessage::Error(err.to_string()),
+                                                    |_| ServerMessage::Success,
+                                                )
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
+                                        }
+                                        ClientMessage::StopTyping(hub_id, channel_id) => {
+                                            if let Ok(result) = addr
+                                                .call(client_command::StopTyping {
+                                                    user_id: user_id.clone(),
+                                                    hub_id,
+                                                    channel_id,
+                                                })
+                                                .await
+                                            {
+                                                result.map_or_else(
+                                                    |err| ServerMessage::Error(err.to_string()),
+                                                    |_| ServerMessage::Success,
+                                                )
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
+                                        }
+                                        ClientMessage::SubscribeHub(hub_id) => {
+                                            if let Ok(result) = addr
+                                                .call(client_command::SubscribeHub {
+                                                    user_id: user_id.clone(),
+                                                    hub_id,
+                                                    connection_id,
+                                                })
+                                                .await
+                                            {
+                                                result.map_or_else(
+                                                    |err| ServerMessage::Error(err.to_string()),
+                                                    |_| ServerMessage::Success,
+                                                )
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
+                                        }
+                                        ClientMessage::UnsubscribeHub(hub_id) => {
+                                            if addr
+                                                .call(client_command::UnsubscribeHub {
+                                                    hub_id,
+                                                    connection_id,
+                                                })
+                                                .await
+                                                .is_ok()
+                                            {
+                                                ServerMessage::Success
+                                            } else {
+                                                ServerMessage::Error(internal_message_error.clone())
+                                            }
                                         }
                                     }
-                                    ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
-                                        if addr
-                                            .call(client_command::UnsubscribeChannel {
-                                                hub_id,
-                                                channel_id,
-                                                connection_id,
-                                            })
-                                            .await
-                                            .is_ok()
-                                        {
-                                            ServerMessage::Success
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
-                                        }
-                                    }
-                                    ClientMessage::StartTyping(hub_id, channel_id) => {
-                                        if let Ok(result) = addr
-                                            .call(client_command::StartTyping {
-                                                user_id: user_id.clone(),
-                                                hub_id,
-                                                channel_id,
-                                            })
-                                            .await
-                                        {
-                                            result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Success,
-                                            )
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
-                                        }
-                                    }
-                                    ClientMessage::StopTyping(hub_id, channel_id) => {
-                                        if let Ok(result) = addr
-                                            .call(client_command::StopTyping {
-                                                user_id: user_id.clone(),
-                                                hub_id,
-                                                channel_id,
-                                            })
-                                            .await
-                                        {
-                                            result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Success,
-                                            )
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
-                                        }
-                                    }
-                                    ClientMessage::SubscribeHub(hub_id) => {
-                                        if let Ok(result) = addr
-                                            .call(client_command::SubscribeHub {
-                                                user_id: user_id.clone(),
-                                                hub_id,
-                                                connection_id,
-                                            })
-                                            .await
-                                        {
-                                            result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Success,
-                                            )
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
-                                        }
-                                    }
-                                    ClientMessage::UnsubscribeHub(hub_id) => {
-                                        if addr
-                                            .call(client_command::UnsubscribeHub {
-                                                hub_id,
-                                                connection_id,
-                                            })
-                                            .await
-                                            .is_ok()
-                                        {
-                                            ServerMessage::Success
-                                        } else {
-                                            ServerMessage::Error(internal_message_error.clone())
-                                        }
-                                    }
+                                } else {
+                                    ServerMessage::InvalidCommand
                                 }
-                            } else {
-                                ServerMessage::InvalidCommand
-                            }
-                            .to_string(),
-                        );
-                        out_arc.lock().await.send(message).await?;
+                                .to_string(),
+                            );
+                            out_arc.lock().await.send(message).await?;
+                        } else {
+                            out_arc
+                                .lock()
+                                .await
+                                .send(WebSocketMessage::text(ServerMessage::NotSigned.to_string()))
+                                .await?;
+                        }
                     }
                 }
                 return Ok(());

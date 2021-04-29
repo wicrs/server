@@ -70,12 +70,10 @@ pub async fn start(config: Config) -> Result {
 
     let signed_body = public_key_filter.and(warp::body::bytes()).and_then(
         |requester_public_key: SignedPublicKey, body: Bytes| async move {
-            crate::signing::verify_message_extract(
-                &requester_public_key,
-                String::from_utf8(body.to_vec())
-                    .map_err(|_| warp::reject::custom(Error::InvalidText))?,
-            )
-            .map_err(warp::reject::custom)
+            let text = String::from_utf8(body.to_vec())
+                .map_err(|e| warp::reject::custom(Error::from(e)))?;
+            crate::signing::verify_message_extract(&requester_public_key, &text)
+                .map_err(warp::reject::custom)
         },
     );
 
