@@ -3,7 +3,7 @@ use std::mem;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    channel::{Channel, Message},
+    channel::{Channel, SignedMessage},
     check_name_validity, check_permission,
     error::Error,
     hub::{Hub, HubMember},
@@ -581,7 +581,7 @@ pub async fn get_message(
     hub_id: ID,
     channel_id: ID,
     message_id: ID,
-) -> Result<Message> {
+) -> Result<SignedMessage> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     if let Some(message) = channel.get_message(message_id).await {
@@ -617,7 +617,7 @@ pub async fn get_messages_after(
     channel_id: ID,
     from: ID,
     max: usize,
-) -> Result<Vec<Message>> {
+) -> Result<Vec<SignedMessage>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     Ok(channel.get_messages_after(from, max).await)
@@ -654,7 +654,7 @@ pub async fn get_messages(
     to: DateTime<Utc>,
     invert: bool,
     max: usize,
-) -> Result<Vec<Message>> {
+) -> Result<Vec<SignedMessage>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     Ok(channel.get_messages_between(from, to, invert, max).await)

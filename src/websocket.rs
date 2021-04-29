@@ -33,17 +33,6 @@ pub enum ClientMessage {
     StopTyping(ID, ID),
 }
 
-/// Possible responses to a [`ClientServerMessage`].
-#[derive(Clone, Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
-pub enum Response {
-    #[display("{}({0})")]
-    Error(String),
-    Success,
-    #[display("{}({0})")]
-    Id(ID),
-}
-
 /// Messages that the server can send to clients.
 #[derive(Display, FromStr)]
 #[display(style = "SNAKE_CASE")]
@@ -52,14 +41,11 @@ pub enum ServerMessage {
     Error(String),
     InvalidCommand,
     CommandFailed,
-    #[display("{}({0})")]
-    CommandSent(u128),
     #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, ID),
     #[display("{}({0},{1})")]
     HubUpdated(ID, HubUpdateType),
-    #[display("{}({0})")]
-    Result(Response),
+    Success,
     #[display("{}({0},{1},{2})")]
     UserStartedTyping(String, ID, ID),
     #[display("{}({0},{1},{2})")]
@@ -121,7 +107,7 @@ pub async fn handle_connection(
                                         {
                                             result.map_or_else(
                                                 |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Result(Response::Success),
+                                                |_| ServerMessage::Success,
                                             )
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
@@ -137,7 +123,7 @@ pub async fn handle_connection(
                                             .await
                                             .is_ok()
                                         {
-                                            ServerMessage::Result(Response::Success)
+                                            ServerMessage::Success
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
@@ -153,7 +139,7 @@ pub async fn handle_connection(
                                         {
                                             result.map_or_else(
                                                 |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Result(Response::Success),
+                                                |_| ServerMessage::Success,
                                             )
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
@@ -170,7 +156,7 @@ pub async fn handle_connection(
                                         {
                                             result.map_or_else(
                                                 |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Result(Response::Success),
+                                                |_| ServerMessage::Success,
                                             )
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
@@ -187,7 +173,7 @@ pub async fn handle_connection(
                                         {
                                             result.map_or_else(
                                                 |err| ServerMessage::Error(err.to_string()),
-                                                |_| ServerMessage::Result(Response::Success),
+                                                |_| ServerMessage::Success,
                                             )
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
@@ -202,7 +188,7 @@ pub async fn handle_connection(
                                             .await
                                             .is_ok()
                                         {
-                                            ServerMessage::Result(Response::Success)
+                                            ServerMessage::Success
                                         } else {
                                             ServerMessage::Error(internal_message_error.clone())
                                         }

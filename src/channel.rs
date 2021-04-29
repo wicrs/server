@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{convert::TryFrom, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use tokio::fs;
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
-use crate::{hub::HUB_DATA_FOLDER, new_id, Result, ID};
+use crate::{error::Error, hub::HUB_DATA_FOLDER, new_id, Result, ID};
 
 use async_graphql::SimpleObject;
 
@@ -104,8 +104,8 @@ impl Channel {
     }
 
     /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
-    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -115,8 +115,9 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let iter = bincode::deserialize::<Message>(&file).into_iter();
-                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
+                    let iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
+                    let mut found: Vec<SignedMessage> =
+                        iter.filter(|m| ids.contains(&m.id)).collect();
                     result.append(&mut found);
                     if ids.len() == result.len() {
                         return result;
@@ -141,8 +142,8 @@ impl Channel {
         to: DateTime<Utc>,
         invert: bool,
         max: usize,
-    ) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    ) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -167,10 +168,10 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     let mut filtered = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .filter(|message: &Message| {
+                        .filter(|message: &SignedMessage| {
                             message.created >= from && message.created <= to
                         })
-                        .collect::<Vec<Message>>();
+                        .collect::<Vec<SignedMessage>>();
                     if invert {
                         filtered.reverse() // Invert the order of found messages for that file if `invert` is true.
                     }
@@ -189,54 +190,9 @@ impl Channel {
         result
     }
 
-    /// Search for messages that contain a string, if `case_sensitive` is true than the search is case_sensitive, case sensitive search is marginally faster.
-    pub async fn find_messages_containing(
-        &self,
-        string: String,
-        case_sensitive: bool,
-        max: usize,
-    ) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
-        let mut search = string;
-        if !case_sensitive {
-            search.make_ascii_uppercase()
-        }
-        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
-            let mut files = Vec::new();
-            while let Ok(Some(entry)) = dir.next_entry().await {
-                if entry.path().is_file() {
-                    files.push(entry)
-                }
-            }
-            for file in files.iter() {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut filtered = bincode::deserialize_from(file.into_std().await)
-                        .into_iter()
-                        .filter(|message: &Message| {
-                            if case_sensitive {
-                                message.content == search
-                            } else {
-                                message.content.to_ascii_uppercase() == search
-                            }
-                        })
-                        .collect::<Vec<Message>>();
-                    result.append(&mut filtered);
-                    let len = result.len();
-                    if len == max {
-                        return result;
-                    } else if result.len() > max {
-                        result.truncate(max);
-                        return result;
-                    }
-                }
-            }
-        }
-        result
-    }
-
     /// Gets all messages that were sent after the message with the given ID.
-    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -246,9 +202,10 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut iter =
-                        bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
-                            .into_iter();
+                    let mut iter = bincode::deserialize_from::<std::fs::File, SignedMessage>(
+                        file.into_std().await,
+                    )
+                    .into_iter();
                     if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                         let len = result.len();
@@ -266,8 +223,8 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn get_all_messages_from(&self, id: ID) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_all_messages_from(&self, id: ID) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -278,7 +235,7 @@ impl Channel {
 
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
+                    let mut iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
                     if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                     }
@@ -289,7 +246,7 @@ impl Channel {
     }
 
     /// Get the first message with the given ID.
-    pub async fn get_message(&self, id: ID) -> Option<Message> {
+    pub async fn get_message(&self, id: ID) -> Option<SignedMessage> {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -301,7 +258,7 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     if let Some(msg) = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .find(|m: &Message| m.id == id)
+                        .find(|m: &SignedMessage| m.id == id)
                     {
                         return Some(msg);
                     }
@@ -314,6 +271,39 @@ impl Channel {
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
     pub async fn get_current_file(&self) -> String {
         format!("{}/{}", self.get_folder(), Utc::now().date())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+pub struct SignedMessage {
+    pub id: ID,
+    pub created: DateTime<Utc>,
+    pub armoured_content: String,
+}
+
+impl SignedMessage {
+    pub fn new(id: ID, created: DateTime<Utc>, armoured_content: String) -> Self {
+        Self {
+            id,
+            created,
+            armoured_content,
+        }
+    }
+}
+
+impl TryFrom<SignedMessage> for Message {
+    type Error = Error;
+
+    fn try_from(signed_message: SignedMessage) -> Result<Self> {
+        Message::from_double_signed(&signed_message.armoured_content)
+    }
+}
+
+impl TryFrom<&SignedMessage> for Message {
+    type Error = Error;
+
+    fn try_from(signed_message: &SignedMessage) -> Result<Self> {
+        Message::from_double_signed(&signed_message.armoured_content)
     }
 }
 

@@ -47,7 +47,7 @@ pub async fn start(config: Config) -> Result {
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
-        Server::new()
+        Server::new(key_pair.secret_key.clone())
             .await?
             .start()
             .await

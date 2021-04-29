@@ -1,10 +1,19 @@
-use crate::{channel, check_permission, hub::Hub, websocket::ServerMessage, Error, Result, ID};
+use crate::{
+    channel::{self, Message},
+    check_permission,
+    hub::Hub,
+    websocket::ServerMessage,
+    Error, Result, ID,
+};
 use async_trait::async_trait;
 use futures::stream::SplitSink;
 use futures::SinkExt;
 use parse_display::{Display, FromStr};
+use pgp::Message as OpenPGPMessage;
+use pgp::SignedSecretKey;
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     io::Read,
     sync::Arc,
 };
@@ -291,7 +300,12 @@ impl MessageServer {
             let json = tokio::fs::read_to_string(path).await?;
             let hub = serde_json::from_str::<Hub>(&json)?;
             if let Some(channel) = hub.channels.get(&channel_id) {
-                let messages = channel.get_all_messages_from(last_id).await;
+                let messages: Vec<Message> = channel
+                    .get_all_messages_from(last_id)
+                    .await
+                    .iter()
+                    .filter_map(|signed_message| Message::try_from(signed_message).ok())
+                    .collect();
                 let last_id = if let Some(last) = messages.last() {
                     Some(last.id)
                 } else {
@@ -453,16 +467,18 @@ pub struct Server {
     subscribed: SubscribedMap,
     connected: ConnectedMap,
     message_server: Addr<MessageServer>,
+    secret_key: SignedSecretKey,
 }
 
 impl Server {
     /// Creates a new server with default options, also creates a [`MessageServer`] with the given `commit_threshold` (how many messages should be added to the search index before commiting to the index).
-    pub async fn new() -> Result<Self> {
+    pub async fn new(secret_key: SignedSecretKey) -> Result<Self> {
         Ok(Self {
             subscribed_channels: Arc::new(RwLock::new(HashMap::new())),
             subscribed_hubs: Arc::new(RwLock::new(HashMap::new())),
             subscribed: Arc::new(RwLock::new(HashMap::new())),
             connected: Arc::new(RwLock::new(HashMap::new())),
+            secret_key,
             message_server: MessageServer::new()
                 .start()
                 .await
@@ -471,38 +487,48 @@ impl Server {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
-    async fn send_hub(&self, message: ServerMessage, hub_id: &ID) {
+    async fn send_hub(&self, message: ServerMessage, hub_id: &ID) -> Result {
         if let Some(subscribed_arc) = self.subscribed_hubs.read().await.get(hub_id) {
+            let signed_message = OpenPGPMessage::new_literal("", message.to_string().as_str())
+                .sign(
+                    &self.secret_key,
+                    String::new,
+                    pgp::crypto::HashAlgorithm::SHA2_256,
+                )?;
+            let signed_message_string = signed_message.to_armored_string(None)?;
+            let message = WebSocketMessage::text(signed_message_string);
             for connection_id in subscribed_arc.read().await.iter() {
                 if let Some(connection) = self.connected.read().await.get(connection_id) {
-                    let _ = connection
-                        .lock()
-                        .await
-                        .send(WebSocketMessage::text(message.to_string()))
-                        .await;
+                    let _ = connection.lock().await.send(message.clone()).await;
                 }
             }
         }
+        Ok(())
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
-    async fn send_channel(&self, message: ServerMessage, hub_id: ID, channel_id: ID) {
+    async fn send_channel(&self, message: ServerMessage, hub_id: ID, channel_id: ID) -> Result {
         if let Some(subscribed_arc) = self
             .subscribed_channels
             .read()
             .await
             .get(&(hub_id, channel_id))
         {
+            let signed_message = OpenPGPMessage::new_literal("", message.to_string().as_str())
+                .sign(
+                    &self.secret_key,
+                    String::new,
+                    pgp::crypto::HashAlgorithm::SHA2_256,
+                )?;
+            let signed_message_string = signed_message.to_armored_string(None)?;
+            let message = WebSocketMessage::text(signed_message_string);
             for connection_id in subscribed_arc.read().await.iter() {
                 if let Some(connection) = self.connected.read().await.get(connection_id) {
-                    let _ = connection
-                        .lock()
-                        .await
-                        .send(WebSocketMessage::text(message.to_string()))
-                        .await;
+                    let _ = connection.lock().await.send(message.clone()).await;
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -675,12 +701,13 @@ impl Handler<client_command::StartTyping> for Server {
                 );
                 Ok(())
             })?;
-        self.send_channel(
-            ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id, msg.channel_id),
-            msg.hub_id,
-            msg.channel_id,
-        )
-        .await;
+        let _ = self
+            .send_channel(
+                ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id, msg.channel_id),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
         Ok(())
     }
 }
@@ -711,12 +738,13 @@ impl Handler<client_command::StopTyping> for Server {
                 );
                 Ok(())
             })?;
-        self.send_channel(
-            ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id, msg.channel_id),
-            msg.hub_id,
-            msg.channel_id,
-        )
-        .await;
+        let _ = self
+            .send_channel(
+                ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id, msg.channel_id),
+                msg.hub_id,
+                msg.channel_id,
+            )
+            .await;
         Ok(())
     }
 }
@@ -735,16 +763,18 @@ impl Handler<ServerNotification> for Server {
                         message,
                     })
                     .await;
-                self.send_channel(
-                    ServerMessage::ChatMessage(m.hub_id, m.channel_id, m.id),
-                    m.hub_id,
-                    m.channel_id,
-                )
-                .await
+                let _ = self
+                    .send_channel(
+                        ServerMessage::ChatMessage(m.hub_id, m.channel_id, m.id),
+                        m.hub_id,
+                        m.channel_id,
+                    )
+                    .await;
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
-                self.send_hub(ServerMessage::HubUpdated(hub_id, update_type), &hub_id)
-                    .await
+                let _ = self
+                    .send_hub(ServerMessage::HubUpdated(hub_id, update_type), &hub_id)
+                    .await;
             }
         }
     }
