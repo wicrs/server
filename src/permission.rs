@@ -1,6 +1,5 @@
 use crate::ID;
 use async_graphql::{Enum, SimpleObject};
-use parse_display::{Display, FromStr};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -47,9 +46,7 @@ impl From<(ChannelPermission, PermissionSetting, ID)> for ChannelPermissionSet {
 }
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(
-    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
-)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
 pub enum HubPermission {
     All,
     ReadChannels,
@@ -71,9 +68,7 @@ pub enum HubPermission {
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(
-    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
-)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
 pub enum ChannelPermission {
     Write,
     Read,

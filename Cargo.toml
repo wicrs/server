@@ -28,7 +28,6 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 xactor = { version = "0.7", features = ["runtime-tokio"], default-features = false }
 lazy_static = "1.4"
 futures = "0.3"
-parse-display = "0.4"
 warp = "0.3"
 async-graphql = { version = "2.0", features = ["uuid", "string_number", "chrono"] }
 async-graphql-warp = "2.0"

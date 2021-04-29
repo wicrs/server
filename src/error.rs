@@ -19,9 +19,9 @@ pub enum Error {
     HubNotFound,
     #[error("channel does not exist")]
     ChannelNotFound,
-    #[error("user is missing the {0} hub permission")]
+    #[error("user does not have the required hub permission")]
     MissingHubPermission(HubPermission),
-    #[error("user is missing the {0} channel permission")]
+    #[error("user does not have the required channel permission")]
     MissingChannelPermission(ChannelPermission),
     #[error("user is not in the hub")]
     NotInHub,

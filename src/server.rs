@@ -8,9 +8,9 @@ use crate::{
 use async_trait::async_trait;
 use futures::stream::SplitSink;
 use futures::SinkExt;
-use parse_display::{Display, FromStr};
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedSecretKey;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
@@ -129,44 +129,27 @@ pub struct SearchMessageIndex {
 }
 
 /// Types of updates that trigger [`ServerNotification::HubUpdated`]
-#[derive(Clone, Debug, Display, FromStr)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum HubUpdateType {
     HubDeleted,
     HubRenamed,
     HubDescriptionUpdated,
-    #[display("{}({0})")]
     UserJoined(ID),
-    #[display("{}({0})")]
     UserLeft(ID),
-    #[display("{}({0})")]
     UserBanned(ID),
-    #[display("{}({0})")]
     UserMuted(ID),
-    #[display("{}({0})")]
     UserUnmuted(ID),
-    #[display("{}({0})")]
     UserUnbanned(ID),
-    #[display("{}({0})")]
     UserKicked(ID),
-    #[display("{}({0})")]
     UserHubPermissionChanged(ID),
-    #[display("{}({0},{1})")]
     UserChannelPermissionChanged(ID, ID),
-    #[display("{}({0})")]
     UsernameChanged(ID),
-    #[display("{}({0})")]
     UserStatusUpdated(ID),
-    #[display("{}({0})")]
     UserDescriptionUpdated(ID),
-    #[display("{}({0})")]
     MemberNicknameChanged(ID),
-    #[display("{}({0})")]
     ChannelCreated(ID),
-    #[display("{}({0})")]
     ChannelDeleted(ID),
-    #[display("{}({0})")]
     ChannelRenamed(ID),
-    #[display("{}({0})")]
     ChannelDescriptionUpdated(ID),
 }
 
@@ -489,8 +472,8 @@ impl Server {
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
     async fn send_hub(&self, message: ServerMessage, hub_id: &ID) -> Result {
         if let Some(subscribed_arc) = self.subscribed_hubs.read().await.get(hub_id) {
-            let signed_message = OpenPGPMessage::new_literal("", message.to_string().as_str())
-                .sign(
+            let signed_message =
+                OpenPGPMessage::new_literal("", serde_json::to_string(&message)?.as_str()).sign(
                     &self.secret_key,
                     String::new,
                     pgp::crypto::HashAlgorithm::SHA2_256,
@@ -514,8 +497,8 @@ impl Server {
             .await
             .get(&(hub_id, channel_id))
         {
-            let signed_message = OpenPGPMessage::new_literal("", message.to_string().as_str())
-                .sign(
+            let signed_message =
+                OpenPGPMessage::new_literal("", serde_json::to_string(&message)?.as_str()).sign(
                     &self.secret_key,
                     String::new,
                     pgp::crypto::HashAlgorithm::SHA2_256,

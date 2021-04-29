@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use crate::{error::Error, server::Server};
 use crate::{server::client_command, ID};
@@ -11,45 +11,32 @@ use warp::ws::WebSocket;
 use xactor::Addr;
 
 use crate::error::Result;
-use parse_display::{Display, FromStr};
+use serde::{Deserialize, Serialize};
 
 pub use warp::ws::Message as WebSocketMessage;
 
 /// Messages that can be sent to the server by the client
-#[derive(Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ClientMessage {
-    #[display("{}({0})")]
     SubscribeHub(ID),
-    #[display("{}({0})")]
     UnsubscribeHub(ID),
-    #[display("{}({0},{1})")]
     SubscribeChannel(ID, ID),
-    #[display("{}({0},{1})")]
     UnsubscribeChannel(ID, ID),
-    #[display("{}({0},{1})")]
     StartTyping(ID, ID),
-    #[display("{}({0},{1})")]
     StopTyping(ID, ID),
 }
 
 /// Messages that the server can send to clients.
-#[derive(Display, FromStr)]
-#[display(style = "SNAKE_CASE")]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ServerMessage {
-    #[display("{}({0})")]
     Error(String),
     InvalidCommand,
     NotSigned,
     CommandFailed,
-    #[display("{}({0},{1},\"{2}\")")]
     ChatMessage(ID, ID, ID),
-    #[display("{}({0},{1})")]
     HubUpdated(ID, HubUpdateType),
     Success,
-    #[display("{}({0},{1},{2})")]
     UserStartedTyping(String, ID, ID),
-    #[display("{}({0},{1},{2})")]
     UserStoppedTyping(String, ID, ID),
 }
 
@@ -96,7 +83,7 @@ pub async fn handle_connection(
                         let raw_response = if let Ok((command_text, _)) =
                             crate::signing::verify_message_extract(&public_key, text)
                         {
-                            if let Ok(command) = ClientMessage::from_str(&command_text) {
+                            if let Ok(command) = serde_json::from_str(&command_text) {
                                 match command {
                                     ClientMessage::SubscribeChannel(hub_id, channel_id) => {
                                         if let Ok(result) = addr
@@ -202,15 +189,17 @@ pub async fn handle_connection(
                             }
                         } else {
                             ServerMessage::NotSigned
-                        }
-                        .to_string();
-                        let message = OpenPGPMessage::new_literal("", &raw_response)
-                            .sign(
-                                &server_keys.secret_key,
-                                String::new,
-                                HashAlgorithm::SHA2_256,
-                            )?
-                            .compress(CompressionAlgorithm::ZIP)?;
+                        };
+                        let message = OpenPGPMessage::new_literal(
+                            "",
+                            serde_json::to_string(&raw_response)?.as_str(),
+                        )
+                        .sign(
+                            &server_keys.secret_key,
+                            String::new,
+                            HashAlgorithm::SHA2_256,
+                        )?
+                        .compress(CompressionAlgorithm::ZIP)?;
                         out_arc
                             .lock()
                             .await
