@@ -157,7 +157,7 @@ pub enum HubUpdateType {
 #[message(result = "()")]
 #[derive(Debug, Clone)]
 pub enum ServerNotification {
-    NewMessage(channel::Message),
+    NewMessage(ID, ID, ID, String, channel::Message),
     HubUpdated(ID, HubUpdateType),
 }
 
@@ -686,7 +686,11 @@ impl Handler<client_command::StartTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStartedTyping(msg.user_id, msg.hub_id, msg.channel_id),
+                ServerMessage::UserStartedTyping {
+                    user_id: msg.user_id,
+                    hub_id: msg.hub_id,
+                    channel_id: msg.channel_id,
+                },
                 msg.hub_id,
                 msg.channel_id,
             )
@@ -723,7 +727,11 @@ impl Handler<client_command::StopTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStoppedTyping(msg.user_id, msg.hub_id, msg.channel_id),
+                ServerMessage::UserStoppedTyping {
+                    user_id: msg.user_id,
+                    hub_id: msg.hub_id,
+                    channel_id: msg.channel_id,
+                },
                 msg.hub_id,
                 msg.channel_id,
             )
@@ -736,27 +744,43 @@ impl Handler<client_command::StopTyping> for Server {
 impl Handler<ServerNotification> for Server {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ServerNotification) {
         match msg {
-            ServerNotification::NewMessage(message) => {
-                let m = message.clone();
+            ServerNotification::NewMessage(
+                hub_id,
+                channel_id,
+                message_id,
+                armoured_message,
+                message,
+            ) => {
                 let _ = self
                     .message_server
                     .call(NewMessageForIndex {
-                        hub_id: message.hub_id,
-                        channel_id: message.hub_id,
+                        hub_id,
+                        channel_id,
                         message,
                     })
                     .await;
                 let _ = self
                     .send_channel(
-                        ServerMessage::ChatMessage(m.hub_id, m.channel_id, m.id),
-                        m.hub_id,
-                        m.channel_id,
+                        ServerMessage::ChatMessage {
+                            hub_id,
+                            channel_id,
+                            message_id,
+                            armoured_message,
+                        },
+                        hub_id,
+                        channel_id,
                     )
                     .await;
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
                 let _ = self
-                    .send_hub(ServerMessage::HubUpdated(hub_id, update_type), &hub_id)
+                    .send_hub(
+                        ServerMessage::HubUpdated {
+                            hub_id,
+                            update_type,
+                        },
+                        &hub_id,
+                    )
                     .await;
             }
         }

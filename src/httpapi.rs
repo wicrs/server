@@ -178,7 +178,13 @@ pub async fn start(config: Config) -> Result {
                             &key_pair.public_key,
                             &client_public_key,
                         )?;
-                        let _ = server.send(ServerNotification::NewMessage(message));
+                        let _ = server.send(ServerNotification::NewMessage(
+                            message.hub_id,
+                            message.channel_id,
+                            message.id,
+                            body,
+                            message,
+                        ));
                         Ok::<_, Error>(warp::reply())
                     }
                     .await

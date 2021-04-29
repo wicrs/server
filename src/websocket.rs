@@ -18,12 +18,12 @@ pub use warp::ws::Message as WebSocketMessage;
 /// Messages that can be sent to the server by the client
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ClientMessage {
-    SubscribeHub(ID),
-    UnsubscribeHub(ID),
-    SubscribeChannel(ID, ID),
-    UnsubscribeChannel(ID, ID),
-    StartTyping(ID, ID),
-    StopTyping(ID, ID),
+    SubscribeHub { hub_id: ID },
+    UnsubscribeHub { hub_id: ID },
+    SubscribeChannel { hub_id: ID, channel_id: ID },
+    UnsubscribeChannel { hub_id: ID, channel_id: ID },
+    StartTyping { hub_id: ID, channel_id: ID },
+    StopTyping { hub_id: ID, channel_id: ID },
 }
 
 /// Messages that the server can send to clients.
@@ -33,11 +33,27 @@ pub enum ServerMessage {
     InvalidCommand,
     NotSigned,
     CommandFailed,
-    ChatMessage(ID, ID, ID),
-    HubUpdated(ID, HubUpdateType),
+    ChatMessage {
+        hub_id: ID,
+        channel_id: ID,
+        message_id: ID,
+        armoured_message: String,
+    },
+    HubUpdated {
+        hub_id: ID,
+        update_type: HubUpdateType,
+    },
     Success,
-    UserStartedTyping(String, ID, ID),
-    UserStoppedTyping(String, ID, ID),
+    UserStartedTyping {
+        user_id: String,
+        hub_id: ID,
+        channel_id: ID,
+    },
+    UserStoppedTyping {
+        user_id: String,
+        hub_id: ID,
+        channel_id: ID,
+    },
 }
 
 pub async fn handle_connection(
@@ -85,7 +101,7 @@ pub async fn handle_connection(
                         {
                             if let Ok(command) = serde_json::from_str(&command_text) {
                                 match command {
-                                    ClientMessage::SubscribeChannel(hub_id, channel_id) => {
+                                    ClientMessage::SubscribeChannel { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeChannel {
                                                 user_id: user_id.clone(),
@@ -103,7 +119,7 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::UnsubscribeChannel(hub_id, channel_id) => {
+                                    ClientMessage::UnsubscribeChannel { hub_id, channel_id } => {
                                         if addr
                                             .call(client_command::UnsubscribeChannel {
                                                 hub_id,
@@ -118,7 +134,7 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::StartTyping(hub_id, channel_id) => {
+                                    ClientMessage::StartTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StartTyping {
                                                 user_id: user_id.clone(),
@@ -135,7 +151,7 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::StopTyping(hub_id, channel_id) => {
+                                    ClientMessage::StopTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StopTyping {
                                                 user_id: user_id.clone(),
@@ -152,7 +168,7 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::SubscribeHub(hub_id) => {
+                                    ClientMessage::SubscribeHub { hub_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeHub {
                                                 user_id: user_id.clone(),
@@ -169,7 +185,7 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::UnsubscribeHub(hub_id) => {
+                                    ClientMessage::UnsubscribeHub { hub_id } => {
                                         if addr
                                             .call(client_command::UnsubscribeHub {
                                                 hub_id,
