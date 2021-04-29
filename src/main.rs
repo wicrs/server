@@ -18,7 +18,6 @@ fn load_config(path: &str) -> wicrs_server::config::Config {
 /// Main function, loads config and starts a server for the HTTP API.
 #[tokio::main]
 async fn main() -> wicrs_server::error::Result {
-    //let _ = wicrs_server::signing::sign_and_verify();
     let config = load_config("config.json");
     wicrs_server::httpapi::start(config).await
 }

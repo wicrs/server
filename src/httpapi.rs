@@ -12,10 +12,10 @@ use warp::ws::Ws;
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
-use pgp::crypto::HashAlgorithm;
 use pgp::packet::LiteralData;
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
+use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm};
 
 use crate::server::Server;
 use crate::signing::{self, KeyPair};
@@ -96,11 +96,8 @@ pub async fn start(config: Config) -> Result {
                             "",
                             &resp.data.to_string(),
                         ))
-                        .sign(
-                            &key_pair.secret_key,
-                            String::new,
-                            HashAlgorithm::SHA2_256,
-                        )?;
+                        .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
+                        .compress(CompressionAlgorithm::ZIP)?;
                         let mut reply = HttpResponse::<String>::default();
                         reply.body_mut().push_str(&message.to_armored_string(None)?);
                         let mut response = warp::reply::with_header(
@@ -156,6 +153,7 @@ pub async fn start(config: Config) -> Result {
                         Ok::<_, Error>(
                             Message::new(sender, content, hub_id, channel_id)
                                 .sign(&key_pair.secret_key, String::new)?
+                                .compress(CompressionAlgorithm::ZIP)?
                                 .to_armored_string(None)?,
                         )
                     }

@@ -36,7 +36,7 @@ impl KeyPair {
             .primary_user_id(id.into())
             .preferred_symmetric_algorithms(smallvec![SymmetricKeyAlgorithm::AES256,])
             .preferred_hash_algorithms(smallvec![HashAlgorithm::SHA2_256,])
-            .preferred_compression_algorithms(smallvec![CompressionAlgorithm::ZLIB,])
+            .preferred_compression_algorithms(smallvec![CompressionAlgorithm::ZIP,])
             .build()?
             .generate()?;
         let passwd_fn = || String::new();
@@ -125,10 +125,11 @@ impl Message {
     ) -> Result<OpenPGPMessage> {
         let pgp_message = OpenPGPMessage::from_string(message_str)?.0;
         pgp_message.verify(server_public_key)?;
-        let message = Message::try_from(&pgp_message)?;
+        let message = Message::try_from(pgp_message)?;
         Ok(
             OpenPGPMessage::Literal(LiteralData::from_str(&message.id.to_string(), message_str))
-                .sign(client_secret_key, password, HashAlgorithm::SHA2_256)?,
+                .sign(client_secret_key, password, HashAlgorithm::SHA2_256)?
+                .compress(CompressionAlgorithm::ZIP)?,
         )
     }
 }
@@ -152,25 +153,18 @@ impl TryFrom<Message> for OpenPGPMessage {
     }
 }
 
-impl TryFrom<&OpenPGPMessage> for Message {
+impl TryFrom<OpenPGPMessage> for Message {
     type Error = Error;
 
-    fn try_from(value: &OpenPGPMessage) -> Result<Self, Self::Error> {
+    fn try_from(value: OpenPGPMessage) -> Result<Self, Self::Error> {
         Ok(serde_json::from_str(
             &value
+                .decompress()?
                 .get_literal()
                 .map_or_else(|| Err(Error::InvalidMessage), Ok)?
                 .to_string()
                 .map_or_else(|| Err(Error::InvalidMessage), Ok)?,
         )?)
-    }
-}
-
-impl TryFrom<OpenPGPMessage> for Message {
-    type Error = Error;
-
-    fn try_from(value: OpenPGPMessage) -> Result<Self, Self::Error> {
-        Self::try_from(&value)
     }
 }
 
