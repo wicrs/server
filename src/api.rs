@@ -525,39 +525,6 @@ pub async fn delete_channel(user_id: &str, hub_id: ID, channel_id: ID) -> Result
     hub.save().await
 }
 
-/// Sends a message in a text channel in a hub.
-/// Returns the message if successful.
-///
-/// # Arguments
-///
-/// * `user_id` - ID of the user who is sending the message.
-/// * `hub_id` - ID of the hub where the message is being sent.
-/// * `channel_id` - ID of the channel where the message is being sent.
-/// * `message` - The actual message to be sent.
-///
-/// # Errors
-///
-/// This function may return an error for any of the following reasons:
-///
-/// * The user is not in the hub.
-/// * The message is too big (maximum size in bytes is determined by [`crate::MESSAGE_MAX_SIZE`]).
-/// * The message could not be sent for any of the reasons outlined by [`Hub::send_message`].
-/// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
-/// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
-pub async fn send_message<S: Into<String>>(
-    user_id: &str,
-    hub_id: ID,
-    channel_id: ID,
-    message: String,
-) -> Result {
-    if message.as_bytes().len() < crate::MESSAGE_MAX_SIZE {
-        let mut hub = Hub::load(hub_id).await?;
-        hub.send_message(user_id, channel_id, message).await
-    } else {
-        Err(Error::TooBig)
-    }
-}
-
 /// Gets a message from a text channel in a hub.
 ///
 /// # Arguments

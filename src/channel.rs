@@ -63,7 +63,7 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: String) -> Result {
+    pub async fn add_message(&self, message: SignedMessage) -> Result {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -71,6 +71,12 @@ impl Channel {
             .await?;
         bincode::serialize_into(file.into_std().await, &message)?;
         Ok(())
+    }
+
+    pub async fn write_message(hub_id: ID, channel_id: ID, message: SignedMessage) -> Result {
+        Self::new("".to_string(), channel_id, hub_id)
+            .add_message(message)
+            .await
     }
 
     /// Gets the last messages sent, `max` indicates the maximum number of messages to return.

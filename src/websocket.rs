@@ -1,6 +1,12 @@
 use std::sync::Arc;
 
-use crate::{error::Error, server::Server};
+use crate::{
+    channel::Message,
+    error::Error,
+    hub::Hub,
+    permission::ChannelPermission,
+    server::{Server, ServerNotification},
+};
 use crate::{server::client_command, ID};
 use crate::{server::HubUpdateType, signing::KeyPair};
 use futures_util::{SinkExt, StreamExt};
@@ -18,12 +24,36 @@ pub use warp::ws::Message as WebSocketMessage;
 /// Messages that can be sent to the server by the client
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ClientMessage {
-    SubscribeHub { hub_id: ID },
-    UnsubscribeHub { hub_id: ID },
-    SubscribeChannel { hub_id: ID, channel_id: ID },
-    UnsubscribeChannel { hub_id: ID, channel_id: ID },
-    StartTyping { hub_id: ID, channel_id: ID },
-    StopTyping { hub_id: ID, channel_id: ID },
+    SubscribeHub {
+        hub_id: ID,
+    },
+    UnsubscribeHub {
+        hub_id: ID,
+    },
+    SubscribeChannel {
+        hub_id: ID,
+        channel_id: ID,
+    },
+    UnsubscribeChannel {
+        hub_id: ID,
+        channel_id: ID,
+    },
+    StartTyping {
+        hub_id: ID,
+        channel_id: ID,
+    },
+    StopTyping {
+        hub_id: ID,
+        channel_id: ID,
+    },
+    SendMessageInit {
+        hub_id: ID,
+        channel_id: ID,
+        content: String,
+    },
+    SendMessage {
+        signed_message: String,
+    },
 }
 
 /// Messages that the server can send to clients.
@@ -53,6 +83,9 @@ pub enum ServerMessage {
         user_id: String,
         hub_id: ID,
         channel_id: ID,
+    },
+    MessageForSigning {
+        server_signed_message: String,
     },
 }
 
@@ -191,6 +224,65 @@ pub async fn handle_connection(
                                                 hub_id,
                                                 connection_id,
                                             })
+                                            .await
+                                            .is_ok()
+                                        {
+                                            ServerMessage::Success
+                                        } else {
+                                            ServerMessage::Error(internal_message_error.clone())
+                                        }
+                                    }
+                                    ClientMessage::SendMessageInit {
+                                        hub_id,
+                                        channel_id,
+                                        content,
+                                    } => {
+                                        let hub = Hub::load(hub_id).await?;
+                                        let member = hub.get_member(&user_id)?;
+                                        crate::check_permission!(
+                                            &member,
+                                            channel_id,
+                                            ChannelPermission::Write,
+                                            &hub
+                                        );
+                                        ServerMessage::MessageForSigning {
+                                            server_signed_message: Message::new(
+                                                user_id.clone(),
+                                                content,
+                                                hub_id,
+                                                channel_id,
+                                            )
+                                            .sign(&server_keys.secret_key, String::new)?
+                                            .compress(CompressionAlgorithm::ZIP)?
+                                            .to_armored_string(None)?,
+                                        }
+                                    }
+                                    ClientMessage::SendMessage { signed_message } => {
+                                        let message = Message::from_double_signed_verify(
+                                            &signed_message,
+                                            &server_keys.public_key,
+                                            &public_key,
+                                        )?;
+                                        if let Err(err) = crate::channel::Channel::write_message(
+                                            message.hub_id,
+                                            message.channel_id,
+                                            crate::channel::SignedMessage::new(
+                                                message.id,
+                                                message.created,
+                                                signed_message.clone(),
+                                            ),
+                                        )
+                                        .await
+                                        {
+                                            ServerMessage::Error(err.to_string())
+                                        } else if addr
+                                            .call(ServerNotification::NewMessage(
+                                                message.hub_id,
+                                                message.channel_id,
+                                                message.id,
+                                                signed_message,
+                                                message,
+                                            ))
                                             .await
                                             .is_ok()
                                         {

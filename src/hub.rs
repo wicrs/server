@@ -524,38 +524,6 @@ impl Hub {
         }
     }
 
-    /// Sends a message as a user while checking that the user has permission to view the given channel and to write to it.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error in the following situations, but is not
-    /// limited to just these cases:
-    ///
-    /// * The user is not in the hub.
-    /// * THe user is muted and cannot send messages.
-    /// * The channel does not exist.
-    /// * The user does not have permission to view the channel.
-    /// * The user does not have permission to send messages in the channel.
-    /// * The message could not be added to the channel for any of the reasons outlined in [`Channel::add_message`].
-    pub async fn send_message(&mut self, user_id: &str, channel_id: ID, message: String) -> Result {
-        if let Some(member) = self.members.get(user_id) {
-            if !self.mutes.contains(user_id) {
-                check_permission!(member, channel_id, ChannelPermission::Read, self);
-                check_permission!(member, channel_id, ChannelPermission::Write, self);
-                if let Some(channel) = self.channels.get(&channel_id) {
-                    channel.add_message(message).await?;
-                    Ok(())
-                } else {
-                    Err(Error::ChannelNotFound)
-                }
-            } else {
-                Err(Error::Muted)
-            }
-        } else {
-            Err(Error::NotInHub)
-        }
-    }
-
     /// Gets the file path to be used for storing the hub's data.
     pub fn get_info_path(&self) -> String {
         format!("{}{:x}", HUB_INFO_FOLDER, self.id.as_u128())
