@@ -1,5 +1,6 @@
 use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
+use reqwest::StatusCode;
 use xactor::Actor;
 
 use std::convert::Infallible;
@@ -40,6 +41,28 @@ pub async fn start(config: Config) -> Result {
         )
         .await?,
     );
+    let upload_key = async {
+        let armoured_pub_key = key_pair.public_key.to_armored_string(None)?;
+        let form = reqwest::multipart::Form::new().text("keytext", armoured_pub_key);
+        let url = format!("{}/pks/add", config.key_server);
+        let response = reqwest::Client::new()
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await?;
+        if response.status() == StatusCode::OK {
+            Ok(())
+        } else {
+            Err(Error::Other(
+                "Failed to upload the server's public PGP key to the selected key server."
+                    .to_string(),
+            ))
+        }
+    }
+    .await;
+    if upload_key.is_err() {
+        println!("WARNING: Unable to upload public key to key server.");
+    }
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
