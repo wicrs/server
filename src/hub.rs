@@ -356,7 +356,7 @@ impl Hub {
     pub async fn new_channel(&mut self, member_id: &str, name: String) -> Result<ID> {
         check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
-        check_permission!(member, HubPermission::CreateChannel, self);
+        check_permission!(member, HubPermission::ManageChannels, self);
         let mut id = new_id();
         while self.channels.contains_key(&id) {
             id = new_id();
@@ -455,8 +455,7 @@ impl Hub {
         if new_description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
             Err(Error::TooBig)
         } else if let Some(user) = self.members.get(user_id) {
-            check_permission!(user, channel_id, ChannelPermission::Read, self);
-            check_permission!(user, channel_id, ChannelPermission::Configure, self);
+            check_permission!(user, channel_id, ChannelPermission::Manage, self);
             if let Some(channel) = self.channels.get_mut(&channel_id) {
                 Ok(mem::replace(&mut channel.description, new_description))
             } else {
@@ -487,8 +486,7 @@ impl Hub {
     ) -> Result<String> {
         check_name_validity(&new_name)?;
         if let Some(user) = self.members.get(user_id) {
-            check_permission!(user, channel_id, ChannelPermission::Read, self);
-            check_permission!(user, channel_id, ChannelPermission::Configure, self);
+            check_permission!(user, channel_id, ChannelPermission::Manage, self);
             if let Some(channel) = self.channels.get_mut(&channel_id) {
                 Ok(mem::replace(&mut channel.name, new_name))
             } else {
@@ -512,8 +510,7 @@ impl Hub {
     /// * The user does not have permission to delete the channel.
     pub async fn delete_channel(&mut self, user_id: &str, channel_id: ID) -> Result {
         if let Some(user) = self.members.get(user_id) {
-            check_permission!(user, HubPermission::DeleteChannel, self);
-            check_permission!(user, channel_id, ChannelPermission::Read, self);
+            check_permission!(user, HubPermission::ManageChannels, self);
             if self.channels.remove(&channel_id).is_some() {
                 Ok(())
             } else {
