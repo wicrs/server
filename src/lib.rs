@@ -26,9 +26,6 @@ pub mod websocket;
 
 pub mod signing;
 
-/// String to identify the version of the library, used for external requests.
-pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
-
 /// Maximum size of a username in bytes. Clients should be able to accept larger and smaller values.
 pub const MAX_NAME_SIZE: usize = 128;
 

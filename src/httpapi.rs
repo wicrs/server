@@ -1,6 +1,7 @@
 use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use xactor::Actor;
 
 use std::convert::Infallible;
@@ -13,10 +14,10 @@ use warp::ws::Ws;
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
-use pgp::packet::LiteralData;
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
 use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm};
+use pgp::{packet::LiteralData, types::KeyTrait};
 
 use crate::server::Server;
 use crate::signing::{self, KeyPair};
@@ -32,6 +33,13 @@ use crate::{
     server::ServerNotification,
 };
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ServerInfo {
+    pub version: String,
+    pub public_key_fingerprint: String,
+    pub key_server: String,
+}
+
 pub async fn start(config: Config) -> Result {
     let key_pair = Arc::new(
         KeyPair::load_or_create(
@@ -45,7 +53,9 @@ pub async fn start(config: Config) -> Result {
         let armoured_pub_key = key_pair.public_key.to_armored_string(None)?;
         let form = reqwest::multipart::Form::new().text("keytext", armoured_pub_key);
         let url = format!("{}/pks/add", config.key_server);
-        let response = reqwest::Client::new()
+
+        let response = reqwest::Client::builder()
+            .build()?
             .post(&url)
             .multipart(form)
             .send()
@@ -63,6 +73,8 @@ pub async fn start(config: Config) -> Result {
     if upload_key.is_err() {
         println!("WARNING: Unable to upload public key to key server.");
     }
+    upload_key?;
+    let server_fingerprint = hex::encode_upper(key_pair.secret_key.fingerprint());
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
@@ -107,7 +119,7 @@ pub async fn start(config: Config) -> Result {
     let signed_body_graphql = signed_body.clone();
 
     let graphql_post = warp::any()
-        .and(warp::path("graphql"))
+        .and(warp::path!("v3" / "graphql"))
         .and(signed_body_graphql)
         .and_then(move |(content, fingerprint): (String, String)| {
             let server = graphql_server_arc.clone();
@@ -160,7 +172,7 @@ pub async fn start(config: Config) -> Result {
     let signed_body_smi = signed_body.clone();
 
     let send_message_init = warp::any()
-        .and(warp::path!("v2" / "send_message_init" / String / String))
+        .and(warp::path!("v3" / "send_message_init" / String / String))
         .and(signed_body_smi)
         .and_then(
             move |hub_id: String, channel_id: String, (content, sender): (String, String)| {
@@ -195,7 +207,7 @@ pub async fn start(config: Config) -> Result {
     let send_message_pub_key = public_key_filter.clone();
 
     let send_message = warp::any()
-        .and(warp::path!("v2" / "send_message"))
+        .and(warp::path!("v3" / "send_message"))
         .and(send_message_pub_key)
         .and(warp::body::bytes())
         .and_then(move |client_public_key: SignedPublicKey, body: Bytes| {
@@ -225,7 +237,7 @@ pub async fn start(config: Config) -> Result {
             }
         });
 
-    let web_socket = warp::path!("v2" / "websocket")
+    let web_socket = warp::path!("v3" / "websocket")
         .and(public_key_filter)
         .and(warp::ws())
         .map(move |public_key: SignedPublicKey, ws: Ws| {
@@ -238,7 +250,17 @@ pub async fn start(config: Config) -> Result {
             })
         });
 
+    let server_info_struct = ServerInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        public_key_fingerprint: server_fingerprint,
+        key_server: config.key_server,
+    };
+
+    let server_info =
+        warp::path!("v3" / "info").map(move || warp::reply::json(&server_info_struct.clone()));
+
     let routes = graphql_post
+        .or(server_info)
         .or(web_socket)
         .or(send_message_init)
         .or(send_message);
