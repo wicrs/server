@@ -117,14 +117,14 @@ pub async fn start(config: Config) -> Result {
     );
 
     let signed_body_graphql = signed_body.clone();
-
+    let graphql_key_pair = key_pair.clone();
     let graphql_post = warp::any()
         .and(warp::path!("v3" / "graphql"))
         .and(signed_body_graphql)
         .and_then(move |(content, fingerprint): (String, String)| {
             let server = graphql_server_arc.clone();
             let schema = schema.clone();
-            let key_pair = key_pair.clone();
+            let key_pair = graphql_key_pair.clone();
             async move {
                 Ok::<_, Infallible>(
                     async {
@@ -256,8 +256,19 @@ pub async fn start(config: Config) -> Result {
         key_server: config.key_server,
     };
 
-    let server_info =
-        warp::path!("v3" / "info").map(move || warp::reply::json(&server_info_struct.clone()));
+    let server_info_string = OpenPGPMessage::new_literal(
+        "wicrs_server_info",
+        &format!("{}\n", serde_json::to_string_pretty(&server_info_struct)?),
+    )
+    .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
+    .compress(CompressionAlgorithm::ZIP)?
+    .to_armored_string(None)?;
+    let server_info = warp::path!("v3" / "info").map(move || {
+        warp::http::response::Builder::new()
+            .header("Content-Type", "application/json")
+            .body(server_info_string.clone())
+            .unwrap()
+    });
 
     let routes = graphql_post
         .or(server_info)
