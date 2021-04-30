@@ -15,6 +15,7 @@ use pgp::{
     },
     types::PublicKeyTrait,
 };
+use reqwest::StatusCode;
 use smallvec::*;
 
 pub const SECRET_KEY_PATH: &str = "data/secret_key.asc";
@@ -171,6 +172,19 @@ impl TryFrom<OpenPGPMessage> for Message {
 // Unsafe, here for reference if for some reason this is needed (appears to work with `pgp = "0.7.1"`)
 // This was only thought of because the signature field in [`StandaloneSignature`] was private in the latest version of rpgp (at the time "0.7.1").
 //
+// Update:
+// Found a safe workaround:
+// ```rust
+// if let pgp::composed::message::Message::Signed {
+//     message,
+//     one_pass_signature: _,
+//     signature,
+// } = message
+// { /* use signature here */ }
+// ```
+//
+// Old unsafe workaround:
+// ```rust
 // pub trait GetSignature {
 //     fn get_signature(self) -> Signature;
 // }
@@ -184,8 +198,12 @@ impl TryFrom<OpenPGPMessage> for Message {
 //         transmuted.signature
 //     }
 // }
+// ```
 
-pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicKey> {
+pub async fn get_or_import_public_key(
+    fingerprint: &str,
+    key_server: &str,
+) -> Result<SignedPublicKey> {
     let file_name = format!(
         "{}{}.asc",
         USER_PUBLIC_KEY_FOLDER,
@@ -195,7 +213,25 @@ pub async fn get_or_import_public_key(fingerprint: &str) -> Result<SignedPublicK
     if path.is_file() {
         Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
     } else {
-        Err(Error::PublicKeyNotFound)
+        let url = format!(
+            "{}/pks/lookup?op=get&options=mr&search={}",
+            key_server, fingerprint
+        );
+        let response = reqwest::get(url).await?;
+
+        if response.status() == StatusCode::OK {
+            let text = response.text().await?;
+            let key = SignedPublicKey::from_string(&text)?.0;
+            let downloaded_fp = hex::encode_upper(key.fingerprint());
+            if downloaded_fp == fingerprint {
+                tokio::fs::write(path, text).await?;
+                Ok(key)
+            } else {
+                Err(Error::PublicKeyNotFound)
+            }
+        } else {
+            Err(Error::PublicKeyNotFound)
+        }
     }
 }
 

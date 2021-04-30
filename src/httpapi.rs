@@ -1,6 +1,6 @@
 use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
 
-use xactor::{Actor, Addr};
+use xactor::Actor;
 
 use std::convert::Infallible;
 use std::convert::TryInto;
@@ -31,10 +31,6 @@ use crate::{
     server::ServerNotification,
 };
 
-type SchemaType = Schema<QueryRoot, MutationRoot, EmptySubscription>;
-type ServerAddr = Arc<Addr<Server>>;
-type KeyPairArc = Arc<KeyPair>;
-
 pub async fn start(config: Config) -> Result {
     let key_pair = Arc::new(
         KeyPair::load_or_create(
@@ -57,18 +53,26 @@ pub async fn start(config: Config) -> Result {
     let key_pair_send = key_pair.clone();
     let key_pair_send_init = key_pair.clone();
     let graphql_server_arc = server.clone();
+    let key_server_url = config.key_server.clone();
+    let public_key_filter =
+        warp::any()
+            .and(warp::header("pgp-fingerprint"))
+            .and_then(move |header: String| {
+                let key_server_url = key_server_url.clone();
+                async move {
+                    crate::signing::get_or_import_public_key(&header, &key_server_url)
+                        .await
+                        .and_then(|key| {
+                            key.verify()?;
+                            Ok(key)
+                        })
+                        .map_err(warp::reject::custom)
+                }
+            });
 
-    let public_key_filter = warp::header("pgp-fingerprint").and_then(|header: String| async move {
-        crate::signing::get_or_import_public_key(&header)
-            .await
-            .and_then(|key| {
-                key.verify()?;
-                Ok(key)
-            })
-            .map_err(warp::reject::custom)
-    });
+    let signed_body_pub_key = public_key_filter.clone();
 
-    let signed_body = public_key_filter.and(warp::body::bytes()).and_then(
+    let signed_body = signed_body_pub_key.and(warp::body::bytes()).and_then(
         |requester_public_key: SignedPublicKey, body: Bytes| async move {
             let text = String::from_utf8(body.to_vec())
                 .map_err(|e| warp::reject::custom(Error::from(e)))?;
@@ -77,13 +81,16 @@ pub async fn start(config: Config) -> Result {
         },
     );
 
+    let signed_body_graphql = signed_body.clone();
+
     let graphql_post = warp::any()
-        .map(move || (graphql_server_arc.clone(), schema.clone(), key_pair.clone()))
         .and(warp::path("graphql"))
-        .and(signed_body)
-        .and_then(
-            |(server, schema, key_pair): (ServerAddr, SchemaType, KeyPairArc),
-             (content, fingerprint): (String, String)| async move {
+        .and(signed_body_graphql)
+        .and_then(move |(content, fingerprint): (String, String)| {
+            let server = graphql_server_arc.clone();
+            let schema = schema.clone();
+            let key_pair = key_pair.clone();
+            async move {
                 Ok::<_, Infallible>(
                     async {
                         let request = GraphQLRequest::new(content);
@@ -124,52 +131,54 @@ pub async fn start(config: Config) -> Result {
                     .await
                     .map_or_else(|e| e.into_response(), |r| r.into_response()),
                 )
-            },
-        );
+            }
+        });
+
+    let signed_body_smi = signed_body.clone();
 
     let send_message_init = warp::any()
-        .map(move || key_pair_send_init.clone())
         .and(warp::path!("v2" / "send_message_init" / String / String))
-        .and(signed_body)
+        .and(signed_body_smi)
         .and_then(
-            |key_pair: KeyPairArc,
-             hub_id: String,
-             channel_id: String,
-             (content, sender): (String, String)| async move {
-                Ok::<_, Infallible>(
-                    async {
-                        let hub_id = ID::parse_str(&hub_id)?;
-                        let hub = Hub::load(hub_id).await?;
-                        let channel_id = ID::parse_str(&channel_id)?;
-                        let member = hub.get_member(&sender)?;
-                        crate::check_permission!(
-                            &member,
-                            channel_id,
-                            ChannelPermission::Write,
-                            &hub
-                        );
-                        Ok::<_, Error>(
-                            Message::new(sender, content, hub_id, channel_id)
-                                .sign(&key_pair.secret_key, String::new)?
-                                .compress(CompressionAlgorithm::ZIP)?
-                                .to_armored_string(None)?,
-                        )
-                    }
-                    .await
-                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
-                )
+            move |hub_id: String, channel_id: String, (content, sender): (String, String)| {
+                let key_pair = key_pair_send_init.clone();
+                async move {
+                    Ok::<_, Infallible>(
+                        async {
+                            let hub_id = ID::parse_str(&hub_id)?;
+                            let hub = Hub::load(hub_id).await?;
+                            let channel_id = ID::parse_str(&channel_id)?;
+                            let member = hub.get_member(&sender)?;
+                            crate::check_permission!(
+                                &member,
+                                channel_id,
+                                ChannelPermission::Write,
+                                &hub
+                            );
+                            Ok::<_, Error>(
+                                Message::new(sender, content, hub_id, channel_id)
+                                    .sign(&key_pair.secret_key, String::new)?
+                                    .compress(CompressionAlgorithm::ZIP)?
+                                    .to_armored_string(None)?,
+                            )
+                        }
+                        .await
+                        .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                    )
+                }
             },
         );
 
+    let send_message_pub_key = public_key_filter.clone();
+
     let send_message = warp::any()
-        .map(move || (key_pair_send.clone(), send_message_server_arc.clone()))
         .and(warp::path!("v2" / "send_message"))
-        .and(public_key_filter)
+        .and(send_message_pub_key)
         .and(warp::body::bytes())
-        .and_then(
-            |(key_pair, server): (KeyPairArc, ServerAddr),
-             client_public_key: SignedPublicKey,
-             body: Bytes| async move {
+        .and_then(move |client_public_key: SignedPublicKey, body: Bytes| {
+            let key_pair = key_pair_send.clone();
+            let server = send_message_server_arc.clone();
+            async move {
                 Ok::<_, Infallible>(
                     async {
                         let body = String::from_utf8(body.to_vec())?;
@@ -190,25 +199,21 @@ pub async fn start(config: Config) -> Result {
                     .await
                     .map_or_else(|e| e.into_response(), |r| r.into_response()),
                 )
-            },
-        );
+            }
+        });
 
     let web_socket = warp::path!("v2" / "websocket")
-        .map(move || (server.clone(), key_pair_ws.clone()))
         .and(public_key_filter)
         .and(warp::ws())
-        .map(
-            move |(server, key_pair): (ServerAddr, KeyPairArc),
-                  public_key: SignedPublicKey,
-                  ws: Ws| {
-                ws.on_upgrade(move |websocket| async move {
-                    let _ = crate::websocket::handle_connection(
-                        websocket, public_key, key_pair, server,
-                    )
-                    .await;
-                })
-            },
-        );
+        .map(move |public_key: SignedPublicKey, ws: Ws| {
+            let key_pair = key_pair_ws.clone();
+            let server = server.clone();
+            ws.on_upgrade(move |websocket| async move {
+                let _ =
+                    crate::websocket::handle_connection(websocket, public_key, key_pair, server)
+                        .await;
+            })
+        });
 
     let routes = graphql_post
         .or(web_socket)

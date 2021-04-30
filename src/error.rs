@@ -75,6 +75,8 @@ pub enum Error {
     WsNotAuthenticated,
     #[error("Warp error")]
     Warp(#[from] warp::Error),
+    #[error("Reqwest error")]
+    Reqwest(#[from] reqwest::Error),
     #[error("PGP error")]
     #[allow(clippy::upper_case_acronyms)]
     PGP(#[from] pgp::errors::Error),
