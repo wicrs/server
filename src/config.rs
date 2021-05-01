@@ -9,4 +9,6 @@ pub struct Config {
     pub address: String,
     /// Whether or not to show the version of WICRS server on the root webpage (`http(s)://host:port/`)
     pub show_version: bool,
+    /// ID to give the generated PGP KeyPair.
+    pub key_id: Option<String>,
 }

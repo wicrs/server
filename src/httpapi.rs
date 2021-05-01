@@ -20,7 +20,8 @@ use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm};
 use pgp::{packet::LiteralData, types::KeyTrait};
 
 use crate::server::Server;
-use crate::signing::{self, KeyPair};
+use crate::signing::KeyPair;
+use crate::signing::{PUBLIC_KEY_PATH, SECRET_KEY_PATH};
 use crate::ID;
 use crate::{channel::Message, config::Config};
 use crate::{
@@ -41,14 +42,33 @@ pub struct ServerInfo {
 }
 
 pub async fn start(config: Config) -> Result {
-    let key_pair = Arc::new(
-        KeyPair::load_or_create(
-            "WICRS Server <server@wic.rs>",
-            signing::SECRET_KEY_PATH,
-            signing::PUBLIC_KEY_PATH,
-        )
-        .await?,
-    );
+    let key_pair = if let Ok(key_pair) = KeyPair::load(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await {
+        key_pair
+    } else {
+        println!(
+            "WARNING: Failed to load secret key from {}, generating a new one.",
+            SECRET_KEY_PATH
+        );
+        let key_id = if let Some(key_id) = config.key_id.clone() {
+            key_id
+        } else {
+            println!(
+                "Enter an ID for the server's PGP key (e.g. WICRS Server <wicrs@examle.com>):"
+            );
+            let mut buf = String::new();
+            std::io::stdin().read_line(&mut buf)?;
+            buf
+        };
+        println!("Generating new PGP key pair for the server...");
+        let key_pair = KeyPair::new(key_id)?;
+        key_pair.save(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await?;
+        println!(
+            "Server key pair generated, private key saved to {}, public key saved to {}.",
+            SECRET_KEY_PATH, PUBLIC_KEY_PATH
+        );
+        key_pair
+    };
+    let key_pair = Arc::new(key_pair);
     let upload_key = async {
         let armoured_pub_key = key_pair.public_key.to_armored_string(None)?;
         let form = reqwest::multipart::Form::new().text("keytext", armoured_pub_key);
@@ -73,7 +93,7 @@ pub async fn start(config: Config) -> Result {
     if upload_key.is_err() {
         println!("WARNING: Unable to upload public key to key server.");
     }
-    upload_key?;
+    println!("Starting WICRS Server.");
     let server_fingerprint = hex::encode_upper(key_pair.secret_key.fingerprint());
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
@@ -95,13 +115,16 @@ pub async fn start(config: Config) -> Result {
             .and_then(move |header: String| {
                 let key_server_url = key_server_url.clone();
                 async move {
-                    crate::signing::get_or_import_public_key(&header, &key_server_url)
-                        .await
-                        .and_then(|key| {
-                            key.verify()?;
-                            Ok(key)
-                        })
-                        .map_err(warp::reject::custom)
+                    crate::signing::get_or_import_public_key(
+                        &hex::decode(header).map_err(|_| Error::InvalidFingerprint)?,
+                        &key_server_url,
+                    )
+                    .await
+                    .and_then(|key| {
+                        key.verify()?;
+                        Ok(key)
+                    })
+                    .map_err(warp::reject::custom)
                 }
             });
 
@@ -258,7 +281,7 @@ pub async fn start(config: Config) -> Result {
 
     let server_info_string = OpenPGPMessage::new_literal(
         "wicrs_server_info",
-        &format!("{}\n", serde_json::to_string_pretty(&server_info_struct)?),
+        &serde_json::to_string(&server_info_struct)?,
     )
     .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
     .compress(CompressionAlgorithm::ZIP)?
@@ -269,6 +292,12 @@ pub async fn start(config: Config) -> Result {
             .body(server_info_string.clone())
             .unwrap()
     });
+
+    println!(
+        "WICRS Server {} listening at {}.",
+        env!("CARGO_PKG_VERSION"),
+        config.address
+    );
 
     let routes = graphql_post
         .or(server_info)

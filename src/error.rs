@@ -85,6 +85,8 @@ pub enum Error {
     ID(#[from] uuid::Error),
     #[error("could not find a pgp public key with that ID")]
     PublicKeyNotFound,
+    #[error("invalid PGP fingerprint")]
+    InvalidFingerprint,
     #[error("{0}")]
     Other(String),
 }

@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
+use crate::error::Result;
 use crate::{channel::Message, error::Error};
-use crate::{error::Result, ID};
 use chrono::{Duration, Utc};
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
 use pgp::packet::LiteralData;
@@ -58,8 +58,14 @@ impl KeyPair {
     pub async fn load(secret_key_path: &str, public_key_path: &str) -> Result<Self> {
         let secret_key =
             SignedSecretKey::from_string(&tokio::fs::read_to_string(secret_key_path).await?)?.0;
-        let public_key =
-            SignedPublicKey::from_string(&tokio::fs::read_to_string(public_key_path).await?)?.0;
+        let public_key = if let Ok((key, _)) =
+            SignedPublicKey::from_string(&tokio::fs::read_to_string(public_key_path).await?)
+        {
+            key
+        } else {
+            secret_key.public_key().sign(&secret_key, String::new)?
+        };
+
         Ok(Self {
             secret_key,
             public_key,
@@ -201,14 +207,14 @@ impl TryFrom<OpenPGPMessage> for Message {
 // ```
 
 pub async fn get_or_import_public_key(
-    fingerprint: &str,
+    fingerprint: &[u8],
     key_server: &str,
 ) -> Result<SignedPublicKey> {
-    let file_name = format!(
-        "{}{}.asc",
-        USER_PUBLIC_KEY_FOLDER,
-        fingerprint.to_ascii_uppercase()
-    );
+    if dbg!(fingerprint.len()) != 20 {
+        return Err(Error::InvalidFingerprint);
+    }
+    let fingerprint = hex::encode_upper(fingerprint);
+    let file_name = format!("{}{}.asc", USER_PUBLIC_KEY_FOLDER, fingerprint);
     let path = std::path::Path::new(&file_name);
     if path.is_file() {
         Ok(SignedPublicKey::from_string(&tokio::fs::read_to_string(path).await?)?.0)
@@ -263,48 +269,4 @@ pub fn verify_message_extract(
     } else {
         Err(Error::InvalidMessage)
     }
-}
-
-pub async fn sign_and_verify() -> Result {
-    let KeyPair {
-        secret_key,
-        public_key,
-    } = KeyPair::load_or_create(
-        "WICRS Server <server@wic.rs>",
-        SECRET_KEY_PATH,
-        PUBLIC_KEY_PATH,
-    )
-    .await?;
-
-    let message = Message::new(
-        "test".into(),
-        "this is a test message".into(),
-        ID::nil(),
-        ID::nil(),
-    );
-
-    let passwd_fn = || String::new();
-
-    let msg_signed = message.sign(&secret_key, passwd_fn)?;
-    let msg_armored_str = msg_signed.to_armored_string(None)?;
-
-    println!("{}\n", msg_armored_str);
-
-    let final_message = Message::sign_final(&msg_armored_str, &public_key, &secret_key, passwd_fn)?;
-    let final_message_str = final_message.to_armored_string(None)?;
-
-    println!("{}\n", final_message_str);
-
-    println!(
-        "public_key id: {:?}\npublic_key user_id: {}\n",
-        public_key.key_id(),
-        public_key.details.users.first().unwrap().id,
-    );
-
-    let _ = println!(
-        "{:?}",
-        Message::from_double_signed_verify(&final_message_str, &public_key, &public_key)?
-    );
-
-    Ok(())
 }
