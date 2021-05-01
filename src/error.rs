@@ -121,6 +121,7 @@ impl From<&Error> for StatusCode {
             | Error::PGP(_)
             | Error::InvalidText
             | Error::TooBig
+            | Error::InvalidFingerprint
             | Error::InvalidName => Self::BAD_REQUEST,
             Error::AlreadyTyping | Error::NotTyping => Self::CONFLICT,
             _ => Self::INTERNAL_SERVER_ERROR,

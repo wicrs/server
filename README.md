@@ -30,13 +30,14 @@ Here is an example of what the contents of `config.json` should be:
 {
     "key_server": "https://keys.openpgp.org",
     "address": "127.0.0.1:8080",
-    "show_version": false
+    "show_version": false,
+    "key_id": "WICRS Server <wicrs@example.com>"
 }
 
 ```
 
 The key server corresponds to the URL of an SKS key server.
-`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`).
+`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`). The `key_id` variable optionally pre-configures the ID given to the PGP keys that the server generates (to use a custom PGP key make sure that it is signed and not password protected, then export it as ASCII armour and put it in the file `data/secret_key.asc`).
 
 Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
 
