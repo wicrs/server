@@ -230,7 +230,7 @@ pub async fn get_or_import_public_key(
             let key = SignedPublicKey::from_string(&text)?.0;
             let downloaded_fp = hex::encode_upper(key.fingerprint());
             if downloaded_fp == fingerprint {
-                tokio::fs::write(path, text).await?;
+                let _ = tokio::fs::write(path, text).await;
                 Ok(key)
             } else {
                 Err(Error::PublicKeyNotFound)
