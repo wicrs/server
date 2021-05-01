@@ -210,7 +210,7 @@ pub async fn get_or_import_public_key(
     fingerprint: &[u8],
     key_server: &str,
 ) -> Result<SignedPublicKey> {
-    if dbg!(fingerprint.len()) != 20 {
+    if fingerprint.len() != 20 {
         return Err(Error::InvalidFingerprint);
     }
     let fingerprint = hex::encode_upper(fingerprint);
