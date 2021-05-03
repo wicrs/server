@@ -1,153 +1,309 @@
-use crate::{
-    auth::{Auth, AuthQuery, Service},
-    config::Config,
-};
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
-use async_graphql_warp::Response;
+use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
+
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
+use xactor::Actor;
+
 use std::convert::Infallible;
+use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use warp::{http::Response as HttpResponse, Filter, Rejection};
 
-use crate::error::{Error, Result};
-use crate::graphql_model::{MutationRoot, QueryRoot};
+use warp::hyper::body::Bytes;
+use warp::ws::Ws;
+use warp::Reply;
+use warp::{http::Response as HttpResponse, Filter};
+
+use pgp::Message as OpenPGPMessage;
+use pgp::SignedPublicKey;
+use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm};
+use pgp::{packet::LiteralData, types::KeyTrait};
+
 use crate::server::Server;
+use crate::signing::KeyPair;
+use crate::signing::{PUBLIC_KEY_PATH, SECRET_KEY_PATH};
 use crate::ID;
-use async_graphql::Response as AsyncGraphQLResponse;
-use async_graphql::*;
-use xactor::{Actor, Addr};
+use crate::{channel::Message, config::Config};
+use crate::{
+    error::{Error, Result},
+    hub::Hub,
+    permission::ChannelPermission,
+};
+use crate::{
+    graphql_model::{MutationRoot, QueryRoot},
+    server::ServerNotification,
+};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ServerInfo {
+    pub version: String,
+    pub public_key_fingerprint: String,
+    pub key_server: String,
+}
 
 pub async fn start(config: Config) -> Result {
-    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
-    let auth = Auth::from_config(&config.auth_services);
-    let auth = Arc::new(RwLock::new(auth));
+    let key_pair = if let Ok(key_pair) = KeyPair::load(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await {
+        key_pair
+    } else {
+        println!(
+            "WARNING: Failed to load secret key from {}, generating a new one.",
+            SECRET_KEY_PATH
+        );
+        let key_id = if let Some(key_id) = config.key_id.clone() {
+            key_id
+        } else {
+            println!(
+                "Enter an ID for the server's PGP key (e.g. WICRS Server <wicrs@examle.com>):"
+            );
+            let mut buf = String::new();
+            std::io::stdin().read_line(&mut buf)?;
+            buf
+        };
+        println!("Generating new PGP key pair for the server...");
+        let key_pair = KeyPair::new(key_id)?;
+        key_pair.save(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await?;
+        println!(
+            "Server key pair generated, private key saved to {}, public key saved to {}.",
+            SECRET_KEY_PATH, PUBLIC_KEY_PATH
+        );
+        key_pair
+    };
+    let key_pair = Arc::new(key_pair);
+    let upload_key = async {
+        let armoured_pub_key = key_pair.public_key.to_armored_string(None)?;
+        let form = reqwest::multipart::Form::new().text("keytext", armoured_pub_key);
+        let url = format!("{}/pks/add", config.key_server);
 
-    let auth = warp::any().map(move || auth.clone());
+        let response = reqwest::Client::builder()
+            .build()?
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await?;
+        if response.status() == StatusCode::OK {
+            Ok(())
+        } else {
+            Err(Error::Other(
+                "Failed to upload the server's public PGP key to the selected key server."
+                    .to_string(),
+            ))
+        }
+    }
+    .await;
+    if upload_key.is_err() {
+        println!("WARNING: Unable to upload public key to key server.");
+    }
+    println!("Starting WICRS Server.");
+    let server_fingerprint = hex::encode_upper(key_pair.secret_key.fingerprint());
+    let key_pair_ws = key_pair.clone();
+    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
     let server = Arc::new(
-        Server::new()
+        Server::new(key_pair.secret_key.clone())
             .await?
             .start()
             .await
             .map_err(|_| Error::ServerStartFailed)?,
     );
+    let send_message_server_arc = server.clone();
+    let key_pair_send = key_pair.clone();
+    let key_pair_send_init = key_pair.clone();
     let graphql_server_arc = server.clone();
-
-    let graphql_post = warp::any()
-        .map(move || graphql_server_arc.clone())
-        .and(warp::path("graphql"))
-        .and(warp::header::<String>("authorization"))
-        .and(async_graphql_warp::graphql(schema.clone()))
-        .and(auth.clone())
-        .and_then(
-            |server: Arc<Addr<Server>>,
-             token: String,
-             (schema, request): (
-                Schema<QueryRoot, MutationRoot, EmptySubscription>,
-                async_graphql::Request,
-            ),
-             auth: Arc<RwLock<Auth>>| async move {
-                let mut split = token.as_str().split(':');
-                if let (Some(id), Some(token)) = (split.next(), split.next()) {
-                    if let Ok(id) = ID::parse_str(id) {
-                        if Auth::is_authenticated(auth.clone(), id.clone(), token.into()).await {
-                            let resp = schema.execute(request.data(id).data(server)).await;
-                            return Ok::<_, Infallible>(Response::from(resp));
-                        }
-                    }
+    let key_server_url = config.key_server.clone();
+    let public_key_filter =
+        warp::any()
+            .and(warp::header("pgp-fingerprint"))
+            .and_then(move |header: String| {
+                let key_server_url = key_server_url.clone();
+                async move {
+                    crate::signing::get_or_import_public_key(
+                        &hex::decode(header).map_err(|_| Error::InvalidFingerprint)?,
+                        &key_server_url,
+                    )
+                    .await
+                    .and_then(|key| {
+                        key.verify()?;
+                        Ok(key)
+                    })
+                    .map_err(warp::reject::custom)
                 }
-                Ok::<_, Infallible>(Response::from(AsyncGraphQLResponse::new(
-                    "Not Authenticated.",
-                )))
+            });
+
+    let signed_body_pub_key = public_key_filter.clone();
+
+    let signed_body = signed_body_pub_key.and(warp::body::bytes()).and_then(
+        |requester_public_key: SignedPublicKey, body: Bytes| async move {
+            let text = String::from_utf8(body.to_vec())
+                .map_err(|e| warp::reject::custom(Error::from(e)))?;
+            crate::signing::verify_message_extract(&requester_public_key, &text)
+                .map_err(warp::reject::custom)
+        },
+    );
+
+    let signed_body_graphql = signed_body.clone();
+    let graphql_key_pair = key_pair.clone();
+    let graphql_post = warp::any()
+        .and(warp::path!("v3" / "graphql"))
+        .and(signed_body_graphql)
+        .and_then(move |(content, fingerprint): (String, String)| {
+            let server = graphql_server_arc.clone();
+            let schema = schema.clone();
+            let key_pair = graphql_key_pair.clone();
+            async move {
+                Ok::<_, Infallible>(
+                    async {
+                        let request = GraphQLRequest::new(content);
+                        let resp = schema
+                            .execute(request.data(server).data(hex::encode_upper(fingerprint)))
+                            .await;
+                        let message = OpenPGPMessage::Literal(LiteralData::from_str(
+                            "",
+                            &resp.data.to_string(),
+                        ))
+                        .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
+                        .compress(CompressionAlgorithm::ZIP)?;
+                        let mut reply = HttpResponse::<String>::default();
+                        reply.body_mut().push_str(&message.to_armored_string(None)?);
+                        let mut response = warp::reply::with_header(
+                            reply,
+                            "content-type",
+                            "application/pgp-encrypted",
+                        )
+                        .into_response();
+
+                        if resp.is_ok() {
+                            if let Some(value) = resp.cache_control.value() {
+                                if let Ok(value) = value.try_into() {
+                                    response.headers_mut().insert("cache-control", value);
+                                }
+                            }
+                            for (name, value) in resp.http_headers {
+                                if let Some(name) = name {
+                                    if let Ok(value) = value.try_into() {
+                                        response.headers_mut().append(name, value);
+                                    }
+                                }
+                            }
+                        }
+                        Ok::<_, Error>(response)
+                    }
+                    .await
+                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                )
+            }
+        });
+
+    let signed_body_smi = signed_body.clone();
+
+    let send_message_init = warp::any()
+        .and(warp::path!("v3" / "send_message_init" / String / String))
+        .and(signed_body_smi)
+        .and_then(
+            move |hub_id: String, channel_id: String, (content, sender): (String, String)| {
+                let key_pair = key_pair_send_init.clone();
+                async move {
+                    Ok::<_, Infallible>(
+                        async {
+                            let hub_id = ID::parse_str(&hub_id)?;
+                            let hub = Hub::load(hub_id).await?;
+                            let channel_id = ID::parse_str(&channel_id)?;
+                            let member = hub.get_member(&sender)?;
+                            crate::check_permission!(
+                                &member,
+                                channel_id,
+                                ChannelPermission::Write,
+                                &hub
+                            );
+                            Ok::<_, Error>(
+                                Message::new(sender, content, hub_id, channel_id)
+                                    .sign(&key_pair.secret_key, String::new)?
+                                    .compress(CompressionAlgorithm::ZIP)?
+                                    .to_armored_string(None)?,
+                            )
+                        }
+                        .await
+                        .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                    )
+                }
             },
         );
 
-    let auth_filter = warp::header::<String>("authorization")
-        .and(auth.clone())
-        .and_then(|id_token: String, auth: Arc<RwLock<Auth>>| async move {
-            let mut split = id_token.as_str().split(':');
-            if let (Some(id), Some(token)) = (split.next(), split.next()) {
-                if let Ok(id) = ID::parse_str(id) {
-                    if Auth::is_authenticated(auth.clone(), id.clone(), token.into()).await {
-                        return Ok((id, auth));
+    let send_message_pub_key = public_key_filter.clone();
+
+    let send_message = warp::any()
+        .and(warp::path!("v3" / "send_message"))
+        .and(send_message_pub_key)
+        .and(warp::body::bytes())
+        .and_then(move |client_public_key: SignedPublicKey, body: Bytes| {
+            let key_pair = key_pair_send.clone();
+            let server = send_message_server_arc.clone();
+            async move {
+                Ok::<_, Infallible>(
+                    async {
+                        let body = String::from_utf8(body.to_vec())?;
+                        let message = Message::from_double_signed_verify(
+                            &body,
+                            &key_pair.public_key,
+                            &client_public_key,
+                        )?;
+                        let _ = server.send(ServerNotification::NewMessage(
+                            message.hub_id,
+                            message.channel_id,
+                            message.id,
+                            body,
+                            message,
+                        ));
+                        Ok::<_, Error>(warp::reply())
                     }
-                }
-            }
-            return Err(warp::reject::custom(Error::NotAuthenticated));
-        });
-
-    let auth_start = warp::path!("v2" / "login" / Service)
-        .map(move |service| service)
-        .and(auth.clone())
-        .and_then(|service, auth| async move {
-            let redirect = Auth::start_login(auth, service).await;
-            Ok::<_, Infallible>(warp::reply::with_status(
-                warp::reply::with_header(warp::reply(), "Location", &redirect),
-                StatusCode::FOUND,
-            ))
-        });
-
-    let auth_finish = warp::path!("v2" / "auth" / Service)
-        .and(warp::query::<AuthQuery>())
-        .and(auth.clone())
-        .and_then(|service, query, auth| async move {
-            Ok::<_, Rejection>(warp::reply::json(
-                &Auth::handle_oauth(auth, service, query)
                     .await
-                    .map_err(|err| Rejection::from(err))?,
-            ))
+                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                )
+            }
         });
 
-    let invalidate_token = warp::path!("v2" / "invalidate_token" / String)
-        .and(auth_filter.clone())
-        .and_then(|token, (id, auth)| async move {
-            Auth::invalidate_token(auth, id, token).await;
-            Ok::<_, Infallible>(warp::reply::with_status(
-                warp::reply(),
-                StatusCode::NO_CONTENT,
-            ))
-        });
-
-    let invalidate_tokens = warp::path!("v2" / "invalidate_tokens")
-        .and(auth_filter.clone())
-        .and_then(|(id, auth)| async move {
-            Auth::invalidate_all_tokens(auth, id).await;
-            Ok::<_, Infallible>(warp::reply::with_status(
-                warp::reply(),
-                StatusCode::NO_CONTENT,
-            ))
-        });
-
-    let web_socket = warp::path!("v2" / "websocket")
-        .and(auth_filter.clone())
+    let web_socket = warp::path!("v3" / "websocket")
+        .and(public_key_filter)
         .and(warp::ws())
-        .map(move |(id, _), ws: warp::ws::Ws| {
+        .map(move |public_key: SignedPublicKey, ws: Ws| {
+            let key_pair = key_pair_ws.clone();
             let server = server.clone();
             ws.on_upgrade(move |websocket| async move {
-                let _ = crate::websocket::handle_connection(websocket, id, server).await;
+                let _ =
+                    crate::websocket::handle_connection(websocket, public_key, key_pair, server)
+                        .await;
             })
         });
 
-    let graphql_playground = warp::path!("graphql_playground" / String)
-        .and(warp::get())
-        .map(move |auth_string: String| {
-            HttpResponse::builder()
-                .header("content-type", "text/html")
-                .body(playground_source(
-                    GraphQLPlaygroundConfig::new(format!("/graphql").as_str())
-                        .with_header("authorization", &auth_string)
-                        .subscription_endpoint("/"),
-                ))
-        });
+    let server_info_struct = ServerInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        public_key_fingerprint: server_fingerprint,
+        key_server: config.key_server,
+    };
 
-    let routes = graphql_playground
-        .or(graphql_post)
+    let server_info_string = OpenPGPMessage::new_literal(
+        "wicrs_server_info",
+        &serde_json::to_string(&server_info_struct)?,
+    )
+    .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
+    .compress(CompressionAlgorithm::ZIP)?
+    .to_armored_string(None)?;
+    let server_info = warp::path!("v3" / "info").map(move || {
+        warp::http::response::Builder::new()
+            .header("Content-Type", "application/json")
+            .body(server_info_string.clone())
+            .unwrap()
+    });
+
+    println!(
+        "WICRS Server {} listening at {}.",
+        env!("CARGO_PKG_VERSION"),
+        config.address
+    );
+
+    let routes = graphql_post
+        .or(server_info)
         .or(web_socket)
-        .or(auth_start)
-        .or(auth_finish)
-        .or(invalidate_token)
-        .or(invalidate_tokens);
+        .or(send_message_init)
+        .or(send_message);
     warp::serve(routes)
         .run(
             config

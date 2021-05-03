@@ -28,21 +28,16 @@ Here is an example of what the contents of `config.json` should be:
 
 ```json
 {
-    "auth_services": {
-        "github": {
-            "enabled": true,
-            "client_id": "$GITHUB_CLIENT_ID",
-            "client_secret": "$GITHUB_CLIENT_SECRET"
-        }
-    },
-    "show_version": true,
+    "key_server": "https://keys.openpgp.org",
+    "address": "127.0.0.1:8080",
+    "show_version": false,
+    "key_id": "WICRS Server <wicrs@example.com>"
 }
+
 ```
 
-Make sure to replace `$GITHUB_CLIENT_ID` with the client ID and `$GITHUB_CLIENT_SECRET` with the client secret you got when you created the GitHub OAuth application.
-`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`).
-The `ws_client_timeout` configuration option determines how long (in milliseconds) to wait before a client using websockets should be disconnected after their last hearbeat ping.
-The `ws_hb_interval` configuration option determines the interval between heartbeat pings sent to the client in milliseconds.
+The key server corresponds to the URL of an SKS key server.
+`address` should be set to the local address you want the server to listen on, for example you can use `127.0.0.1:8080`. The `show_version` variable determines whether or not the server will tell clients it's version when they go to the HTTP root (`/`). The `key_id` variable optionally pre-configures the ID given to the PGP keys that the server generates (to use a custom PGP key make sure that it is signed and not password protected, then export it as ASCII armour and put it in the file `data/secret_key.asc`).
 
 Note that the server application needs to be able to read `./config.json` and must be able to read and write to `./data` or most if not all requests will fail.
 

@@ -11,7 +11,7 @@ WICRS Server is licensed under the [GNU General Public License v3.0](https://git
 To make changes to WICRS, please send in pull requests on GitHub to the `master`
 branch. We'll review them and either merge or request changes. GitHub Actions tests
 everything and verifies styling, GitHub Actions must be passing for a pull request
-to be merged, you can run `cargo fmt`, `cargo test` and `cargo clippy` locally to 
+to be merged, you can run `cargo fmt`, `cargo test` and `cargo clippy` locally to
 check if a pull request will pass the GitHub Actions tests.
 
 If you make additions or other changes to a pull request, feel free to either amend
@@ -45,4 +45,16 @@ To run the tests:
 
 ```bash
 cargo test
+```
+
+To format code:
+
+```bash
+cargo fmt
+```
+
+To check code:
+
+```bash
+cargo clippy
 ```

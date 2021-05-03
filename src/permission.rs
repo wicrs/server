@@ -1,8 +1,7 @@
 use crate::ID;
 use async_graphql::{Enum, SimpleObject};
-use parse_display::{Display, FromStr};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 /// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
@@ -47,46 +46,65 @@ impl From<(ChannelPermission, PermissionSetting, ID)> for ChannelPermissionSet {
 }
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(
-    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
-)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
 pub enum HubPermission {
     All,
     ReadChannels,
-    ConfigureChannels,
+    WriteChannels,
     Administrate,
-    CreateChannel,
-    DeleteChannel,
-    ArrangeChannels,
-    WriteInChannels,
+    ManageChannels,
     Mute,
     Unmute,
-    Invite,
     Kick,
     Ban,
     Unban,
+}
+
+impl Display for HubPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            HubPermission::All => "ALL",
+            HubPermission::ReadChannels => "READ_CHANNELS",
+            HubPermission::WriteChannels => "WRITE_CHANNELS",
+            HubPermission::Administrate => "ADMINISTRATE",
+            HubPermission::ManageChannels => "MANAGE_CHANNELS",
+            HubPermission::Mute => "MUTE",
+            HubPermission::Unmute => "UNMUTE",
+            HubPermission::Kick => "KICK",
+            HubPermission::Ban => "BAN",
+            HubPermission::Unban => "UNBAN",
+        })
+    }
 }
 
 /// Map of hub permissions to permission settings.
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(
-    PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Display, FromStr, Enum,
-)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
 pub enum ChannelPermission {
     Write,
     Read,
-    Configure,
+    Manage,
     All,
 }
 
+impl Display for ChannelPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ChannelPermission::Write => "WRITE",
+            ChannelPermission::Read => "READ",
+            ChannelPermission::Manage => "MANAGE",
+            ChannelPermission::All => "ALL",
+        })
+    }
+}
 impl From<ChannelPermission> for HubPermission {
     fn from(channel_perm: ChannelPermission) -> Self {
         match channel_perm {
-            ChannelPermission::Write => HubPermission::WriteInChannels,
+            ChannelPermission::Write => HubPermission::WriteChannels,
             ChannelPermission::Read => HubPermission::ReadChannels,
-            ChannelPermission::Configure => HubPermission::ConfigureChannels,
+            ChannelPermission::Manage => HubPermission::ManageChannels,
             ChannelPermission::All => HubPermission::All,
         }
     }

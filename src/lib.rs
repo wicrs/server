@@ -1,10 +1,10 @@
 use error::{Error, Result};
 use uuid::Uuid;
 
+pub use pgp;
+
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
 pub mod api;
-/// Authentication handling.
-pub mod auth;
 /// Message storage and retreival for channels.
 pub mod channel;
 /// Various objects for storing configuration.
@@ -21,13 +21,10 @@ pub mod hub;
 pub mod permission;
 /// Server implementation.
 pub mod server;
-/// User management.
-pub mod user;
 /// Definition of the WebSocket API.
 pub mod websocket;
 
-/// String to identify the version of the library, used for external requests.
-pub const USER_AGENT_STRING: &str = concat!("WICRS Server ", env!("CARGO_PKG_VERSION"));
+pub mod signing;
 
 /// Maximum size of a username in bytes. Clients should be able to accept larger and smaller values.
 pub const MAX_NAME_SIZE: usize = 128;
@@ -79,7 +76,8 @@ macro_rules! check_permission {
     };
 }
 
-/// Type used to represent IDs throughout wicrs.
+/// Type used to represent IDs of non user objects throughout wicrs.
+#[allow(clippy::upper_case_acronyms)]
 pub type ID = Uuid;
 
 /// Generates a new random ID.

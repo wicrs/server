@@ -1,13 +1,13 @@
-use std::{fmt::Display, str::FromStr};
+use std::{convert::TryFrom, str::FromStr};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
-use crate::{error::DataError, hub::HUB_DATA_FOLDER, Result, ID};
+use crate::{error::Error, hub::HUB_DATA_FOLDER, new_id, Result, ID};
 
 use async_graphql::SimpleObject;
 
@@ -63,15 +63,20 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: Message) -> Result {
+    pub async fn add_message(&self, message: SignedMessage) -> Result {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.get_current_file().await)
             .await?;
-        bincode::serialize_into(file.into_std().await, &message)
-            .map_err(|_| DataError::Serialize)?;
+        bincode::serialize_into(file.into_std().await, &message)?;
         Ok(())
+    }
+
+    pub async fn write_message(hub_id: ID, channel_id: ID, message: SignedMessage) -> Result {
+        Self::new("".to_string(), channel_id, hub_id)
+            .add_message(message)
+            .await
     }
 
     /// Gets the last messages sent, `max` indicates the maximum number of messages to return.
@@ -105,8 +110,8 @@ impl Channel {
     }
 
     /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
-    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -116,8 +121,9 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let iter = bincode::deserialize::<Message>(&file).into_iter();
-                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
+                    let iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
+                    let mut found: Vec<SignedMessage> =
+                        iter.filter(|m| ids.contains(&m.id)).collect();
                     result.append(&mut found);
                     if ids.len() == result.len() {
                         return result;
@@ -142,8 +148,8 @@ impl Channel {
         to: DateTime<Utc>,
         invert: bool,
         max: usize,
-    ) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    ) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -168,10 +174,10 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     let mut filtered = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .filter(|message: &Message| {
+                        .filter(|message: &SignedMessage| {
                             message.created >= from && message.created <= to
                         })
-                        .collect::<Vec<Message>>();
+                        .collect::<Vec<SignedMessage>>();
                     if invert {
                         filtered.reverse() // Invert the order of found messages for that file if `invert` is true.
                     }
@@ -190,54 +196,9 @@ impl Channel {
         result
     }
 
-    /// Search for messages that contain a string, if `case_sensitive` is true than the search is case_sensitive, case sensitive search is marginally faster.
-    pub async fn find_messages_containing(
-        &self,
-        string: String,
-        case_sensitive: bool,
-        max: usize,
-    ) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
-        let mut search = string;
-        if !case_sensitive {
-            search.make_ascii_uppercase()
-        }
-        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
-            let mut files = Vec::new();
-            while let Ok(Some(entry)) = dir.next_entry().await {
-                if entry.path().is_file() {
-                    files.push(entry)
-                }
-            }
-            for file in files.iter() {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut filtered = bincode::deserialize_from(file.into_std().await)
-                        .into_iter()
-                        .filter(|message: &Message| {
-                            if case_sensitive {
-                                message.content == search
-                            } else {
-                                message.content.to_ascii_uppercase() == search
-                            }
-                        })
-                        .collect::<Vec<Message>>();
-                    result.append(&mut filtered);
-                    let len = result.len();
-                    if len == max {
-                        return result;
-                    } else if result.len() > max {
-                        result.truncate(max);
-                        return result;
-                    }
-                }
-            }
-        }
-        result
-    }
-
     /// Gets all messages that were sent after the message with the given ID.
-    pub async fn get_messages_after(&self, id: &ID, max: usize) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -247,10 +208,11 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut iter =
-                        bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
-                            .into_iter();
-                    if let Some(_) = iter.position(|m| &m.id == id) {
+                    let mut iter = bincode::deserialize_from::<std::fs::File, SignedMessage>(
+                        file.into_std().await,
+                    )
+                    .into_iter();
+                    if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                         let len = result.len();
                         if len == max {
@@ -267,8 +229,8 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn get_all_messages_from(&self, id: &ID) -> Vec<Message> {
-        let mut result: Vec<Message> = Vec::new();
+    pub async fn get_all_messages_from(&self, id: ID) -> Vec<SignedMessage> {
+        let mut result: Vec<SignedMessage> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -276,17 +238,11 @@ impl Channel {
                     files.push(entry)
                 }
             }
+
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if let Some(_) = iter.position(|m| {
-                        if &m.id == id {
-                            result.push(m);
-                            true
-                        } else {
-                            false
-                        }
-                    }) {
+                    let mut iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
+                    if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                     }
                 }
@@ -296,7 +252,7 @@ impl Channel {
     }
 
     /// Get the first message with the given ID.
-    pub async fn get_message(&self, id: &ID) -> Option<Message> {
+    pub async fn get_message(&self, id: ID) -> Option<SignedMessage> {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -308,7 +264,7 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     if let Some(msg) = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .find(|m: &Message| &m.id == id)
+                        .find(|m: &SignedMessage| m.id == id)
                     {
                         return Some(msg);
                     }
@@ -324,62 +280,65 @@ impl Channel {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+pub struct SignedMessage {
+    pub id: ID,
+    pub created: DateTime<Utc>,
+    pub armoured_content: String,
+}
+
+impl SignedMessage {
+    pub fn new(id: ID, created: DateTime<Utc>, armoured_content: String) -> Self {
+        Self {
+            id,
+            created,
+            armoured_content,
+        }
+    }
+}
+
+impl TryFrom<SignedMessage> for Message {
+    type Error = Error;
+
+    fn try_from(signed_message: SignedMessage) -> Result<Self> {
+        Message::from_double_signed(&signed_message.armoured_content)
+    }
+}
+
+impl TryFrom<&SignedMessage> for Message {
+    type Error = Error;
+
+    fn try_from(signed_message: &SignedMessage) -> Result<Self> {
+        Message::from_double_signed(&signed_message.armoured_content)
+    }
+}
+
 /// Represents a message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
+    /// ID of the hub the message was sent in.
+    pub hub_id: ID,
+    /// ID of the channel the message was sent in.
+    pub channel_id: ID,
     /// ID of the user that sent the message.
-    pub sender: ID,
+    pub sender: String,
     /// Date in milliseconds since Unix Epoch that the message was sent.
     pub created: DateTime<Utc>,
     /// The actual text of the message.
     pub content: String,
 }
 
-impl Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{:X},{:X},{:X},{}",
-            self.id.as_u128(),
-            self.sender.as_u128(),
-            self.created.timestamp_millis() as i64,
-            self.content.replace('\n', r#"\n"#)
-        ))
-    }
-}
-
-impl FromStr for Message {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.splitn(4, ',');
-        if let Some(id_str) = parts.next() {
-            if let Ok(id) = ID::from_str(id_str) {
-                if let Some(sender_str) = parts.next() {
-                    if let Ok(sender) = ID::from_str(sender_str) {
-                        if let Some(created_str) = parts.next() {
-                            if let Ok(created) = i64::from_str_radix(created_str, 16) {
-                                if let Some(content) = parts.next() {
-                                    return Ok(Self {
-                                        id,
-                                        sender,
-                                        created: DateTime::from_utc(
-                                            NaiveDateTime::from_timestamp(
-                                                created / 1000,
-                                                ((created - created / 1000) * 1000) as u32,
-                                            ),
-                                            Utc,
-                                        ),
-                                        content: content.replace(r#"\n"#, "\n"),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+impl Message {
+    pub fn new(sender: String, content: String, hub_id: ID, channel_id: ID) -> Self {
+        Self {
+            sender,
+            content,
+            channel_id,
+            hub_id,
+            created: Utc::now(),
+            id: new_id(),
         }
-        return Err(());
     }
 }
