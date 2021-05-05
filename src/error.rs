@@ -87,6 +87,8 @@ pub enum Error {
     PublicKeyNotFound,
     #[error("invalid PGP fingerprint")]
     InvalidFingerprint,
+    #[error("HTTP Error")]
+    Http(#[from] warp::http::Error),
     #[error("{0}")]
     Other(String),
 }
@@ -118,6 +120,7 @@ impl From<&Error> for StatusCode {
             | Error::MessageNotFound
             | Error::NotInHub => Self::NOT_FOUND,
             Error::ID(_)
+            | Error::Http(_)
             | Error::PGP(_)
             | Error::InvalidText
             | Error::TooBig

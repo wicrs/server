@@ -14,10 +14,10 @@ use warp::ws::Ws;
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
+use pgp::crypto::HashAlgorithm;
+use pgp::types::{CompressionAlgorithm, KeyTrait, SecretKeyTrait};
 use pgp::Message as OpenPGPMessage;
 use pgp::SignedPublicKey;
-use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm};
-use pgp::{packet::LiteralData, types::KeyTrait};
 
 use crate::server::Server;
 use crate::signing::KeyPair;
@@ -155,32 +155,18 @@ pub async fn start(config: Config) -> Result {
                         let resp = schema
                             .execute(request.data(server).data(hex::encode_upper(fingerprint)))
                             .await;
-                        let message = OpenPGPMessage::Literal(LiteralData::from_str(
-                            "",
-                            &resp.data.to_string(),
-                        ))
-                        .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
-                        .compress(CompressionAlgorithm::ZIP)?;
-                        let mut reply = HttpResponse::<String>::default();
-                        reply.body_mut().push_str(&message.to_armored_string(None)?);
-                        let mut response = warp::reply::with_header(
-                            reply,
-                            "content-type",
-                            "application/pgp-encrypted",
-                        )
-                        .into_response();
 
-                        if resp.is_ok() {
-                            if let Some(value) = resp.cache_control.value() {
-                                if let Ok(value) = value.try_into() {
-                                    response.headers_mut().insert("cache-control", value);
-                                }
+                        let mut response =
+                            create_response(resp.data.to_string().as_str(), &key_pair.secret_key)?;
+                        if let Some(value) = resp.cache_control.value() {
+                            if let Ok(value) = value.try_into() {
+                                response.headers_mut().insert("cache-control", value);
                             }
-                            for (name, value) in resp.http_headers {
-                                if let Some(name) = name {
-                                    if let Ok(value) = value.try_into() {
-                                        response.headers_mut().append(name, value);
-                                    }
+                        }
+                        for (name, value) in resp.http_headers {
+                            if let Some(name) = name {
+                                if let Ok(value) = value.try_into() {
+                                    response.headers_mut().append(name, value);
                                 }
                             }
                         }
@@ -213,12 +199,8 @@ pub async fn start(config: Config) -> Result {
                                 ChannelPermission::Write,
                                 &hub
                             );
-                            Ok::<_, Error>(
-                                Message::new(sender, content, hub_id, channel_id)
-                                    .sign(&key_pair.secret_key, String::new)?
-                                    .compress(CompressionAlgorithm::ZIP)?
-                                    .to_armored_string(None)?,
-                            )
+                            let msg = Message::new(sender, content, hub_id, channel_id);
+                            create_response(&serde_json::to_string(&msg)?, &key_pair.secret_key)
                         }
                         .await
                         .map_or_else(|e| e.into_response(), |r| r.into_response()),
@@ -245,6 +227,10 @@ pub async fn start(config: Config) -> Result {
                             &key_pair.public_key,
                             &client_public_key,
                         )?;
+                        let response = create_response(
+                            &serde_json::to_string(&message)?,
+                            &key_pair.secret_key,
+                        );
                         let _ = server.send(ServerNotification::NewMessage(
                             message.hub_id,
                             message.channel_id,
@@ -252,7 +238,7 @@ pub async fn start(config: Config) -> Result {
                             body,
                             message,
                         ));
-                        Ok::<_, Error>(warp::reply())
+                        response
                     }
                     .await
                     .map_or_else(|e| e.into_response(), |r| r.into_response()),
@@ -278,20 +264,24 @@ pub async fn start(config: Config) -> Result {
         public_key_fingerprint: server_fingerprint,
         key_server: config.key_server,
     };
+    let server_info_str = serde_json::to_string(&server_info_struct).unwrap();
 
-    let server_info_string = OpenPGPMessage::new_literal(
-        "wicrs_server_info",
-        &serde_json::to_string(&server_info_struct)?,
-    )
-    .sign(&key_pair.secret_key, String::new, HashAlgorithm::SHA2_256)?
-    .compress(CompressionAlgorithm::ZIP)?
-    .to_armored_string(None)?;
     let server_info = warp::path!("v3" / "info").map(move || {
-        warp::http::response::Builder::new()
-            .header("Content-Type", "application/json")
-            .body(server_info_string.clone())
-            .unwrap()
+        create_response(server_info_str.clone().as_str(), &key_pair.secret_key)
+            .map_or_else(|e| e.into_response(), |r| r.into_response())
     });
+
+    let routes = graphql_post
+        .or(server_info)
+        .or(web_socket)
+        .or(send_message_init)
+        .or(send_message);
+    let server = warp::serve(routes).run(
+        config
+            .address
+            .parse::<SocketAddr>()
+            .expect("Invalid bind address"),
+    );
 
     println!(
         "WICRS Server {} listening at {}.",
@@ -299,18 +289,41 @@ pub async fn start(config: Config) -> Result {
         config.address
     );
 
-    let routes = graphql_post
-        .or(server_info)
-        .or(web_socket)
-        .or(send_message_init)
-        .or(send_message);
-    warp::serve(routes)
-        .run(
-            config
-                .address
-                .parse::<SocketAddr>()
-                .expect("Unable to parse server bind address."),
-        )
-        .await;
+    server.await;
+
     Ok(())
+}
+
+fn create_response(response: &str, key: &impl SecretKeyTrait) -> Result<HttpResponse<String>> {
+    let msg = OpenPGPMessage::new_literal("", response)
+        .sign(key, || String::with_capacity(0), HashAlgorithm::SHA2_256)?
+        .compress(CompressionAlgorithm::ZIP)?
+        .to_armored_string(None)?;
+
+    // No proper multipart support offered, so we will hack it ourselves
+    // Note: will break if "response" contains text "the=boundary"
+    // Note: spec requires crlf
+    let boundary = "the=boundary";
+    let body = format!(
+        "--{0}\r\n\
+        Content-Type: application/pgp-encrypted\r\n\
+        Version: 1\r\n\
+        --{0}\r\n\
+        Content-Type: application/octet-stream\r\n\
+        {1}\r\n\
+        --{0}--",
+        boundary, msg
+    );
+
+    Ok(warp::http::response::Builder::new()
+        .header(
+            "Content-Type",
+            format!(
+                "multipart/encrypted; \
+                protocol=\"application/pgp-encrypted\"; \
+                boundary={0}",
+                boundary
+            ),
+        )
+        .body(body)?)
 }
