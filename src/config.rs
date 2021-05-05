@@ -12,3 +12,14 @@ pub struct Config {
     /// ID to give the generated PGP KeyPair.
     pub key_id: Option<String>,
 }
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            key_server: "https://keys.openpgp.org".to_string(),
+            address: "127.0.0.1:8080".to_string(),
+            show_version: true,
+            key_id: None,
+        }
+    }
+}
