@@ -310,7 +310,7 @@ fn create_response(response: &str, key: &impl SecretKeyTrait) -> Result<HttpResp
         .to_armored_string(None)?;
 
     // no proper multipart support offered, so we will hack it ourselves
-    // should be fine as long as the armored string does not contain "--foo"
+    // note: will break if "response" contains text "the=boundary"
     // note: spec requires crlf
     let boundary = "the=boundary";
     let body = format!(
