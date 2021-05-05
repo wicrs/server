@@ -14,10 +14,10 @@ use warp::ws::Ws;
 use warp::Reply;
 use warp::{http::Response as HttpResponse, Filter};
 
-use pgp::Message as OpenPGPMessage;
-use pgp::SignedPublicKey;
 use pgp::crypto::HashAlgorithm;
 use pgp::types::{CompressionAlgorithm, KeyTrait, SecretKeyTrait};
+use pgp::Message as OpenPGPMessage;
+use pgp::SignedPublicKey;
 
 use crate::server::Server;
 use crate::signing::KeyPair;
@@ -156,10 +156,8 @@ pub async fn start(config: Config) -> Result {
                             .execute(request.data(server).data(hex::encode_upper(fingerprint)))
                             .await;
 
-                        let mut response = create_response(
-                            resp.data.to_string().as_str(),
-                            &key_pair.secret_key
-                        )?;
+                        let mut response =
+                            create_response(resp.data.to_string().as_str(), &key_pair.secret_key)?;
                         if let Some(value) = resp.cache_control.value() {
                             if let Ok(value) = value.try_into() {
                                 response.headers_mut().insert("cache-control", value);
@@ -202,10 +200,7 @@ pub async fn start(config: Config) -> Result {
                                 &hub
                             );
                             let msg = Message::new(sender, content, hub_id, channel_id);
-                            create_response(
-                                &serde_json::to_string(&msg)?,
-                                &key_pair.secret_key
-                            )
+                            create_response(&serde_json::to_string(&msg)?, &key_pair.secret_key)
                         }
                         .await
                         .map_or_else(|e| e.into_response(), |r| r.into_response()),
@@ -234,14 +229,14 @@ pub async fn start(config: Config) -> Result {
                         )?;
                         let response = create_response(
                             &serde_json::to_string(&message)?,
-                            &key_pair.secret_key
+                            &key_pair.secret_key,
                         );
                         let _ = server.send(ServerNotification::NewMessage(
                             message.hub_id,
                             message.channel_id,
                             message.id,
                             body,
-                            message
+                            message,
                         ));
                         response
                     }
@@ -272,10 +267,8 @@ pub async fn start(config: Config) -> Result {
     let server_info_str = serde_json::to_string(&server_info_struct).unwrap();
 
     let server_info = warp::path!("v3" / "info").map(move || {
-        create_response(
-            server_info_str.clone().as_str(),
-            &key_pair.secret_key
-        ).map_or_else(|e| e.into_response(), |r| r.into_response())
+        create_response(server_info_str.clone().as_str(), &key_pair.secret_key)
+            .map_or_else(|e| e.into_response(), |r| r.into_response())
     });
 
     let routes = graphql_post
@@ -283,13 +276,12 @@ pub async fn start(config: Config) -> Result {
         .or(web_socket)
         .or(send_message_init)
         .or(send_message);
-    let server = warp::serve(routes)
-        .run(
-            config
-                .address
-                .parse::<SocketAddr>()
-                .expect("Invalid bind address"),
-        );
+    let server = warp::serve(routes).run(
+        config
+            .address
+            .parse::<SocketAddr>()
+            .expect("Invalid bind address"),
+    );
 
     println!(
         "WICRS Server {} listening at {}.",
@@ -331,7 +323,7 @@ fn create_response(response: &str, key: &impl SecretKeyTrait) -> Result<HttpResp
                 protocol=\"application/pgp-encrypted\"; \
                 boundary={0}",
                 boundary
-            )
+            ),
         )
         .body(body)?)
 }
