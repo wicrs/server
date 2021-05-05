@@ -97,8 +97,8 @@ impl Message {
         Ok(OpenPGPMessage::try_from(self)?.sign(&secret_key, password, HashAlgorithm::SHA2_256)?)
     }
 
-    pub fn from_double_signed(message_str: &str) -> Result<Self> {
-        let client_signed = OpenPGPMessage::from_string(message_str)?.0;
+    pub fn from_double_signed(message: &str) -> Result<Self> {
+        let client_signed = OpenPGPMessage::from_string(message)?.0;
         if let Some(d) = client_signed.get_literal() {
             if let Some(s) = d.to_string() {
                 return Message::try_from(OpenPGPMessage::from_string(&s)?.0);
@@ -111,7 +111,7 @@ impl Message {
         message_str: &str,
         server_public_key: &impl PublicKeyTrait,
         client_public_key: &impl PublicKeyTrait,
-    ) -> Result<Message> {
+    ) -> Result<Self> {
         let client_signed = OpenPGPMessage::from_string(message_str)?.0;
         client_signed.verify(client_public_key)?;
         if let Some(d) = client_signed.get_literal() {

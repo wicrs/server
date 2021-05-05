@@ -33,7 +33,6 @@ Here is an example of what the contents of `config.json` should be:
     "show_version": false,
     "key_id": "WICRS Server <wicrs@example.com>"
 }
-
 ```
 
 The key server corresponds to the URL of an SKS key server.
