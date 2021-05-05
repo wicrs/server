@@ -172,7 +172,6 @@ pub async fn start(config: Config) -> Result {
                                 }
                             }
                         }
-                        //response
                         Ok::<_, Error>(response)
                     }
                     .await
@@ -309,9 +308,9 @@ fn create_response(response: &str, key: &impl SecretKeyTrait) -> Result<HttpResp
         .compress(CompressionAlgorithm::ZIP)?
         .to_armored_string(None)?;
 
-    // no proper multipart support offered, so we will hack it ourselves
-    // note: will break if "response" contains text "the=boundary"
-    // note: spec requires crlf
+    // No proper multipart support offered, so we will hack it ourselves
+    // Note: will break if "response" contains text "the=boundary"
+    // Note: spec requires crlf
     let boundary = "the=boundary";
     let body = format!(
         "--{0}\r\n\
