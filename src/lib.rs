@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate log;
+
 use error::{Error, Result};
 use uuid::Uuid;
 
@@ -44,6 +47,15 @@ pub const TANTIVY_COMMIT_THRESHOLD: u8 = 10;
 /// Checks if a name is valid (not too long and only allowed characters).
 pub fn is_valid_name(name: &str) -> bool {
     name.as_bytes().len() <= MAX_NAME_SIZE
+}
+
+pub async fn start() -> Result {
+    let config = config::load_config("config.json");
+    if std::fs::create_dir_all("data").is_err() {
+        Err(Error::Other("Failed to create data directory.".to_string()))
+    } else {
+        httpapi::start(config).await
+    }
 }
 
 /// Wraps `is_valid_name` to return a `Result<()>`.

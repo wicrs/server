@@ -45,8 +45,8 @@ pub async fn start(config: Config) -> Result {
     let key_pair = if let Ok(key_pair) = KeyPair::load(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await {
         key_pair
     } else {
-        println!(
-            "WARNING: Failed to load secret key from {}, generating a new one.",
+        warn!(
+            "Failed to load secret key from {}, generating a new one.",
             SECRET_KEY_PATH
         );
         let key_id = if let Some(key_id) = config.key_id.clone() {
@@ -59,10 +59,10 @@ pub async fn start(config: Config) -> Result {
             std::io::stdin().read_line(&mut buf)?;
             buf
         };
-        println!("Generating new PGP key pair for the server...");
+        info!("Generating new PGP key pair for the server...");
         let key_pair = KeyPair::new(key_id)?;
         key_pair.save(SECRET_KEY_PATH, PUBLIC_KEY_PATH).await?;
-        println!(
+        info!(
             "Server key pair generated, private key saved to {}, public key saved to {}.",
             SECRET_KEY_PATH, PUBLIC_KEY_PATH
         );
@@ -91,9 +91,8 @@ pub async fn start(config: Config) -> Result {
     }
     .await;
     if upload_key.is_err() {
-        println!("WARNING: Unable to upload public key to key server.");
+        warn!("Unable to upload public key to key server.");
     }
-    println!("Starting WICRS Server.");
     let server_fingerprint = hex::encode_upper(key_pair.secret_key.fingerprint());
     let key_pair_ws = key_pair.clone();
     let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
@@ -271,22 +270,21 @@ pub async fn start(config: Config) -> Result {
             .map_or_else(|e| e.into_response(), |r| r.into_response())
     });
 
+    let cors = warp::cors().allow_any_origin();
+    let log = warp::log("wicrs_server::http");
+
     let routes = graphql_post
         .or(server_info)
         .or(web_socket)
         .or(send_message_init)
-        .or(send_message);
+        .or(send_message)
+        .with(cors)
+        .with(log);
     let server = warp::serve(routes).run(
         config
             .address
             .parse::<SocketAddr>()
             .expect("Invalid bind address"),
-    );
-
-    println!(
-        "WICRS Server {} listening at {}.",
-        env!("CARGO_PKG_VERSION"),
-        config.address
     );
 
     server.await;
