@@ -49,6 +49,7 @@ pub fn is_valid_name(name: &str) -> bool {
     name.as_bytes().len() <= MAX_NAME_SIZE
 }
 
+/// Starts WICRS Server in the current directory loading the configuration from `config.json`.
 pub async fn start() -> Result {
     let config = config::load_config("config.json");
     if std::fs::create_dir_all("data").is_err() {
