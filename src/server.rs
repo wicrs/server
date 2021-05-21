@@ -286,12 +286,7 @@ impl MessageServer {
                     .iter()
                     .filter_map(|signed_message| Message::try_from(signed_message).ok())
                     .collect();
-                let last_id = if let Some(last) = messages.last() {
-                    Some(last.id)
-                } else {
-                    None
-                };
-
+                let last_id = messages.last().map(|last| last.id);
                 for message in messages {
                     add_message_to_writer(&mut writer, message)?;
                 }

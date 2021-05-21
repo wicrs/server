@@ -425,25 +425,21 @@ impl PermissionGroup {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        if let Some(setting) = self.hub_permissions.get(&permission) {
-            Some(HubPermissionSet {
+        self.hub_permissions
+            .get(&permission)
+            .map(|setting| HubPermissionSet {
                 permission,
                 setting: *setting,
             })
-        } else {
-            None
-        }
     }
 
     async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((*permission, Some(*setting))))
-                } else {
-                    None
-                }
+                setting
+                    .as_ref()
+                    .map(|setting| HubPermissionSet::from((*permission, Some(*setting))))
             })
             .collect()
     }
@@ -473,15 +469,9 @@ impl PermissionGroup {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            if let Some(setting) = setting {
-                                Some(ChannelPermissionSet::from((
-                                    *permission,
-                                    Some(*setting),
-                                    *channel,
-                                )))
-                            } else {
-                                None
-                            }
+                            setting.as_ref().map(|setting| {
+                                ChannelPermissionSet::from((*permission, Some(*setting), *channel))
+                            })
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )
@@ -515,25 +505,21 @@ impl HubMember {
         &self,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> Option<HubPermissionSet> {
-        if let Some(setting) = self.hub_permissions.get(&permission) {
-            Some(HubPermissionSet {
+        self.hub_permissions
+            .get(&permission)
+            .map(|setting| HubPermissionSet {
                 permission,
                 setting: *setting,
             })
-        } else {
-            None
-        }
     }
 
     async fn hub_permissions(&self) -> Vec<HubPermissionSet> {
         self.hub_permissions
             .iter()
             .filter_map(|(permission, setting)| {
-                if let Some(setting) = setting {
-                    Some(HubPermissionSet::from((*permission, Some(*setting))))
-                } else {
-                    None
-                }
+                setting
+                    .as_ref()
+                    .map(|setting| HubPermissionSet::from((*permission, Some(*setting))))
             })
             .collect()
     }
@@ -563,15 +549,9 @@ impl HubMember {
                     &mut permissions
                         .iter()
                         .filter_map(|(permission, setting)| {
-                            if let Some(setting) = setting {
-                                Some(ChannelPermissionSet::from((
-                                    *permission,
-                                    Some(*setting),
-                                    *channel,
-                                )))
-                            } else {
-                                None
-                            }
+                            setting.as_ref().map(|setting| {
+                                ChannelPermissionSet::from((*permission, Some(*setting), *channel))
+                            })
                         })
                         .collect::<Vec<ChannelPermissionSet>>(),
                 )
