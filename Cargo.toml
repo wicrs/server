@@ -1,6 +1,6 @@
 [package]
 name = "wicrs_server"
-version = "0.13.0"
+version = "0.13.1"
 authors = ["willemml <willem@leit.so>"]
 edition = "2018"
 license = "GPL-3.0"
