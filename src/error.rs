@@ -15,6 +15,8 @@ pub enum Error {
     Muted,
     #[error("user is banned from that hub")]
     Banned,
+    #[error("account does not exist")]
+    AccountNotFound,
     #[error("hub does not exist")]
     HubNotFound,
     #[error("channel does not exist")]
