@@ -11,6 +11,12 @@ pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 /// General errors that can occur when using the WICRS API.
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("account has no actions and or has not been signed")]
+    AccountNotSigned,
+    #[error("account has more actions than signatures or more signatures than actions")]
+    AccountNotBalanced,
+    #[error("account has no unsigned actions")]
+    NoActionToSign,
     #[error("user is muted and cannot send messages")]
     Muted,
     #[error("user is banned from that hub")]
