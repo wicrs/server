@@ -1,17 +1,13 @@
 use std::sync::Arc;
 
+use crate::server::HubUpdateType;
 use crate::{
     channel::Message,
     error::Error,
-    hub::Hub,
-    permission::ChannelPermission,
     server::{Server, ServerNotification},
 };
 use crate::{server::client_command, ID};
-use crate::{server::HubUpdateType, signing::KeyPair};
 use futures_util::{SinkExt, StreamExt};
-use pgp::{crypto::HashAlgorithm, types::CompressionAlgorithm, Message as OpenPGPMessage};
-use pgp::{packet::LiteralData, types::KeyTrait, SignedPublicKey};
 use tokio::sync::Mutex;
 use warp::ws::WebSocket;
 use xactor::Addr;
@@ -46,13 +42,10 @@ pub enum ClientMessage {
         hub_id: ID,
         channel_id: ID,
     },
-    SendMessageInit {
+    SendMessage {
         hub_id: ID,
         channel_id: ID,
-        content: String,
-    },
-    SendMessage {
-        signed_message: String,
+        message: String,
     },
 }
 
@@ -67,7 +60,7 @@ pub enum ServerMessage {
         hub_id: ID,
         channel_id: ID,
         message_id: ID,
-        armoured_message: String,
+        message: String,
     },
     HubUpdated {
         hub_id: ID,
@@ -75,69 +68,48 @@ pub enum ServerMessage {
     },
     Success,
     UserStartedTyping {
-        user_id: String,
+        user_id: ID,
         hub_id: ID,
         channel_id: ID,
     },
     UserStoppedTyping {
-        user_id: String,
+        user_id: ID,
         hub_id: ID,
         channel_id: ID,
-    },
-    MessageForSigning {
-        server_signed_message: String,
     },
 }
 
 pub async fn handle_connection(
     websocket: WebSocket,
-    public_key: SignedPublicKey,
-    server_keys: Arc<KeyPair>,
+    init_user_id: ID,
     addr: Arc<Addr<Server>>,
 ) -> Result {
-    let (mut outgoing, mut incoming) = websocket.split();
-    let key = rand::random::<u128>().to_string();
-    let message = OpenPGPMessage::Literal(LiteralData::from_str("auth_key", &key)).sign(
-        &server_keys.secret_key,
-        String::new,
-        HashAlgorithm::SHA2_256,
-    )?;
-    outgoing
-        .send(WebSocketMessage::text(message.to_armored_string(None)?))
-        .await?;
-
+    let (outgoing, mut incoming) = websocket.split();
     if let Some(msg) = incoming.next().await {
-        let msg = msg?;
-        if let Ok(text) = msg.to_str() {
-            let message = crate::signing::verify_message_extract(&public_key, text)?.0;
-            if message == key {
-                drop((message, key, text));
-                drop(msg);
-                let out_arc = Arc::new(Mutex::new(outgoing));
-                let connection_id: u128;
-                {
-                    let result = addr
-                        .call(client_command::Connect {
-                            websocket_writer: out_arc.clone(),
-                        })
-                        .await
-                        .map_err(|_| Error::InternalMessageFailed)?;
-                    connection_id = result;
-                }
-                let user_id = hex::encode_upper(public_key.fingerprint());
-                let internal_message_error = Error::InternalMessageFailed.to_string();
-                while let Some(msg) = incoming.next().await {
-                    let msg = msg?;
-                    if let Ok(text) = msg.to_str() {
-                        let raw_response = if let Ok((command_text, _)) =
-                            crate::signing::verify_message_extract(&public_key, text)
-                        {
-                            if let Ok(command) = serde_json::from_str(&command_text) {
+        if let Ok(text) = msg?.to_str() {
+            if let Ok(user_id) = ID::parse_str(text) {
+                if init_user_id == user_id {
+                    let out_arc = Arc::new(Mutex::new(outgoing));
+                    let connection_id: u128;
+                    {
+                        let result = addr
+                            .call(client_command::Connect {
+                                websocket_writer: out_arc.clone(),
+                            })
+                            .await
+                            .map_err(|_| Error::InternalMessageFailed)?;
+                        connection_id = result;
+                    }
+                    let internal_message_error = Error::InternalMessageFailed.to_string();
+                    while let Some(msg) = incoming.next().await {
+                        let msg = msg?;
+                        if let Ok(text) = msg.to_str() {
+                            let raw_response = if let Ok(command) = serde_json::from_str(&text) {
                                 match command {
                                     ClientMessage::SubscribeChannel { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeChannel {
-                                                user_id: user_id.clone(),
+                                                user_id,
                                                 hub_id,
                                                 channel_id,
                                                 connection_id,
@@ -170,7 +142,7 @@ pub async fn handle_connection(
                                     ClientMessage::StartTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StartTyping {
-                                                user_id: user_id.clone(),
+                                                user_id,
                                                 hub_id,
                                                 channel_id,
                                             })
@@ -187,7 +159,7 @@ pub async fn handle_connection(
                                     ClientMessage::StopTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StopTyping {
-                                                user_id: user_id.clone(),
+                                                user_id,
                                                 hub_id,
                                                 channel_id,
                                             })
@@ -204,7 +176,7 @@ pub async fn handle_connection(
                                     ClientMessage::SubscribeHub { hub_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeHub {
-                                                user_id: user_id.clone(),
+                                                user_id,
                                                 hub_id,
                                                 connection_id,
                                             })
@@ -232,57 +204,20 @@ pub async fn handle_connection(
                                             ServerMessage::Error(internal_message_error.clone())
                                         }
                                     }
-                                    ClientMessage::SendMessageInit {
+                                    ClientMessage::SendMessage {
+                                        message,
                                         hub_id,
                                         channel_id,
-                                        content,
                                     } => {
-                                        let hub = Hub::load(hub_id).await?;
-                                        let member = hub.get_member(&user_id)?;
-                                        crate::check_permission!(
-                                            &member,
-                                            channel_id,
-                                            ChannelPermission::Write,
-                                            &hub
-                                        );
-                                        ServerMessage::MessageForSigning {
-                                            server_signed_message: Message::new(
-                                                user_id.clone(),
-                                                content,
-                                                hub_id,
-                                                channel_id,
-                                            )
-                                            .sign(&server_keys.secret_key, String::new)?
-                                            .compress(CompressionAlgorithm::ZIP)?
-                                            .to_armored_string(None)?,
-                                        }
-                                    }
-                                    ClientMessage::SendMessage { signed_message } => {
-                                        let message = Message::from_double_signed_verify(
-                                            &signed_message,
-                                            &server_keys.public_key,
-                                            &public_key,
-                                        )?;
-                                        if let Err(err) = crate::channel::Channel::write_message(
-                                            message.hub_id,
-                                            message.channel_id,
-                                            crate::channel::SignedMessage::new(
-                                                message.id,
-                                                message.created,
-                                                signed_message.clone(),
-                                            ),
-                                        )
-                                        .await
+                                        let message =
+                                            Message::new(user_id, message, hub_id, channel_id);
+                                        if let Err(err) =
+                                            crate::channel::Channel::write_message(message.clone())
+                                                .await
                                         {
                                             ServerMessage::Error(err.to_string())
                                         } else if addr
-                                            .call(ServerNotification::NewMessage(
-                                                message.hub_id,
-                                                message.channel_id,
-                                                message.id,
-                                                signed_message,
-                                                message,
-                                            ))
+                                            .call(ServerNotification::NewMessage(message))
                                             .await
                                             .is_ok()
                                         {
@@ -294,28 +229,18 @@ pub async fn handle_connection(
                                 }
                             } else {
                                 ServerMessage::InvalidCommand
-                            }
-                        } else {
-                            ServerMessage::NotSigned
-                        };
-                        let message = OpenPGPMessage::new_literal(
-                            "",
-                            serde_json::to_string(&raw_response)?.as_str(),
-                        )
-                        .sign(
-                            &server_keys.secret_key,
-                            String::new,
-                            HashAlgorithm::SHA2_256,
-                        )?
-                        .compress(CompressionAlgorithm::ZIP)?;
-                        out_arc
-                            .lock()
-                            .await
-                            .send(WebSocketMessage::text(message.to_armored_string(None)?))
-                            .await?;
+                            };
+                            out_arc
+                                .lock()
+                                .await
+                                .send(WebSocketMessage::text(serde_json::to_string(
+                                    &raw_response,
+                                )?))
+                                .await?;
+                        }
                     }
+                    return Ok(());
                 }
-                return Ok(());
             }
         }
     }

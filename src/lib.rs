@@ -27,8 +27,6 @@ pub mod server;
 /// Definition of the WebSocket API.
 pub mod websocket;
 
-pub mod signing;
-
 /// Maximum size of a username in bytes. Clients should be able to accept larger and smaller values.
 pub const MAX_NAME_SIZE: usize = 128;
 

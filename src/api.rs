@@ -3,7 +3,7 @@ use std::mem;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    channel::{Channel, SignedMessage},
+    channel::{Channel, Message},
     check_name_validity, check_permission,
     error::Error,
     hub::{Hub, HubMember},
@@ -28,15 +28,14 @@ use crate::{
 /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
 /// * The given name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
 /// * The default channel could not be created for any of the reaons outlined in [`Hub::new_channel`].
-pub async fn create_hub<S: Into<String>>(owner_id: S, name: S) -> Result<ID> {
+pub async fn create_hub<S: Into<String>>(owner_id: ID, name: S) -> Result<ID> {
     let name: String = name.into();
-    let owner_id: String = owner_id.into();
     check_name_validity(&name)?;
     let mut id = new_id();
     while Hub::load(id).await.is_ok() {
         id = new_id();
     }
-    let mut new_hub = Hub::new(name, id, owner_id.clone());
+    let mut new_hub = Hub::new(name, id, owner_id);
     let channel_id = new_hub.new_channel(&owner_id, "chat".to_string()).await?;
     if let Some(group) = new_hub.groups.get_mut(&new_hub.default_group) {
         group.set_channel_permission(
@@ -67,7 +66,7 @@ pub async fn create_hub<S: Into<String>>(owner_id: S, name: S) -> Result<ID> {
 ///
 /// * The user is not in the hub.
 /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
-pub async fn get_hub(user_id: &str, hub_id: ID) -> Result<Hub> {
+pub async fn get_hub(user_id: &ID, hub_id: ID) -> Result<Hub> {
     let hub = Hub::load(hub_id).await?;
     hub.strip(user_id)
 }
@@ -87,7 +86,7 @@ pub async fn get_hub(user_id: &str, hub_id: ID) -> Result<Hub> {
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 /// * The user does not have permission to delete the hub.
 /// * The hub's data files could not be deleted.
-pub async fn delete_hub(user_id: &str, hub_id: ID) -> Result {
+pub async fn delete_hub(user_id: &ID, hub_id: ID) -> Result {
     let hub = Hub::load(hub_id).await?;
     let member = hub.get_member(user_id)?;
     check_permission!(member, HubPermission::All, hub);
@@ -114,7 +113,7 @@ pub async fn delete_hub(user_id: &str, hub_id: ID) -> Result {
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn rename_hub<S: Into<String> + Clone>(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     new_name: S,
 ) -> Result<String> {
@@ -146,7 +145,7 @@ pub async fn rename_hub<S: Into<String> + Clone>(
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 pub async fn change_hub_description<S: Into<String> + Clone>(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     new_description: S,
 ) -> Result<String> {
@@ -178,7 +177,7 @@ pub async fn change_hub_description<S: Into<String> + Clone>(
 ///
 /// * The user who is checking is not in the hub.
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
-pub async fn user_banned(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bool> {
+pub async fn user_banned(actor_id: &ID, hub_id: ID, user_id: &ID) -> Result<bool> {
     let hub = Hub::load(hub_id).await?;
     hub.check_membership(actor_id)?;
     Ok(hub.bans.contains(user_id))
@@ -199,7 +198,7 @@ pub async fn user_banned(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bo
 ///
 /// * The user who is checking is not in the hub.
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
-pub async fn user_muted(actor_id: &str, hub_id: ID, user_id: &str) -> Result<bool> {
+pub async fn user_muted(actor_id: &ID, hub_id: ID, user_id: &ID) -> Result<bool> {
     let hub = Hub::load(hub_id).await?;
     hub.check_membership(actor_id)?;
     Ok(hub.mutes.contains(user_id))
@@ -220,7 +219,7 @@ pub async fn user_muted(actor_id: &str, hub_id: ID, user_id: &str) -> Result<boo
 /// * The requesting user is not in the hub.
 /// * The user whose information is being requested is not in the hub.
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
-pub async fn get_hub_member(actor_id: &str, hub_id: ID, user_id: &str) -> Result<HubMember> {
+pub async fn get_hub_member(actor_id: &ID, hub_id: ID, user_id: &ID) -> Result<HubMember> {
     let hub = Hub::load(hub_id).await?;
     hub.check_membership(actor_id)?;
     Ok(hub.get_member(user_id)?.clone())
@@ -237,7 +236,7 @@ pub async fn get_hub_member(actor_id: &str, hub_id: ID, user_id: &str) -> Result
 ///
 /// * The user could not be added to the hub for any of the reasons outlined by [`User::join_hub`].
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
-pub async fn join_hub(user_id: String, hub_id: ID) -> Result {
+pub async fn join_hub(user_id: ID, hub_id: ID) -> Result {
     let mut hub = Hub::load(hub_id).await?;
     hub.user_join(user_id)?;
     hub.save().await
@@ -254,23 +253,23 @@ pub async fn join_hub(user_id: String, hub_id: ID) -> Result {
 ///
 /// * The user could not be removed from the hub for any of the reasons outlined by [`User::leave_hub`].
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
-pub async fn leave_hub(user_id: &str, hub_id: ID) -> Result {
+pub async fn leave_hub(user_id: &ID, hub_id: ID) -> Result {
     let mut hub = Hub::load(hub_id).await?;
     hub.user_leave(user_id)?;
     hub.save().await
 }
 
 /// Handles kicking, banning, muting, unbanning and unmuting users in/from hubs.
-async fn hub_user_op(actor_id: &str, hub_id: ID, user_id: &str, op: HubPermission) -> Result {
+async fn hub_user_op(actor_id: &ID, hub_id: ID, user_id: ID, op: HubPermission) -> Result {
     let mut hub = Hub::load(hub_id).await?;
     let member = hub.get_member(actor_id)?;
     check_permission!(member, op, hub);
     match op {
         HubPermission::Kick => hub.kick_user(&user_id)?,
-        HubPermission::Ban => hub.ban_user(user_id.to_string())?,
-        HubPermission::Unban => hub.unban_user(user_id),
-        HubPermission::Mute => hub.mute_user(user_id.to_string()),
-        HubPermission::Unmute => hub.unmute_user(user_id),
+        HubPermission::Ban => hub.ban_user(user_id)?,
+        HubPermission::Unban => hub.unban_user(&user_id),
+        HubPermission::Mute => hub.mute_user(user_id),
+        HubPermission::Unmute => hub.unmute_user(&user_id),
         _ => return Err(Error::UnexpectedServerArg),
     }
     hub.save().await
@@ -281,7 +280,7 @@ macro_rules! action_fns {
   ($($(#[$attr:meta])* => ($fnName:ident, $variant:ident)),*) => {
     $(
       $(#[$attr])*
-      pub async fn $fnName(actor_id: &str, hub_id: ID, user_id: &str) -> Result<()> {
+      pub async fn $fnName(actor_id: &ID, hub_id: ID, user_id: ID) -> Result<()> {
           hub_user_op(actor_id, hub_id, user_id, HubPermission::$variant).await
       }
     )*
@@ -397,7 +396,7 @@ action_fns! {
 /// * The user does not have permission to create new channels.
 /// * The channel could not be created for any of the reasons outlined by [`Hub::new_channel`].
 pub async fn create_channel<S: Into<String> + Clone>(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     name: S,
 ) -> Result<ID> {
@@ -423,7 +422,7 @@ pub async fn create_channel<S: Into<String> + Clone>(
 /// * The user is not in the hub.
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 /// * The channel does not exist.
-pub async fn get_channel(user_id: &str, hub_id: ID, channel_id: ID) -> Result<Channel> {
+pub async fn get_channel(user_id: &ID, hub_id: ID, channel_id: ID) -> Result<Channel> {
     let hub = Hub::load(hub_id).await?;
     Ok(hub.get_channel(user_id, channel_id)?.clone())
 }
@@ -449,7 +448,7 @@ pub async fn get_channel(user_id: &str, hub_id: ID, channel_id: ID) -> Result<Ch
 /// * The user does not have permission to rename channels.
 /// * The channel could not be renamed for any of the reasons outlined by [`Hub::rename_channel`].
 pub async fn rename_channel<S: Into<String> + Clone>(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     channel_id: ID,
     new_name: S,
@@ -484,7 +483,7 @@ pub async fn rename_channel<S: Into<String> + Clone>(
 /// * The user does not have permission to rename channels.
 /// * The channel could not be renamed for any of the reasons outlined by [`Hub::rename_channel`].
 pub async fn change_channel_description<S: Into<String> + Clone>(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     channel_id: ID,
     new_description: S,
@@ -519,7 +518,7 @@ pub async fn change_channel_description<S: Into<String> + Clone>(
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 /// * The user does not have permission to delete channels.
 /// * The channel could not be deleted for any of the reasons outlined by [`Hub::delete_channel`].
-pub async fn delete_channel(user_id: &str, hub_id: ID, channel_id: ID) -> Result {
+pub async fn delete_channel(user_id: &ID, hub_id: ID, channel_id: ID) -> Result {
     let mut hub = Hub::load(hub_id).await?;
     hub.delete_channel(user_id, channel_id).await?;
     hub.save().await
@@ -544,11 +543,11 @@ pub async fn delete_channel(user_id: &str, hub_id: ID, channel_id: ID) -> Result
 /// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_message(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     channel_id: ID,
     message_id: ID,
-) -> Result<SignedMessage> {
+) -> Result<Message> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     if let Some(message) = channel.get_message(message_id).await {
@@ -579,12 +578,12 @@ pub async fn get_message(
 /// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_messages_after(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     channel_id: ID,
     from: ID,
     max: usize,
-) -> Result<Vec<SignedMessage>> {
+) -> Result<Vec<Message>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     Ok(channel.get_messages_after(from, max).await)
@@ -614,14 +613,14 @@ pub async fn get_messages_after(
 /// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn get_messages(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
     channel_id: ID,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     invert: bool,
     max: usize,
-) -> Result<Vec<SignedMessage>> {
+) -> Result<Vec<Message>> {
     let hub = Hub::load(hub_id).await?;
     let channel = Hub::get_channel(&hub, user_id, channel_id)?;
     Ok(channel.get_messages_between(from, to, invert, max).await)
@@ -647,9 +646,9 @@ pub async fn get_messages(
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn set_member_hub_permission(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
-    member_id: &str,
+    member_id: &ID,
     permission: HubPermission,
     value: PermissionSetting,
 ) -> Result {
@@ -684,9 +683,9 @@ pub async fn set_member_hub_permission(
 /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
 /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
 pub async fn set_member_channel_permission(
-    user_id: &str,
+    user_id: &ID,
     hub_id: ID,
-    member_id: &str,
+    member_id: &ID,
     channel_id: ID,
     permission: ChannelPermission,
     value: PermissionSetting,
