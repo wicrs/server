@@ -135,7 +135,11 @@ impl Account {
         }
     }
 
-    pub fn only_first_n_actions(self, action_count: usize, sorted_public_keys: &Vec<(&String, &(String, DateTime<Utc>))>) -> Self {
+    pub fn only_first_n_actions(
+        self,
+        action_count: usize,
+        sorted_public_keys: &Vec<(&String, &(String, DateTime<Utc>))>,
+    ) -> Self {
         let mut public_keys = HashMap::new();
         sorted_public_keys
             .iter()
@@ -149,12 +153,7 @@ impl Account {
         Self {
             public_keys,
             uuid: self.uuid.clone(),
-            actions: self
-                .actions
-                .iter()
-                .take(action_count)
-                .cloned()
-                .collect(),
+            actions: self.actions.iter().take(action_count).cloned().collect(),
             action_signatures: self
                 .action_signatures
                 .iter()
@@ -174,7 +173,11 @@ impl Account {
     }
 
     /// Checks if a key is authorized to perform actions on an account.
-    pub fn is_key_authorized(&self, key_id: String, sorted_public_keys: &Vec<(&String, &(String, DateTime<Utc>))>) -> Result<bool> {
+    pub fn is_key_authorized(
+        &self,
+        key_id: String,
+        sorted_public_keys: &Vec<(&String, &(String, DateTime<Utc>))>,
+    ) -> Result<bool> {
         let mut authorized = false;
         let mut actions_iter = self.actions.iter().enumerate();
         while let Some((position, action)) = actions_iter.next() {
@@ -188,7 +191,10 @@ impl Account {
                     if let Some((issuer_pubkey, _pubkey_added)) = self.public_keys.get(&issuer) {
                         signature.verify(
                             &SignedPublicKey::from_string(issuer_pubkey)?.0,
-                            self.clone().only_first_n_actions(position + 1, &sorted_public_keys).to_string().as_bytes(),
+                            self.clone()
+                                .only_first_n_actions(position + 1, &sorted_public_keys)
+                                .to_string()
+                                .as_bytes(),
                         )?;
                         authorized = true;
                     }
