@@ -125,7 +125,7 @@ impl HubMember {
             };
         } else {
             for group in self.groups.iter() {
-                if let Some(group) = hub.groups.get(&group) {
+                if let Some(group) = hub.groups.get(group) {
                     if group.has_permission(permission) {
                         return true;
                     }
@@ -173,7 +173,7 @@ impl HubMember {
             }
         } else {
             for group in self.groups.iter() {
-                if let Some(group) = hub.groups.get(&group) {
+                if let Some(group) = hub.groups.get(group) {
                     if group.has_channel_permission(channel, permission) {
                         return true;
                     }

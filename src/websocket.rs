@@ -104,7 +104,7 @@ pub async fn handle_connection(
                     while let Some(msg) = incoming.next().await {
                         let msg = msg?;
                         if let Ok(text) = msg.to_str() {
-                            let raw_response = if let Ok(command) = serde_json::from_str(&text) {
+                            let raw_response = if let Ok(command) = serde_json::from_str(text) {
                                 match command {
                                     ClientMessage::SubscribeChannel { hub_id, channel_id } => {
                                         if let Ok(result) = addr

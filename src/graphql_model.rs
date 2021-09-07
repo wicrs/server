@@ -293,7 +293,7 @@ impl Hub {
         self.channels
             .iter()
             .filter_map(|(id, channel)| {
-                if ids.contains(&id) {
+                if ids.contains(id) {
                     Some(channel)
                 } else {
                     None
@@ -319,13 +319,15 @@ impl Hub {
     ) -> Vec<&HubMember> {
         self.members
             .iter()
-            .filter_map(|(id, member)| {
-                if ids.contains(&id) {
-                    Some(member)
-                } else {
-                    None
-                }
-            })
+            .filter_map(
+                |(id, member)| {
+                    if ids.contains(id) {
+                        Some(member)
+                    } else {
+                        None
+                    }
+                },
+            )
             .collect()
     }
 
@@ -348,7 +350,7 @@ impl Hub {
             .iter()
             .filter_map(
                 |(id, group)| {
-                    if ids.contains(&id) {
+                    if ids.contains(id) {
                         Some(group)
                     } else {
                         None

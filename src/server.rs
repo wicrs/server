@@ -339,7 +339,7 @@ impl Default for MessageServer {
 impl Actor for MessageServer {
     async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
         for (hc_id, writer) in self.index_writers.iter_mut() {
-            if let Some((_, id)) = self.pending_messages.get(&hc_id) {
+            if let Some((_, id)) = self.pending_messages.get(hc_id) {
                 let _ = log_last_message(hc_id.0, hc_id.1, *id);
             }
             let _ = writer.commit();
@@ -505,14 +505,14 @@ impl Handler<client_command::Disconnect> for Server {
             let subscribed = subscribed.write().await;
             let subscribed_channels = self.subscribed_channels.write().await;
             for channel in subscribed.0.iter() {
-                if let Some(subs) = subscribed_channels.get(&channel) {
+                if let Some(subs) = subscribed_channels.get(channel) {
                     subs.write().await.remove(&msg.connection_id);
                 }
             }
             drop(subscribed_channels);
             let subscribed_hubs = self.subscribed_hubs.write().await;
             for hub in subscribed.1.iter() {
-                if let Some(subs) = subscribed_hubs.get(&hub) {
+                if let Some(subs) = subscribed_hubs.get(hub) {
                     subs.write().await.remove(&msg.connection_id);
                 }
             }
