@@ -1,4 +1,5 @@
-use async_graphql::{EmptySubscription, Request as GraphQLRequest, Schema};
+use async_graphql::extensions::ApolloTracing;
+use async_graphql::{EmptySubscription, Schema};
 
 use serde::{Deserialize, Serialize};
 use xactor::Actor;
@@ -25,11 +26,17 @@ use crate::{
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerInfo {
     pub version: String,
-    pub key_server: String,
+}
+
+fn reject<T: Into<Error>>(err: T) -> warp::Rejection {
+    let err: Error = err.into();
+    warp::reject::custom(err)
 }
 
 pub async fn start(config: Config) -> Result {
-    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription).finish();
+    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+        .extension(ApolloTracing)
+        .finish();
     let server = Arc::new(
         Server::new()
             .await?
@@ -44,45 +51,47 @@ pub async fn start(config: Config) -> Result {
             .and(warp::header("user-id"))
             .and_then(move |header: String| async {
                 let header = header;
-                ID::parse_str(&header).map_err(|e| warp::reject::custom(Error::ID(e)))
+                ID::parse_str(&header).map_err(reject)
             });
 
     let schema_sdl = schema.sdl();
     let graphql_post = warp::any()
         .and(warp::path!("v3" / "graphql"))
-        .and(warp::body::bytes())
         .and(user_id_header)
-        .and_then(move |body: Bytes, user_id: ID| {
-            let server = graphql_server_arc.clone();
-            let schema = schema.clone();
-            async move {
-                Ok::<_, Infallible>(
-                    async {
-                        let content =
-                            String::from_utf8(body.to_vec()).map_err(|_| Error::InvalidText)?;
-                        let request = GraphQLRequest::new(content);
-                        let resp = schema.execute(request.data(server).data(user_id)).await;
+        .and(async_graphql_warp::graphql(schema.clone()))
+        .and_then(
+            move |user_id: ID,
+                  (schema, request): (
+                Schema<QueryRoot, MutationRoot, EmptySubscription>,
+                async_graphql::Request,
+            )| {
+                let server = graphql_server_arc.clone();
+                async move {
+                    Ok::<_, Infallible>(
+                        async {
+                            let resp = schema.execute(request.data(server).data(user_id)).await;
 
-                        let mut response = resp.data.to_string().into_response();
-                        if let Some(value) = resp.cache_control.value() {
-                            if let Ok(value) = value.try_into() {
-                                response.headers_mut().insert("cache-control", value);
-                            }
-                        }
-                        for (name, value) in resp.http_headers {
-                            if let Some(name) = name {
+                            let mut response = dbg!(resp.data.to_string()).into_response();
+                            if let Some(value) = resp.cache_control.value() {
                                 if let Ok(value) = value.try_into() {
-                                    response.headers_mut().append(name, value);
+                                    response.headers_mut().insert("cache-control", value);
                                 }
                             }
+                            for (name, value) in resp.http_headers {
+                                if let Some(name) = name {
+                                    if let Ok(value) = value.try_into() {
+                                        response.headers_mut().append(name, value);
+                                    }
+                                }
+                            }
+                            Ok::<_, Error>(response)
                         }
-                        Ok::<_, Error>(response)
-                    }
-                    .await
-                    .map_or_else(|e| e.into_response(), |r| r.into_response()),
-                )
-            }
-        });
+                        .await
+                        .map_or_else(|e| e.into_response(), |r| r.into_response()),
+                    )
+                }
+            },
+        );
 
     let send_message = warp::any()
         .and(warp::path!("v3" / "send_message"))
@@ -92,8 +101,7 @@ pub async fn start(config: Config) -> Result {
             async move {
                 Ok::<_, Infallible>(
                     async {
-                        let message_string =
-                            String::from_utf8(body.to_vec()).map_err(|_| Error::InvalidText)?;
+                        let message_string = String::from_utf8(body.to_vec())?;
                         let message = serde_json::from_str(&message_string)?;
                         let _ = server.send(ServerNotification::NewMessage(message));
                         Ok("OK".to_owned())
@@ -116,7 +124,6 @@ pub async fn start(config: Config) -> Result {
 
     let server_info_struct = ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        key_server: config.key_server,
     };
     let server_info_str = serde_json::to_string(&server_info_struct).unwrap();
 
@@ -126,7 +133,7 @@ pub async fn start(config: Config) -> Result {
         warp::path!("v3" / "graphql_schema").map(move || schema_sdl.clone().into_response());
 
     let cors = warp::cors().allow_any_origin();
-    let log = warp::log("wicrs_server::http");
+    let log = warp::log("wicrs_server::httpapi");
 
     let routes = graphql_post
         .or(server_info)

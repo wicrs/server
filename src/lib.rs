@@ -4,8 +4,6 @@ extern crate log;
 use error::{Error, Result};
 use uuid::Uuid;
 
-pub use pgp;
-
 /// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
 pub mod api;
 /// Message storage and retreival for channels.
