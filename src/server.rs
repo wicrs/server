@@ -30,6 +30,8 @@ use xactor::*;
 
 use lazy_static::lazy_static;
 
+pub type ServerAddress = Arc<Addr<Server>>;
+
 pub mod client_command {
     use super::{message, Arc, Mutex, Result, SplitSink, WebSocket, WebSocketMessage, ID};
 
@@ -129,8 +131,7 @@ pub struct SearchMessageIndex {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum HubUpdateType {
     HubDeleted,
-    HubRenamed,
-    HubDescriptionUpdated,
+    HubUpdated,
     UserJoined(ID),
     UserLeft(ID),
     UserBanned(ID),
@@ -143,8 +144,7 @@ pub enum HubUpdateType {
     MemberNicknameChanged(ID),
     ChannelCreated(ID),
     ChannelDeleted(ID),
-    ChannelRenamed(ID),
-    ChannelDescriptionUpdated(ID),
+    ChannelUpdated(ID),
 }
 
 /// Message to notify the server of a change made externally, usually used so the server can notify clients.

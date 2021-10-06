@@ -1,7 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    api,
     channel::Channel,
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
@@ -11,6 +10,8 @@ use crate::{
 use async_graphql::*;
 use chrono::{DateTime, Utc};
 use xactor::Addr;
+
+pub type GraphQLSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 pub struct QueryRoot;
 
@@ -40,150 +41,6 @@ impl QueryRoot {
             result.push(hub.strip(self.requester(ctx).await?)?);
         }
         Ok(result)
-    }
-}
-
-pub struct MutationRoot;
-
-struct ChannelMutator {
-    user_id: ID,
-    hub_id: ID,
-    channel_id: ID,
-}
-
-impl ChannelMutator {
-    fn new(user_id: ID, hub_id: ID, channel_id: ID) -> Self {
-        Self {
-            user_id,
-            hub_id,
-            channel_id,
-        }
-    }
-}
-
-#[Object]
-impl ChannelMutator {
-    async fn name(
-        &self,
-        #[graphql(desc = "New name for the channel.")] new: String,
-    ) -> Result<String> {
-        Ok(api::rename_channel(&self.user_id, self.hub_id, self.channel_id, new).await?)
-    }
-    async fn description(
-        &self,
-        #[graphql(desc = "New description for the channel.")] new: String,
-    ) -> Result<String> {
-        Ok(
-            api::change_channel_description(&self.user_id, self.hub_id, self.channel_id, new)
-                .await?,
-        )
-    }
-}
-
-struct HubMutator {
-    user_id: ID,
-    hub_id: ID,
-}
-
-impl HubMutator {
-    fn new(user_id: ID, hub_id: ID) -> Self {
-        Self { user_id, hub_id }
-    }
-}
-
-#[Object]
-impl HubMutator {
-    async fn name(&self, #[graphql(desc = "New name for the hub.")] new: String) -> Result<String> {
-        Ok(api::rename_hub(&self.user_id, self.hub_id, new).await?)
-    }
-    async fn description(
-        &self,
-        #[graphql(desc = "New description for the hub.")] new: String,
-    ) -> Result<String> {
-        Ok(api::change_hub_description(&self.user_id, self.hub_id, new).await?)
-    }
-    async fn channel(
-        &self,
-        #[graphql(desc = "ID of the channel to get.")] id: ID,
-    ) -> ChannelMutator {
-        ChannelMutator::new(self.user_id, self.hub_id, id)
-    }
-    async fn delete_channel(
-        &self,
-        #[graphql(desc = "ID of the channel to delete.")] id: ID,
-    ) -> Result<ID> {
-        Ok(api::delete_channel(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn create_channel(
-        &self,
-        #[graphql(desc = "Name for the new channel.")] name: String,
-    ) -> Result<Channel> {
-        Ok(api::get_channel(
-            &self.user_id,
-            self.hub_id,
-            api::create_channel(&self.user_id, self.hub_id, name).await?,
-        )
-        .await?)
-    }
-    async fn kick(&self, #[graphql(desc = "ID of the user to kick.")] id: ID) -> Result<ID> {
-        Ok(api::kick_user(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn ban(&self, #[graphql(desc = "ID of the user to ban.")] id: ID) -> Result<ID> {
-        Ok(api::ban_user(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn unban(&self, #[graphql(desc = "ID of the user to unban.")] id: ID) -> Result<ID> {
-        Ok(api::unban_user(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn mute(&self, #[graphql(desc = "ID of the user to mute.")] id: ID) -> Result<ID> {
-        Ok(api::ban_user(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn unmute(&self, #[graphql(desc = "ID of the user to unmute.")] id: ID) -> Result<ID> {
-        Ok(api::unmute_user(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-}
-
-#[Object]
-impl MutationRoot {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
-        ctx.data_unchecked::<ID>()
-    }
-
-    async fn hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "ID of the hub to get.")] id: ID,
-    ) -> Result<HubMutator> {
-        Ok(HubMutator::new(*self.requester(ctx).await?, id))
-    }
-
-    async fn delete_hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "ID of the hub to delete.")] id: ID,
-    ) -> Result<ID> {
-        Ok(api::delete_hub(self.requester(ctx).await?, id)
-            .await
-            .and(Ok(id))?)
-    }
-
-    async fn create_hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "Name for the new hub.")] name: String,
-    ) -> Result<Hub> {
-        Ok(Hub::load(api::create_hub(*self.requester(ctx).await?, name).await?).await?)
     }
 }
 

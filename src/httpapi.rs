@@ -1,40 +1,29 @@
 use async_graphql::extensions::ApolloTracing;
-use async_graphql::{EmptySubscription, Schema};
+use async_graphql::{EmptyMutation, EmptySubscription, Schema};
 
 use serde::{Deserialize, Serialize};
 use xactor::Actor;
 
 use std::convert::Infallible;
-use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use warp::hyper::body::Bytes;
-use warp::ws::Ws;
-use warp::Filter;
-use warp::Reply;
-
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::graphql_model::GraphQLSchema;
 use crate::server::Server;
 use crate::ID;
-use crate::{
-    graphql_model::{MutationRoot, QueryRoot},
-    server::ServerNotification,
-};
+use crate::{api, graphql_model::QueryRoot, server::ServerAddress};
+use warp::Reply;
+use warp::{Filter, Rejection};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerInfo {
     pub version: String,
 }
 
-fn reject<T: Into<Error>>(err: T) -> warp::Rejection {
-    let err: Error = err.into();
-    warp::reject::custom(err)
-}
-
 pub async fn start(config: Config) -> Result {
-    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+    let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
         .extension(ApolloTracing)
         .finish();
     let server = Arc::new(
@@ -44,83 +33,10 @@ pub async fn start(config: Config) -> Result {
             .await
             .map_err(|_| Error::ServerStartFailed)?,
     );
-    let send_message_server_arc = server.clone();
-    let graphql_server_arc = server.clone();
-    let user_id_header =
-        warp::any()
-            .and(warp::header("user-id"))
-            .and_then(move |header: String| async {
-                let header = header;
-                ID::parse_str(&header).map_err(reject)
-            });
 
-    let schema_sdl = schema.sdl();
-    let graphql_post = warp::any()
-        .and(warp::path!("v3" / "graphql"))
-        .and(user_id_header)
-        .and(async_graphql_warp::graphql(schema.clone()))
-        .and_then(
-            move |user_id: ID,
-                  (schema, request): (
-                Schema<QueryRoot, MutationRoot, EmptySubscription>,
-                async_graphql::Request,
-            )| {
-                let server = graphql_server_arc.clone();
-                async move {
-                    Ok::<_, Infallible>(
-                        async {
-                            let resp = schema.execute(request.data(server).data(user_id)).await;
-
-                            let mut response = dbg!(resp.data.to_string()).into_response();
-                            if let Some(value) = resp.cache_control.value() {
-                                if let Ok(value) = value.try_into() {
-                                    response.headers_mut().insert("cache-control", value);
-                                }
-                            }
-                            for (name, value) in resp.http_headers {
-                                if let Some(name) = name {
-                                    if let Ok(value) = value.try_into() {
-                                        response.headers_mut().append(name, value);
-                                    }
-                                }
-                            }
-                            Ok::<_, Error>(response)
-                        }
-                        .await
-                        .map_or_else(|e| e.into_response(), |r| r.into_response()),
-                    )
-                }
-            },
-        );
-
-    let send_message = warp::any()
-        .and(warp::path!("v3" / "send_message"))
-        .and(warp::filters::body::bytes())
-        .and_then(move |body: Bytes| {
-            let server = send_message_server_arc.clone();
-            async move {
-                Ok::<_, Infallible>(
-                    async {
-                        let message_string = String::from_utf8(body.to_vec())?;
-                        let message = serde_json::from_str(&message_string)?;
-                        let _ = server.send(ServerNotification::NewMessage(message));
-                        Ok("OK".to_owned())
-                    }
-                    .await
-                    .map_or_else(|e: Error| e.into_response(), |r| r.into_response()),
-                )
-            }
-        });
-
-    let web_socket = warp::path!("v3" / "websocket")
-        .and(user_id_header)
-        .and(warp::ws())
-        .map(move |user_id: ID, ws: Ws| {
-            let server = server.clone();
-            ws.on_upgrade(move |websocket| async move {
-                let _ = crate::websocket::handle_connection(websocket, user_id, server).await;
-            })
-        });
+    /*let schema_sdl = schema.sdl();
+    let graphql_schema =
+        warp::path("graphql_schema").map(move || schema_sdl.clone().into_response());
 
     let server_info_struct = ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -129,20 +45,20 @@ pub async fn start(config: Config) -> Result {
 
     let server_info =
         warp::path!("v3" / "info").map(move || server_info_str.clone().into_response());
-    let graphql_schema =
-        warp::path!("v3" / "graphql_schema").map(move || schema_sdl.clone().into_response());
 
-    let cors = warp::cors().allow_any_origin();
+    let cors = warp::cors()
+        .allow_header("content-type")
+        .allow_header("authorization")
+        .allow_header("cache-control")
+        .allow_any_origin();
     let log = warp::log("wicrs_server::httpapi");
 
-    let routes = graphql_post
-        .or(server_info)
-        .or(graphql_schema)
-        .or(web_socket)
-        .or(send_message)
-        .with(cors)
-        .with(log);
-    let server = warp::serve(routes).run(
+    let routes = warp::path("v3")
+    .and(api(Arc::clone(&server), schema))
+    .with(cors)
+    .with(log);*/
+
+    let server = warp::serve(api(server, schema)).run(
         config
             .address
             .parse::<SocketAddr>()
@@ -152,4 +68,86 @@ pub async fn start(config: Config) -> Result {
     server.await;
 
     Ok(())
+}
+
+fn auth() -> impl Filter<Extract = (ID,), Error = warp::Rejection> + Clone {
+    warp::header("authorization")
+}
+
+fn with_server(
+    server: ServerAddress,
+) -> impl Filter<Extract = (ServerAddress,), Error = Infallible> + Clone {
+    warp::any().map(move || Arc::clone(&server))
+}
+
+fn websocket(
+    server: ServerAddress,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path("websocket")
+        .and(with_server(server))
+        .and(auth())
+        .and(warp::ws())
+        .and_then(api::websocket)
+}
+
+fn graphql(
+    server: ServerAddress,
+    schema: GraphQLSchema,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path("graphql")
+        .and(with_server(server))
+        .and(auth())
+        .and(async_graphql_warp::graphql(schema.clone()))
+        .and_then(api::graphql)
+}
+
+fn send_message(
+    server: ServerAddress,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::post()
+        .and(with_server(server))
+        .and(auth())
+        .and(warp::path!(ID / ID))
+        .and(warp::body::json())
+        .and_then(api::send_message)
+}
+
+fn create_hub() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::post()
+        .and(auth())
+        .and(warp::path!(String))
+        .and_then(api::create_hub)
+}
+
+fn update_hub(
+    server: ServerAddress,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    with_server(server)
+        .and(warp::put())
+        .and(auth())
+        .and(warp::path!(ID))
+        .and(warp::body::json())
+        .and_then(api::update_hub)
+}
+
+fn get_hub() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::get()
+        .and(auth())
+        .and(warp::path!(ID))
+        .and_then(api::get_hub)
+}
+
+fn rest(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let hub = warp::path("hub").and(create_hub().or(update_hub(server.clone())).or(get_hub()));
+    warp::path("rest").and(hub)
+}
+
+fn api(
+    server: ServerAddress,
+    schema: GraphQLSchema,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    rest(Arc::clone(&server))
+        .or(send_message(Arc::clone(&server)))
+        .or(websocket(Arc::clone(&server)))
+        .or(graphql(server, schema))
 }
