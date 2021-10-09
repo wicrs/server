@@ -37,6 +37,10 @@ pub enum Error {
     UnexpectedServerArg,
     #[error("text object to big")]
     TooBig,
+    #[error("invalid argument/option/value")]
+    BadValue,
+    #[error("invalid timestamp")]
+    InvalidTime,
     #[error("not utf-8 bytes")]
     InvalidText,
     #[error("bad message format")]
@@ -120,6 +124,8 @@ impl From<&Error> for StatusCode {
             | Error::Http(_)
             | Error::InvalidText
             | Error::TooBig
+            | Error::InvalidTime
+            | Error::BadValue
             | Error::InvalidFingerprint
             | Error::InvalidName => Self::BAD_REQUEST,
             Error::AlreadyTyping | Error::NotTyping => Self::CONFLICT,

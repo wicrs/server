@@ -75,12 +75,12 @@ pub fn check_name_validity(name: &str) -> Result {
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {
         if !$member.has_permission($perm, &$hub) {
-            Err(Error::MissingHubPermission($perm))?;
+            return Err(Error::MissingHubPermission($perm).into());
         }
     };
     ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
         if !$member.has_channel_permission($channel, $perm, &$hub) {
-            Err(Error::MissingChannelPermission($perm))?;
+            return Err(Error::MissingChannelPermission($perm).into());
         }
     };
 }

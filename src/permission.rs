@@ -1,7 +1,7 @@
-use crate::ID;
+use crate::{error::Error, ID};
 use async_graphql::{Enum, SimpleObject};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 /// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
@@ -12,7 +12,7 @@ pub struct HubPermissionSet {
     /// Permission that this permission set is for.
     pub permission: HubPermission,
     /// Setting for the permission.
-    pub setting: Option<bool>,
+    pub setting: PermissionSetting,
 }
 
 impl From<(HubPermission, PermissionSetting)> for HubPermissionSet {
@@ -30,7 +30,7 @@ pub struct ChannelPermissionSet {
     /// Permission that this permission set is for.
     pub permission: ChannelPermission,
     /// Setting for the permission.
-    pub setting: Option<bool>,
+    pub setting: PermissionSetting,
     /// ID of the channel that this permission setting is for.
     pub channel: ID,
 }
@@ -77,6 +77,26 @@ impl Display for HubPermission {
     }
 }
 
+impl FromStr for HubPermission {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "ALL" => HubPermission::All,
+            "READ_CHANNELS" => HubPermission::ReadChannels,
+            "WRITE_CHANNELS" => HubPermission::WriteChannels,
+            "ADMINISTRATE" => HubPermission::Administrate,
+            "MANAGE_CHANNELS" => HubPermission::ManageChannels,
+            "MUTE" => HubPermission::Mute,
+            "UNMUTE" => HubPermission::Unmute,
+            "KICK" => HubPermission::Kick,
+            "BAN" => HubPermission::Ban,
+            "UNBAN" => HubPermission::Unban,
+            _ => return Err(Error::InvalidText),
+        })
+    }
+}
+
 /// Map of hub permissions to permission settings.
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
@@ -99,6 +119,21 @@ impl Display for ChannelPermission {
         })
     }
 }
+
+impl FromStr for ChannelPermission {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "WRITE" => ChannelPermission::Write,
+            "READ" => ChannelPermission::Read,
+            "MANAGE" => ChannelPermission::Manage,
+            "ALL" => ChannelPermission::All,
+            _ => return Err(Error::InvalidText),
+        })
+    }
+}
+
 impl From<ChannelPermission> for HubPermission {
     fn from(channel_perm: ChannelPermission) -> Self {
         match channel_perm {
