@@ -1,7 +1,6 @@
 use std::mem;
 
 use chrono::{TimeZone, Utc};
-use reqwest::header::{HeaderValue, CACHE_CONTROL};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -878,16 +877,9 @@ pub async fn graphql(
     user_id: ID,
     (schema, request): (GraphQLSchema, async_graphql::Request),
 ) -> Result<impl Reply> {
-    let resp = schema.execute(request.data(server).data(user_id)).await;
-
-    let mut response = dbg!(resp.data.to_string()).into_response();
-    if let Some(value) = resp.cache_control.value() {
-        if let Ok(value) = HeaderValue::from_str(&value) {
-            response.headers_mut().insert(CACHE_CONTROL, value);
-        }
-    }
-
-    Ok(response)
+    Ok(async_graphql_warp::Response::from(
+        schema.execute(request.data(server).data(user_id)).await,
+    ))
 }
 
 pub async fn websocket(server: ServerAddress, user_id: ID, ws: Ws) -> Result<impl Reply> {

@@ -1,4 +1,5 @@
 use async_graphql::extensions::ApolloTracing;
+use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
 
 use serde::{Deserialize, Serialize};
@@ -89,17 +90,6 @@ fn websocket(
         .and_then(api::websocket)
 }
 
-fn graphql(
-    server: ServerAddress,
-    schema: GraphQLSchema,
-) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    path!("graphql")
-        .and(with_server(server))
-        .and(auth())
-        .and(async_graphql_warp::graphql(schema))
-        .and_then(api::graphql)
-}
-
 fn string_body(max_size: u64) -> impl Filter<Extract = (String,), Error = warp::Rejection> + Clone {
     warp::body::content_length_limit(max_size)
         .and(warp::body::bytes())
@@ -115,10 +105,34 @@ fn server_info() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and_then(|server_info: String| async move { Ok::<String, Rejection>(server_info) })
 }
 
+fn graphql(
+    server: ServerAddress,
+    schema: GraphQLSchema,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    path!("graphql")
+        .and(with_server(server))
+        .and(auth())
+        .and(async_graphql_warp::graphql(schema))
+        .and_then(api::graphql)
+}
+
 fn graphql_schema(sdl: String) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    warp::path!("graphql_schema")
+    warp::path!("graphql" / "schema")
         .map(move || sdl.clone())
         .and_then(|sdl: String| async move { Ok::<String, Rejection>(sdl) })
+}
+
+fn graphql_playground() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path!("graphql" / "playground" / ID).and_then(|user: ID| async move {
+        Ok::<_, Rejection>(
+            warp::http::Response::builder()
+                .header("content-type", "text/html")
+                .body(playground_source(
+                    GraphQLPlaygroundConfig::new("/api/v3/graphql")
+                        .with_header("authorization", user.to_string().as_str()),
+                )),
+        )
+    })
 }
 
 fn rest(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -138,6 +152,7 @@ fn api(
             .or(websocket(Arc::clone(&server)))
             .or(graphql(server, schema))
             .or(graphql_schema(schema_sdl))
+            .or(graphql_playground())
             .or(server_info()),
     )
 }
