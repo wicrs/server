@@ -53,21 +53,21 @@ pub enum Error {
     InternalMessageFailed,
     #[error("internal handler servers failed to start")]
     ServerStartFailed,
-    #[error("IO serror")]
+    #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("JSON error")]
+    #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error("Bincode error")]
+    #[error(transparent)]
     Bincode(#[from] bincode::Error),
-    #[error("Tantivy error")]
+    #[error(transparent)]
     Tantivy(#[from] tantivy::error::TantivyError),
-    #[error("Tantivy error")]
+    #[error(transparent)]
     TantivyOpenDirectory(#[from] tantivy::directory::error::OpenDirectoryError),
-    #[error("Tantivy error")]
+    #[error(transparent)]
     TantivyOpenRead(#[from] tantivy::directory::error::OpenReadError),
-    #[error("Tantivy error")]
+    #[error(transparent)]
     TantivyOpenWrite(#[from] tantivy::directory::error::OpenWriteError),
-    #[error("Tantivy error")]
+    #[error(transparent)]
     TantivyQueryParse(#[from] tantivy::query::QueryParserError),
     #[error("could not get a Tantivy index writer")]
     GetIndexWriter,
@@ -77,18 +77,19 @@ pub enum Error {
     Expired,
     #[error("not authenticated for websocket")]
     WsNotAuthenticated,
-    #[error("Warp error")]
+    #[error(transparent)]
     Warp(#[from] warp::Error),
-    #[error("Reqwest error")]
+    #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
-    #[error("ID error")]
-    #[allow(clippy::upper_case_acronyms)]
-    ID(#[from] uuid::Error),
+    #[error(transparent)]
+    Url(#[from] url::ParseError),
+    #[error(transparent)]
+    Id(#[from] uuid::Error),
     #[error("could not find a pgp public key with that ID")]
     PublicKeyNotFound,
     #[error("invalid PGP fingerprint")]
     InvalidFingerprint,
-    #[error("HTTP Error")]
+    #[error(transparent)]
     Http(#[from] warp::http::Error),
     #[error("{0}")]
     Other(String),
@@ -120,7 +121,7 @@ impl From<&Error> for StatusCode {
             | Error::MemberNotFound
             | Error::MessageNotFound
             | Error::NotInHub => Self::NOT_FOUND,
-            Error::ID(_)
+            Error::Id(_)
             | Error::Http(_)
             | Error::InvalidText
             | Error::TooBig

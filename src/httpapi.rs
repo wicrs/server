@@ -147,7 +147,7 @@ fn api(
     schema: GraphQLSchema,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let schema_sdl = schema.sdl();
-    path!("api" / "v3" / ..).and(
+    path!("api" / ..).and(
         rest(Arc::clone(&server))
             .or(websocket(Arc::clone(&server)))
             .or(graphql(server, schema))
