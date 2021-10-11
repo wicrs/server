@@ -1,6 +1,6 @@
 use std::mem;
 
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -737,6 +737,8 @@ pub mod channel {
 }
 
 pub mod message {
+    use chrono::DateTime;
+
     use super::*;
 
     /// Gets a message from a text channel in a hub.
@@ -771,6 +773,12 @@ pub mod message {
         )
     }
 
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AfterQuery {
+        pub from: ID,
+        pub max: usize,
+    }
+
     /// Gets messages sent after a given message.
     /// If successful they are returned in an array. The array is orderd oldest message to newest
     /// If there are no messages after the given message or the given message is not found, an empty array is returned.
@@ -794,15 +802,22 @@ pub mod message {
     pub async fn get_after(
         hub_id: ID,
         channel_id: ID,
-        from: ID,
-        max: usize,
+        query: AfterQuery,
         user_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         let channel = Hub::get_channel(&hub, &user_id, channel_id)?;
         Ok(Response::Success(
-            channel.get_messages_after(from, max).await,
+            channel.get_messages_after(query.from, query.max).await,
         ))
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TimePeriodQuery {
+        pub from: DateTime<Utc>,
+        pub to: DateTime<Utc>,
+        pub max: usize,
+        pub new_to_old: bool,
     }
 
     /// Gets a set of messages between two times (both in milliseconds since Unix Epoch).
@@ -831,26 +846,14 @@ pub mod message {
     pub async fn get_time_period(
         hub_id: ID,
         channel_id: ID,
-        from: i64,
-        to: i64,
-        max: usize,
-        invert: bool,
+        query: TimePeriodQuery,
         user_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         let channel = Hub::get_channel(&hub, &user_id, channel_id)?;
         Ok(Response::Success(
             channel
-                .get_messages_between(
-                    Utc.timestamp_millis_opt(from)
-                        .single()
-                        .map_or_else(|| Err(ApiError::InvalidTime), Ok)?,
-                    Utc.timestamp_millis_opt(to)
-                        .single()
-                        .map_or_else(|| Err(ApiError::InvalidTime), Ok)?,
-                    invert,
-                    max,
-                )
+                .get_messages_between(query.from, query.to, query.new_to_old, query.max)
                 .await,
         ))
     }

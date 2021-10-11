@@ -8,8 +8,8 @@ use warp::http::{HeaderValue, StatusCode};
 use warp::reject::Reject;
 use warp::Reply;
 
-pub mod routes;
 pub mod handlers;
+pub mod routes;
 
 pub async fn start(config: Config, server: ServerAddress) -> Result {
     let http_server = warp::serve(routes::routes(server)).run(

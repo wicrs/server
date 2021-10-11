@@ -13,6 +13,7 @@ use lazy_static::lazy_static;
 use crate::error::ApiError;
 use crate::graphql_model::GraphQLSchema;
 use crate::httpapi::handlers;
+use crate::permission::PermissionSetting;
 use crate::ID;
 use crate::{graphql_model::QueryRoot, server::ServerAddress};
 use warp::path;
@@ -31,6 +32,11 @@ lazy_static! {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerInfo {
     pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SetPermission {
+    pub setting: PermissionSetting,
 }
 
 pub fn routes(
@@ -219,15 +225,17 @@ mod message {
     }
 
     fn get_after() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / ID / usize)
+        path!(ID / ID / "after")
             .and(warp::get())
+            .and(warp::body::json())
             .and(auth())
             .and_then(message::get_after)
     }
 
-    fn get_from_to() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / i64 / i64 / usize / bool)
+    fn get_time_period() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+        path!(ID / ID / "time_period")
             .and(warp::get())
+            .and(warp::body::json())
             .and(auth())
             .and_then(message::get_time_period)
     }
@@ -246,7 +254,7 @@ mod message {
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!("message").and(
             send(Arc::clone(&server))
-                .or(get_from_to())
+                .or(get_time_period())
                 .or(get_after())
                 .or(get()),
         )
@@ -310,7 +318,7 @@ mod channel {
 
 mod member {
     use super::*;
-    use crate::permission::{ChannelPermission, HubPermission, PermissionSetting};
+    use crate::permission::{ChannelPermission, HubPermission};
     use handlers::member;
 
     fn status() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -371,18 +379,13 @@ mod member {
             .and_then(member::unmute)
     }
 
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    struct PermissionSettingQuery {
-        setting: PermissionSetting,
-    }
-
     fn set_hub_permission(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "hub_permission" / HubPermission)
             .and(warp::put())
             .and(auth())
-            .and(warp::query().map(|s: PermissionSettingQuery| s.setting))
+            .and(warp::body::json().map(|s: SetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_hub_permission)
     }
@@ -400,7 +403,7 @@ mod member {
         path!(ID / ID / "channel_permission" / ID / ChannelPermission)
             .and(warp::put())
             .and(auth())
-            .and(warp::query().map(|s: PermissionSettingQuery| s.setting))
+            .and(warp::body::json().map(|s: SetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_channel_permission)
     }
