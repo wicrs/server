@@ -1,4 +1,4 @@
-use crate::{error::Error, ID};
+use crate::{error::ApiError, ID};
 use async_graphql::{Enum, SimpleObject};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, str::FromStr};
@@ -78,7 +78,7 @@ impl Display for HubPermission {
 }
 
 impl FromStr for HubPermission {
-    type Err = Error;
+    type Err = ApiError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
@@ -92,7 +92,7 @@ impl FromStr for HubPermission {
             "KICK" => HubPermission::Kick,
             "BAN" => HubPermission::Ban,
             "UNBAN" => HubPermission::Unban,
-            _ => return Err(Error::InvalidText),
+            _ => return Err(ApiError::InvalidText),
         })
     }
 }
@@ -121,7 +121,7 @@ impl Display for ChannelPermission {
 }
 
 impl FromStr for ChannelPermission {
-    type Err = Error;
+    type Err = ApiError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
@@ -129,7 +129,7 @@ impl FromStr for ChannelPermission {
             "READ" => ChannelPermission::Read,
             "MANAGE" => ChannelPermission::Manage,
             "ALL" => ChannelPermission::All,
-            _ => return Err(Error::InvalidText),
+            _ => return Err(ApiError::InvalidText),
         })
     }
 }

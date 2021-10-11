@@ -11,12 +11,12 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     channel::Channel,
     check_name_validity, check_permission,
-    error::Error,
+    error::{ApiError, ApiResult, Result},
     new_id,
     permission::{
         ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
     },
-    Result, ID,
+    ID,
 };
 
 /// Relative path of the folder in which Hub information files (`${ID}`) files are stored.
@@ -353,7 +353,7 @@ impl Hub {
     /// * The user it not in the hub.
     /// * The user does not have permission create new channels.
     /// * Any of the reasons outlined in [`Channel::create_dir`].
-    pub async fn new_channel(&mut self, member_id: &ID, name: String) -> Result<ID> {
+    pub async fn new_channel(&mut self, member_id: &ID, name: String) -> ApiResult<ID> {
         check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
         check_permission!(member, HubPermission::ManageChannels, self);
@@ -376,25 +376,25 @@ impl Hub {
 
     /// Gets a reference to the channel.
     /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
-    pub fn get_channel(&self, member_id: &ID, channel_id: ID) -> Result<&Channel> {
+    pub fn get_channel(&self, member_id: &ID, channel_id: ID) -> ApiResult<&Channel> {
         let member = self.get_member(member_id)?;
         check_permission!(member, channel_id, ChannelPermission::Read, self);
         if let Some(channel) = self.channels.get(&channel_id) {
             Ok(channel)
         } else {
-            Err(Error::ChannelNotFound)
+            Err(ApiError::ChannelNotFound)
         }
     }
 
     /// Gets a mutable reference to the channel.
     /// Returns an error if the channel could not be found or the user did not have permission to view the channel.
-    pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: ID) -> Result<&mut Channel> {
+    pub fn get_channel_mut(&mut self, member_id: &ID, channel_id: ID) -> ApiResult<&mut Channel> {
         let member = self.get_member(member_id)?;
         check_permission!(member, channel_id, ChannelPermission::Read, self);
         if let Some(channel) = self.channels.get_mut(&channel_id) {
             Ok(channel)
         } else {
-            Err(Error::ChannelNotFound)
+            Err(ApiError::ChannelNotFound)
         }
     }
 
@@ -404,33 +404,33 @@ impl Hub {
     }
 
     /// Checks if the user with the given ID is in the hub, if not in hub also checks if banned.
-    pub fn check_membership(&self, member_id: &ID) -> Result<()> {
+    pub fn check_membership(&self, member_id: &ID) -> ApiResult<()> {
         if self.is_member(member_id) {
             Ok(())
         } else {
             Err(if self.bans.contains(member_id) {
-                Error::Banned
+                ApiError::Banned
             } else {
-                Error::NotInHub
+                ApiError::NotInHub
             })
         }
     }
 
     /// Gets a reference to the hub member, returns an error if the member could not be found.
-    pub fn get_member(&self, member_id: &ID) -> Result<&HubMember> {
+    pub fn get_member(&self, member_id: &ID) -> ApiResult<&HubMember> {
         if let Some(member) = self.members.get(member_id) {
             Ok(member)
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 
     /// Gets a mutable reference to the hub member, returns an error if the member could not be found.
-    pub fn get_member_mut(&mut self, member_id: &ID) -> Result<&mut HubMember> {
+    pub fn get_member_mut(&mut self, member_id: &ID) -> ApiResult<&mut HubMember> {
         if let Some(member) = self.members.get_mut(member_id) {
             Ok(member)
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 
@@ -451,18 +451,18 @@ impl Hub {
         user_id: &ID,
         channel_id: ID,
         new_description: String,
-    ) -> Result<String> {
+    ) -> ApiResult<String> {
         if new_description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
-            Err(Error::TooBig)
+            Err(ApiError::TooBig)
         } else if let Some(user) = self.members.get(user_id) {
             check_permission!(user, channel_id, ChannelPermission::Manage, self);
             if let Some(channel) = self.channels.get_mut(&channel_id) {
                 Ok(mem::replace(&mut channel.description, new_description))
             } else {
-                Err(Error::ChannelNotFound)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -483,17 +483,17 @@ impl Hub {
         user_id: &ID,
         channel_id: ID,
         new_name: String,
-    ) -> Result<String> {
+    ) -> ApiResult<String> {
         check_name_validity(&new_name)?;
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, channel_id, ChannelPermission::Manage, self);
             if let Some(channel) = self.channels.get_mut(&channel_id) {
                 Ok(mem::replace(&mut channel.name, new_name))
             } else {
-                Err(Error::ChannelNotFound)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -508,16 +508,16 @@ impl Hub {
     /// * The channel does not exist.
     /// * THe user does not have permission to view the channel.
     /// * The user does not have permission to delete the channel.
-    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: ID) -> Result {
+    pub async fn delete_channel(&mut self, user_id: &ID, channel_id: ID) -> ApiResult {
         if let Some(user) = self.members.get(user_id) {
             check_permission!(user, HubPermission::ManageChannels, self);
             if self.channels.remove(&channel_id).is_some() {
                 Ok(())
             } else {
-                Err(Error::ChannelNotFound)
+                Err(ApiError::ChannelNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -568,7 +568,7 @@ impl Hub {
         let filename = format!("{}{:x}", HUB_INFO_FOLDER, id.as_u128());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
-            return Err(Error::HubNotFound);
+            return Err(ApiError::HubNotFound.into());
         }
         let mut file = tokio::fs::OpenOptions::new().read(true).open(path).await?;
         let mut buf = Vec::new();
@@ -584,14 +584,14 @@ impl Hub {
     /// limited to just this case:
     ///
     /// * The default permission group could not be found.
-    pub fn user_join(&mut self, user_id: ID) -> Result<HubMember> {
+    pub fn user_join(&mut self, user_id: ID) -> ApiResult<HubMember> {
         let mut member = HubMember::new(user_id, self.id);
         if let Some(group) = self.groups.get_mut(&self.default_group) {
             group.add_member(&mut member);
             self.members.insert(member.user_id, member.clone());
             Ok(member)
         } else {
-            Err(Error::GroupNotFound)
+            Err(ApiError::GroupNotFound)
         }
     }
 
@@ -604,17 +604,17 @@ impl Hub {
     ///
     /// * The user is not in the hub.
     /// * One of the permission groups the user was in could not be found in the hub.
-    pub fn user_leave(&mut self, user_id: &ID) -> Result {
+    pub fn user_leave(&mut self, user_id: &ID) -> ApiResult {
         if let Some(member) = self.members.get_mut(user_id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
                 self.members.remove(user_id);
                 Ok(())
             } else {
-                Err(Error::GroupNotFound)
+                Err(ApiError::GroupNotFound)
             }
         } else {
-            Err(Error::NotInHub)
+            Err(ApiError::NotInHub)
         }
     }
 
@@ -628,7 +628,7 @@ impl Hub {
     /// * The user could not be removed from the hub for any of the reasons outlined in [`Hub::user_leave`].
     /// * The user's data failed to load for any of the reasons outlined in [`User::load`].
     /// * The user's data failed to save for any of the reasons outlined in [`User::save`].
-    pub fn kick_user(&mut self, user_id: &ID) -> Result {
+    pub fn kick_user(&mut self, user_id: &ID) -> ApiResult {
         if self.members.contains_key(user_id) {
             self.user_leave(user_id)?;
             self.members.remove(user_id);
@@ -641,7 +641,7 @@ impl Hub {
     /// # Errors
     ///
     /// Possible errors outlined by [`Hub::kick_user`].
-    pub fn ban_user(&mut self, user_id: ID) -> Result {
+    pub fn ban_user(&mut self, user_id: ID) -> ApiResult {
         self.kick_user(&user_id)?;
         self.bans.insert(user_id);
         Ok(())
@@ -667,7 +667,7 @@ impl Hub {
     /// # Errors
     ///
     /// This function will only return an error if the given user is not in the hub.
-    pub fn get_channels_for_user(&self, user_id: &ID) -> Result<HashMap<ID, Channel>> {
+    pub fn get_channels_for_user(&self, user_id: &ID) -> ApiResult<HashMap<ID, Channel>> {
         let hub_im = self.clone();
         if let Some(user) = self.members.get(user_id) {
             let mut result = HashMap::new();
@@ -678,7 +678,7 @@ impl Hub {
             }
             Ok(result)
         } else {
-            Err(Error::MemberNotFound)
+            Err(ApiError::MemberNotFound)
         }
     }
 
@@ -688,7 +688,7 @@ impl Hub {
     /// # Errors
     ///
     /// Possible errors are outlined by [`Hub::get_channels_for_user`].
-    pub fn strip(&self, user_id: &ID) -> Result<Self> {
+    pub fn strip(&self, user_id: &ID) -> ApiResult<Self> {
         let mut hub = self.clone();
         hub.channels = self.get_channels_for_user(user_id)?;
         Ok(hub)

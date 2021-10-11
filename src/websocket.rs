@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::server::HubUpdateType;
 use crate::{
     channel::Message,
-    error::Error,
+    error::{ApiError, Error, Result},
     server::{Server, ServerNotification},
 };
 use crate::{server::client_command, ID};
@@ -12,7 +12,6 @@ use tokio::sync::Mutex;
 use warp::ws::WebSocket;
 use xactor::Addr;
 
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 pub use warp::ws::Message as WebSocketMessage;
@@ -52,7 +51,7 @@ pub enum ClientMessage {
 /// Messages that the server can send to clients.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ServerMessage {
-    Error(String),
+    Error(ApiError),
     InvalidCommand,
     NotSigned,
     CommandFailed,
@@ -97,10 +96,9 @@ pub async fn handle_connection(
                                 websocket_writer: out_arc.clone(),
                             })
                             .await
-                            .map_err(|_| Error::InternalMessageFailed)?;
+                            .map_err(|_| Error::ApiError(ApiError::InternalError))?;
                         connection_id = result;
                     }
-                    let internal_message_error = Error::InternalMessageFailed.to_string();
                     while let Some(msg) = incoming.next().await {
                         let msg = msg?;
                         if let Ok(text) = msg.to_str() {
@@ -117,11 +115,11 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
+                                                |err| ServerMessage::Error(err.into()),
                                                 |_| ServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::UnsubscribeChannel { hub_id, channel_id } => {
@@ -136,7 +134,7 @@ pub async fn handle_connection(
                                         {
                                             ServerMessage::Success
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::StartTyping { hub_id, channel_id } => {
@@ -149,11 +147,11 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
+                                                |err| ServerMessage::Error(err.into()),
                                                 |_| ServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::StopTyping { hub_id, channel_id } => {
@@ -166,11 +164,11 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
+                                                |err| ServerMessage::Error(err.into()),
                                                 |_| ServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::SubscribeHub { hub_id } => {
@@ -183,11 +181,11 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.to_string()),
+                                                |err| ServerMessage::Error(err.into()),
                                                 |_| ServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::UnsubscribeHub { hub_id } => {
@@ -201,7 +199,7 @@ pub async fn handle_connection(
                                         {
                                             ServerMessage::Success
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                     ClientMessage::SendMessage {
@@ -215,7 +213,7 @@ pub async fn handle_connection(
                                             crate::channel::Channel::write_message(message.clone())
                                                 .await
                                         {
-                                            ServerMessage::Error(err.to_string())
+                                            ServerMessage::Error(err.into())
                                         } else if addr
                                             .call(ServerNotification::NewMessage(message))
                                             .await
@@ -223,7 +221,7 @@ pub async fn handle_connection(
                                         {
                                             ServerMessage::Success
                                         } else {
-                                            ServerMessage::Error(internal_message_error.clone())
+                                            ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                 }
@@ -244,5 +242,5 @@ pub async fn handle_connection(
             }
         }
     }
-    Err(Error::WsNotAuthenticated)
+    Err(ApiError::WsNotAuthenticated.into())
 }

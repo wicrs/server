@@ -1,11 +1,13 @@
 #[macro_use]
 extern crate log;
 
-use error::{Error, Result};
-use uuid::Uuid;
+use std::sync::Arc;
 
-/// Public API for performing user actions, should be used for creating API implementations like the HTTP API or similar.
-pub mod api;
+use error::{ApiError, Error, Result};
+use server::Server;
+use uuid::Uuid;
+use xactor::Actor;
+
 /// Message storage and retreival for channels.
 pub mod channel;
 /// Various objects for storing configuration.
@@ -49,9 +51,14 @@ pub fn is_valid_name(name: &str) -> bool {
 pub async fn start() -> Result {
     let config = config::load_config("config.json");
     if std::fs::create_dir_all("data").is_err() {
-        Err(Error::Other("Failed to create data directory.".to_string()))
+        Err(Error::from("Failed to create data directory.".to_string()))
     } else {
-        httpapi::start(config).await
+        let server = Server::new()
+            .await?
+            .start()
+            .await
+            .map_err(|_| Error::ServerStartFailed)?;
+        httpapi::start(config, Arc::new(server)).await
     }
 }
 
@@ -66,7 +73,7 @@ pub fn check_name_validity(name: &str) -> Result {
     if is_valid_name(name) {
         Ok(())
     } else {
-        Err(Error::InvalidName)
+        Err(ApiError::InvalidName.into())
     }
 }
 
@@ -75,12 +82,14 @@ pub fn check_name_validity(name: &str) -> Result {
 macro_rules! check_permission {
     ($member:expr, $perm:expr, $hub:expr) => {
         if !$member.has_permission($perm, &$hub) {
-            return Err(Error::MissingHubPermission($perm).into());
+            return Err(crate::error::ApiError::MissingHubPermission { permission: $perm }.into());
         }
     };
     ($member:expr, $channel:expr, $perm:expr, $hub:expr) => {
         if !$member.has_channel_permission($channel, $perm, &$hub) {
-            return Err(Error::MissingChannelPermission($perm).into());
+            return Err(
+                crate::error::ApiError::MissingChannelPermission { permission: $perm }.into(),
+            );
         }
     };
 }

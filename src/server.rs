@@ -1,9 +1,10 @@
 use crate::{
     channel::{self},
     check_permission,
+    error::{ApiError, Error, Result},
     hub::Hub,
     websocket::ServerMessage,
-    Error, Result, ID,
+    ID,
 };
 use async_trait::async_trait;
 use futures::stream::SplitSink;
@@ -272,7 +273,7 @@ impl MessageServer {
             let filename = format!("{}{:x}.json", crate::hub::HUB_INFO_FOLDER, hub_id.as_u128());
             let path = std::path::Path::new(&filename);
             if !path.exists() {
-                return Err(Error::HubNotFound);
+                return Err(ApiError::HubNotFound.into());
             }
             let json = tokio::fs::read_to_string(path).await?;
             let hub = serde_json::from_str::<Hub>(&json)?;
@@ -579,7 +580,7 @@ impl Handler<client_command::SubscribeChannel> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
@@ -640,7 +641,7 @@ impl Handler<client_command::StartTyping> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
@@ -681,7 +682,7 @@ impl Handler<client_command::StopTyping> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
