@@ -229,13 +229,12 @@ pub async fn handle_connection(
                             } else {
                                 ServerMessage::InvalidCommand
                             };
-                            out_arc
-                                .lock()
-                                .await
-                                .send(WebSocketMessage::text(serde_json::to_string(
-                                    &raw_response,
-                                )?))
-                                .await?;
+                            let mut lock = out_arc.lock().await;
+                            lock.send(WebSocketMessage::text(serde_json::to_string(
+                                &raw_response,
+                            )?))
+                            .await?;
+                            lock.flush().await?;
                         }
                     }
                     return Ok(());
