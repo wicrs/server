@@ -56,6 +56,7 @@ pub enum ServerMessage {
     NotSigned,
     CommandFailed,
     ChatMessage {
+        sender_id: ID,
         hub_id: ID,
         channel_id: ID,
         message_id: ID,

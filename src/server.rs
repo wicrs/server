@@ -725,6 +725,7 @@ impl Handler<ServerNotification> for Server {
                 let _ = self
                     .send_channel(
                         ServerMessage::ChatMessage {
+                            sender_id: message.sender,
                             hub_id: message.hub_id,
                             channel_id: message.channel_id,
                             message: message.content,
