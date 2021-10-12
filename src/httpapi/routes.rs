@@ -94,7 +94,7 @@ fn string_body(max_size: u64) -> impl Filter<Extract = (String,), Error = warp::
         .and(warp::body::bytes())
         .map(|body: Bytes| body.into_iter().collect())
         .and_then(|vector: Vec<u8>| async move {
-            Ok::<String, Rejection>(String::from_utf8(vector).map_err(ApiError::from)?)
+            Ok::<_, Rejection>(String::from_utf8(vector).map_err(ApiError::from)?)
         })
 }
 
@@ -137,7 +137,7 @@ fn graphql_playground() -> impl Filter<Extract = impl Reply, Error = Rejection> 
             warp::http::Response::builder()
                 .header("content-type", "text/html")
                 .body(playground_source(
-                    GraphQLPlaygroundConfig::new("/api/v3/graphql")
+                    GraphQLPlaygroundConfig::new("/api/graphql")
                         .with_header("authorization", user.to_string().as_str()),
                 )),
         )
@@ -252,7 +252,7 @@ mod message {
     pub fn message(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!("message").and(
+        path!("message" / ..).and(
             send(Arc::clone(&server))
                 .or(get_time_period())
                 .or(get_after())
@@ -418,7 +418,7 @@ mod member {
     pub fn member(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!("channel" / ..).and(
+        path!("member" / ..).and(
             get()
                 .or(status())
                 .or(kick(Arc::clone(&server)))
