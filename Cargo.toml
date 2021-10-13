@@ -53,5 +53,16 @@ thiserror = "1.0"
 log = "0.4"
 pretty_env_logger = "0.4"
 
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+panic = 'unwind'
+incremental = true
+codegen-units = 512
+rpath = false
+
 [profile.release]
 lto = true

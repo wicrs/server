@@ -222,11 +222,13 @@ pub async fn handle_connection(
                                         {
                                             ServerMessage::Success
                                         } else {
+                                            println!("fail here");
                                             ServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                 }
                             } else {
+                                println!("this is the fail");
                                 ServerMessage::InvalidCommand
                             };
                             let mut lock = out_arc.lock().await;

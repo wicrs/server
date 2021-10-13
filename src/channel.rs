@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{path::Path, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use tokio::fs;
@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use fs::OpenOptions;
 
-use crate::{hub::HUB_DATA_FOLDER, new_id, Result, ID};
+use crate::{
+    error::{ApiError, Error},
+    hub::HUB_DATA_FOLDER,
+    new_id, Result, ID,
+};
 
 use async_graphql::SimpleObject;
 
@@ -64,13 +68,19 @@ impl Channel {
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
     pub async fn add_message(&self, message: Message) -> Result {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.get_current_file().await)
-            .await?;
-        bincode::serialize_into(file.into_std().await, &message)?;
-        Ok(())
+        let path_string = self.get_current_file();
+        let path = Path::new(&path_string);
+        if path.parent().expect("must have parent").exists() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await?;
+            bincode::serialize_into(file.into_std().await, &message)?;
+            Ok(())
+        } else {
+            Err(Error::ApiError(ApiError::ChannelNotFound))
+        }
     }
 
     pub async fn write_message(message: Message) -> Result {
@@ -273,7 +283,7 @@ impl Channel {
     }
 
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
-    pub async fn get_current_file(&self) -> String {
+    pub fn get_current_file(&self) -> String {
         format!("{}/{}", self.get_folder(), Utc::now().date())
     }
 }
