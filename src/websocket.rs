@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::server::HubUpdateType;
 use crate::{
     channel::Message,
     error::{ApiError, Error, Result},
@@ -12,72 +11,9 @@ use tokio::sync::Mutex;
 use warp::ws::WebSocket;
 use xactor::Addr;
 
-use serde::{Deserialize, Serialize};
+use warp::ws::Message as WebSocketMessage;
 
-pub use warp::ws::Message as WebSocketMessage;
-
-/// Messages that can be sent to the server by the client
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ClientMessage {
-    SubscribeHub {
-        hub_id: ID,
-    },
-    UnsubscribeHub {
-        hub_id: ID,
-    },
-    SubscribeChannel {
-        hub_id: ID,
-        channel_id: ID,
-    },
-    UnsubscribeChannel {
-        hub_id: ID,
-        channel_id: ID,
-    },
-    StartTyping {
-        hub_id: ID,
-        channel_id: ID,
-    },
-    StopTyping {
-        hub_id: ID,
-        channel_id: ID,
-    },
-    SendMessage {
-        hub_id: ID,
-        channel_id: ID,
-        message: String,
-    },
-}
-
-/// Messages that the server can send to clients.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ServerMessage {
-    Error(ApiError),
-    InvalidCommand,
-    NotSigned,
-    CommandFailed,
-    ChatMessage {
-        sender_id: ID,
-        hub_id: ID,
-        channel_id: ID,
-        message_id: ID,
-        message: String,
-    },
-    HubUpdated {
-        hub_id: ID,
-        update_type: HubUpdateType,
-    },
-    Success,
-    UserStartedTyping {
-        user_id: ID,
-        hub_id: ID,
-        channel_id: ID,
-    },
-    UserStoppedTyping {
-        user_id: ID,
-        hub_id: ID,
-        channel_id: ID,
-    },
-}
+use crate::prelude::{WsClientMessage, WsServerMessage};
 
 pub async fn handle_connection(
     websocket: WebSocket,
@@ -105,7 +41,7 @@ pub async fn handle_connection(
                         if let Ok(text) = msg.to_str() {
                             let raw_response = if let Ok(command) = serde_json::from_str(text) {
                                 match command {
-                                    ClientMessage::SubscribeChannel { hub_id, channel_id } => {
+                                    WsClientMessage::SubscribeChannel { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeChannel {
                                                 user_id,
@@ -116,14 +52,14 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.into()),
-                                                |_| ServerMessage::Success,
+                                                |err| WsServerMessage::Error(err.into()),
+                                                |_| WsServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::UnsubscribeChannel { hub_id, channel_id } => {
+                                    WsClientMessage::UnsubscribeChannel { hub_id, channel_id } => {
                                         if addr
                                             .call(client_command::UnsubscribeChannel {
                                                 hub_id,
@@ -133,12 +69,12 @@ pub async fn handle_connection(
                                             .await
                                             .is_ok()
                                         {
-                                            ServerMessage::Success
+                                            WsServerMessage::Success
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::StartTyping { hub_id, channel_id } => {
+                                    WsClientMessage::StartTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StartTyping {
                                                 user_id,
@@ -148,14 +84,14 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.into()),
-                                                |_| ServerMessage::Success,
+                                                |err| WsServerMessage::Error(err.into()),
+                                                |_| WsServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::StopTyping { hub_id, channel_id } => {
+                                    WsClientMessage::StopTyping { hub_id, channel_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::StopTyping {
                                                 user_id,
@@ -165,14 +101,14 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.into()),
-                                                |_| ServerMessage::Success,
+                                                |err| WsServerMessage::Error(err.into()),
+                                                |_| WsServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::SubscribeHub { hub_id } => {
+                                    WsClientMessage::SubscribeHub { hub_id } => {
                                         if let Ok(result) = addr
                                             .call(client_command::SubscribeHub {
                                                 user_id,
@@ -182,14 +118,14 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| ServerMessage::Error(err.into()),
-                                                |_| ServerMessage::Success,
+                                                |err| WsServerMessage::Error(err.into()),
+                                                |_| WsServerMessage::Success,
                                             )
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::UnsubscribeHub { hub_id } => {
+                                    WsClientMessage::UnsubscribeHub { hub_id } => {
                                         if addr
                                             .call(client_command::UnsubscribeHub {
                                                 hub_id,
@@ -198,12 +134,12 @@ pub async fn handle_connection(
                                             .await
                                             .is_ok()
                                         {
-                                            ServerMessage::Success
+                                            WsServerMessage::Success
                                         } else {
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
-                                    ClientMessage::SendMessage {
+                                    WsClientMessage::SendMessage {
                                         message,
                                         hub_id,
                                         channel_id,
@@ -214,22 +150,22 @@ pub async fn handle_connection(
                                             crate::channel::Channel::write_message(message.clone())
                                                 .await
                                         {
-                                            ServerMessage::Error(err.into())
+                                            WsServerMessage::Error(err.into())
                                         } else if addr
                                             .call(ServerNotification::NewMessage(message))
                                             .await
                                             .is_ok()
                                         {
-                                            ServerMessage::Success
+                                            WsServerMessage::Success
                                         } else {
                                             println!("fail here");
-                                            ServerMessage::Error(ApiError::InternalError)
+                                            WsServerMessage::Error(ApiError::InternalError)
                                         }
                                     }
                                 }
                             } else {
                                 println!("this is the fail");
-                                ServerMessage::InvalidCommand
+                                WsServerMessage::InvalidCommand
                             };
                             let mut lock = out_arc.lock().await;
                             lock.send(WebSocketMessage::text(serde_json::to_string(

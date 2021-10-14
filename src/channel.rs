@@ -1,19 +1,25 @@
+#[cfg(feature = "server")]
 use std::{path::Path, str::FromStr};
 
-use chrono::{DateTime, Utc};
+#[cfg(feature = "server")]
 use tokio::fs;
 
-use serde::{Deserialize, Serialize};
-
+#[cfg(feature = "server")]
 use fs::OpenOptions;
 
+use crate::ID;
+#[cfg(feature = "server")]
 use crate::{
     error::{ApiError, Error},
     hub::HUB_DATA_FOLDER,
-    new_id, Result, ID,
+    new_id, Result,
 };
 
+#[cfg(feature = "server")]
 use async_graphql::SimpleObject;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Text channel, used to group a manage sets of messages.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -30,6 +36,7 @@ pub struct Channel {
     pub created: DateTime<Utc>,
 }
 
+#[cfg(feature = "server")]
 impl Channel {
     /// Creates a new channel object based on parameters.
     pub fn new(name: String, id: ID, hub_id: ID) -> Self {
@@ -289,7 +296,8 @@ impl Channel {
 }
 
 /// Represents a message.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
@@ -305,6 +313,7 @@ pub struct Message {
     pub content: String,
 }
 
+#[cfg(feature = "server")]
 impl Message {
     pub fn new(sender: ID, content: String, hub_id: ID, channel_id: ID) -> Self {
         Self {

@@ -5,10 +5,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// General result type for wicrs, error type defaults to [`Error`].
+#[cfg(feature = "server")]
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
+/// General result type for wicrs public api, error type defaults to [`ApiError`].
 pub type ApiResult<T = (), E = ApiError> = std::result::Result<T, E>;
 
 /// General errors that can occur when using the WICRS API.
+#[cfg(feature = "server")]
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("internal handler servers failed to start")]
@@ -97,6 +100,7 @@ pub enum ApiError {
     Other { message: String },
 }
 
+#[cfg(feature = "server")]
 impl From<Error> for ApiError {
     fn from(e: Error) -> Self {
         match e {
@@ -113,6 +117,7 @@ impl From<Error> for ApiError {
     }
 }
 
+#[cfg(feature = "server")]
 impl From<String> for Error {
     fn from(s: String) -> Self {
         Self::OtherInternal(s)

@@ -2,7 +2,6 @@ use async_graphql::extensions::ApolloTracing;
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
 
-use serde::{Deserialize, Serialize};
 use warp::hyper::body::Bytes;
 
 use std::convert::Infallible;
@@ -13,7 +12,7 @@ use lazy_static::lazy_static;
 use crate::error::ApiError;
 use crate::graphql_model::GraphQLSchema;
 use crate::httpapi::handlers;
-use crate::permission::PermissionSetting;
+use crate::prelude::{HttpServerInfo, HttpSetPermission};
 use crate::ID;
 use crate::{graphql_model::QueryRoot, server::ServerAddress};
 use warp::path;
@@ -22,21 +21,11 @@ use warp::{Filter, Rejection};
 
 lazy_static! {
     static ref SERVER_INFO_STRING: String = {
-        let server_info_struct = ServerInfo {
+        let server_info_struct = HttpServerInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
         serde_json::to_string(&server_info_struct).unwrap()
     };
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ServerInfo {
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct SetPermission {
-    pub setting: PermissionSetting,
 }
 
 pub fn routes(
@@ -385,7 +374,7 @@ mod member {
         path!(ID / ID / "hub_permission" / HubPermission)
             .and(warp::put())
             .and(auth())
-            .and(warp::body::json().map(|s: SetPermission| s.setting))
+            .and(warp::body::json().map(|s: HttpSetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_hub_permission)
     }
@@ -403,7 +392,7 @@ mod member {
         path!(ID / ID / "channel_permission" / ID / ChannelPermission)
             .and(warp::put())
             .and(auth())
-            .and(warp::body::json().map(|s: SetPermission| s.setting))
+            .and(warp::body::json().map(|s: HttpSetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_channel_permission)
     }

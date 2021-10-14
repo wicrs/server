@@ -1,6 +1,5 @@
 use std::mem;
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -12,7 +11,11 @@ use crate::{
     hub::Hub,
     new_id,
     permission::{ChannelPermission, HubPermission, PermissionSetting},
-    server::{HubUpdateType, ServerAddress, ServerNotification},
+    prelude::{
+        HttpChannelUpdate, HttpHubUpdate, HttpMessageTimePeriodQuery, HttpMessagesAfterQuery,
+        WsHubUpdateType,
+    },
+    server::{ServerAddress, ServerNotification},
     ID,
 };
 
@@ -108,16 +111,9 @@ pub mod hub {
             .map_err(Error::from)?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::HubDeleted,
+            WsHubUpdateType::HubDeleted,
         ));
         Ok(ok())
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-    pub struct Update {
-        pub name: Option<String>,
-        pub description: Option<String>,
-        pub default_group: Option<ID>,
     }
 
     /// Updates a hub's details, returning the previous values.
@@ -142,13 +138,13 @@ pub mod hub {
     pub async fn update(
         hub_id: ID,
         user_id: ID,
-        update: Update,
+        update: HttpHubUpdate,
         server: ServerAddress,
     ) -> Result<impl Reply> {
         let mut hub = Hub::load(hub_id).await?;
         let member = hub.get_member(&user_id)?;
         check_permission!(member, HubPermission::Administrate, hub);
-        let mut old = Update::default();
+        let mut old = HttpHubUpdate::default();
         if let Some(name) = update.name {
             check_name_validity(&name)?;
             old.name = Some(mem::replace(&mut hub.name, name));
@@ -169,7 +165,7 @@ pub mod hub {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::HubUpdated,
+            WsHubUpdateType::HubUpdated,
         ));
         Ok(Response::Success(old))
     }
@@ -191,7 +187,7 @@ pub mod hub {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::UserJoined(user_id),
+            WsHubUpdateType::UserJoined(user_id),
         ));
         Ok(ok())
     }
@@ -213,7 +209,7 @@ pub mod hub {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::UserLeft(user_id),
+            WsHubUpdateType::UserLeft(user_id),
         ));
         Ok(ok())
     }
@@ -312,7 +308,7 @@ pub mod member {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::UserHubPermissionChanged(member_id),
+            WsHubUpdateType::UserHubPermissionChanged(member_id),
         ));
         Ok(ok())
     }
@@ -385,7 +381,7 @@ pub mod member {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::UserChannelPermissionChanged(member_id, channel_id),
+            WsHubUpdateType::UserChannelPermissionChanged(member_id, channel_id),
         ));
         Ok(ok())
     }
@@ -442,35 +438,35 @@ pub mod member {
                 hub.kick_user(&user_id)?;
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
-                    HubUpdateType::UserKicked(user_id),
+                    WsHubUpdateType::UserKicked(user_id),
                 ));
             }
             HubPermission::Ban => {
                 hub.ban_user(user_id)?;
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
-                    HubUpdateType::UserBanned(user_id),
+                    WsHubUpdateType::UserBanned(user_id),
                 ));
             }
             HubPermission::Unban => {
                 hub.unban_user(&user_id);
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
-                    HubUpdateType::UserUnbanned(user_id),
+                    WsHubUpdateType::UserUnbanned(user_id),
                 ));
             }
             HubPermission::Mute => {
                 hub.mute_user(user_id);
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
-                    HubUpdateType::UserMuted(user_id),
+                    WsHubUpdateType::UserMuted(user_id),
                 ));
             }
             HubPermission::Unmute => {
                 hub.unmute_user(&user_id);
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
-                    HubUpdateType::UserUnmuted(user_id),
+                    WsHubUpdateType::UserUnmuted(user_id),
                 ));
             }
             _ => return Err(ApiError::InternalError.into()),
@@ -615,7 +611,7 @@ pub mod channel {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::ChannelCreated(channel_id),
+            WsHubUpdateType::ChannelCreated(channel_id),
         ));
         Ok(Response::Success(channel_id))
     }
@@ -640,12 +636,6 @@ pub mod channel {
         Ok(Response::Success(
             hub.get_channel(&user_id, channel_id)?.clone(),
         ))
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-    pub struct Update {
-        pub name: Option<String>,
-        pub description: Option<String>,
     }
 
     /// Changes the info of a channel.
@@ -673,7 +663,7 @@ pub mod channel {
         hub_id: ID,
         channel_id: ID,
         user_id: ID,
-        update: Update,
+        update: HttpChannelUpdate,
         server: ServerAddress,
     ) -> Result<impl Reply> {
         let mut hub = Hub::load(hub_id).await?;
@@ -683,7 +673,7 @@ pub mod channel {
             .channels
             .get_mut(&channel_id)
             .map_or_else(|| Err(ApiError::ChannelNotFound), Ok)?;
-        let mut old = Update::default();
+        let mut old = HttpChannelUpdate::default();
         if let Some(name) = update.name {
             check_name_validity(&name)?;
             old.name = Some(mem::replace(&mut channel.name, name));
@@ -697,7 +687,7 @@ pub mod channel {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::ChannelUpdated(channel_id),
+            WsHubUpdateType::ChannelUpdated(channel_id),
         ));
         Ok(Response::Success(old))
     }
@@ -730,15 +720,13 @@ pub mod channel {
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
-            HubUpdateType::ChannelDeleted(channel_id),
+            WsHubUpdateType::ChannelDeleted(channel_id),
         ));
         Ok(ok())
     }
 }
 
 pub mod message {
-    use chrono::DateTime;
-
     use super::*;
 
     /// Gets a message from a text channel in a hub.
@@ -773,12 +761,6 @@ pub mod message {
         )
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct AfterQuery {
-        pub from: ID,
-        pub max: usize,
-    }
-
     /// Gets messages sent after a given message.
     /// If successful they are returned in an array. The array is orderd oldest message to newest
     /// If there are no messages after the given message or the given message is not found, an empty array is returned.
@@ -802,7 +784,7 @@ pub mod message {
     pub async fn get_after(
         hub_id: ID,
         channel_id: ID,
-        query: AfterQuery,
+        query: HttpMessagesAfterQuery,
         user_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
@@ -810,14 +792,6 @@ pub mod message {
         Ok(Response::Success(
             channel.get_messages_after(query.from, query.max).await,
         ))
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct TimePeriodQuery {
-        pub from: DateTime<Utc>,
-        pub to: DateTime<Utc>,
-        pub max: usize,
-        pub new_to_old: bool,
     }
 
     /// Gets a set of messages between two times (both in milliseconds since Unix Epoch).
@@ -846,7 +820,7 @@ pub mod message {
     pub async fn get_time_period(
         hub_id: ID,
         channel_id: ID,
-        query: TimePeriodQuery,
+        query: HttpMessageTimePeriodQuery,
         user_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;

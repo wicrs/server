@@ -1,4 +1,5 @@
 use crate::{error::ApiError, ID};
+#[cfg(feature = "graphql")]
 use async_graphql::{Enum, SimpleObject};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, str::FromStr};
@@ -7,7 +8,8 @@ use std::{collections::HashMap, fmt::Display, str::FromStr};
 pub type PermissionSetting = Option<bool>;
 
 /// Struct that groups a hub permission with a permission setting.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct HubPermissionSet {
     /// Permission that this permission set is for.
     pub permission: HubPermission,
@@ -25,7 +27,8 @@ impl From<(HubPermission, PermissionSetting)> for HubPermissionSet {
 }
 
 /// Datastructure that groups a channel permission setting with the channel ID that it is valid in and a permission setting.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct ChannelPermissionSet {
     /// Permission that this permission set is for.
     pub permission: ChannelPermission,
@@ -46,7 +49,8 @@ impl From<(ChannelPermission, PermissionSetting, ID)> for ChannelPermissionSet {
 }
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(Enum))]
 pub enum HubPermission {
     All,
     ReadChannels,
@@ -101,7 +105,8 @@ impl FromStr for HubPermission {
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(Enum))]
 pub enum ChannelPermission {
     Write,
     Read,

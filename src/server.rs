@@ -3,13 +3,12 @@ use crate::{
     check_permission,
     error::{ApiError, Error, Result},
     hub::Hub,
-    websocket::ServerMessage,
+    prelude::{WsHubUpdateType, WsServerMessage},
     ID,
 };
 use async_trait::async_trait;
 use futures::stream::SplitSink;
 use futures::SinkExt;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     io::Read,
@@ -128,32 +127,12 @@ pub struct SearchMessageIndex {
     pub query: String,
 }
 
-/// Types of updates that trigger [`ServerNotification::HubUpdated`]
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum HubUpdateType {
-    HubDeleted,
-    HubUpdated,
-    UserJoined(ID),
-    UserLeft(ID),
-    UserBanned(ID),
-    UserMuted(ID),
-    UserUnmuted(ID),
-    UserUnbanned(ID),
-    UserKicked(ID),
-    UserHubPermissionChanged(ID),
-    UserChannelPermissionChanged(ID, ID),
-    MemberNicknameChanged(ID),
-    ChannelCreated(ID),
-    ChannelDeleted(ID),
-    ChannelUpdated(ID),
-}
-
 /// Message to notify the server of a change made externally, usually used so the server can notify clients.
 #[message(result = "()")]
 #[derive(Debug, Clone)]
 pub enum ServerNotification {
     NewMessage(channel::Message),
-    HubUpdated(ID, HubUpdateType),
+    HubUpdated(ID, WsHubUpdateType),
 }
 
 /// Tells the [`Server`] to get an address to it's [`MessageServer`].
@@ -453,7 +432,7 @@ impl Server {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
-    async fn send_hub(&self, message: ServerMessage, hub_id: &ID) -> Result {
+    async fn send_hub(&self, message: WsServerMessage, hub_id: &ID) -> Result {
         if let Some(subscribed_arc) = self.subscribed_hubs.read().await.get(hub_id) {
             let message = WebSocketMessage::text(serde_json::to_string(&message)?);
             for connection_id in subscribed_arc.read().await.iter() {
@@ -466,7 +445,7 @@ impl Server {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
-    async fn send_channel(&self, message: ServerMessage, hub_id: ID, channel_id: ID) -> Result {
+    async fn send_channel(&self, message: WsServerMessage, hub_id: ID, channel_id: ID) -> Result {
         if let Some(subscribed_arc) = self
             .subscribed_channels
             .read()
@@ -655,7 +634,7 @@ impl Handler<client_command::StartTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStartedTyping {
+                WsServerMessage::UserStartedTyping {
                     user_id: msg.user_id,
                     hub_id: msg.hub_id,
                     channel_id: msg.channel_id,
@@ -696,7 +675,7 @@ impl Handler<client_command::StopTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStoppedTyping {
+                WsServerMessage::UserStoppedTyping {
                     user_id: msg.user_id,
                     hub_id: msg.hub_id,
                     channel_id: msg.channel_id,
@@ -724,7 +703,7 @@ impl Handler<ServerNotification> for Server {
                     .await;
                 let _ = self
                     .send_channel(
-                        ServerMessage::ChatMessage {
+                        WsServerMessage::ChatMessage {
                             sender_id: message.sender,
                             hub_id: message.hub_id,
                             channel_id: message.channel_id,
@@ -739,7 +718,7 @@ impl Handler<ServerNotification> for Server {
             ServerNotification::HubUpdated(hub_id, update_type) => {
                 let _ = self
                     .send_hub(
-                        ServerMessage::HubUpdated {
+                        WsServerMessage::HubUpdated {
                             hub_id,
                             update_type,
                         },

@@ -1,22 +1,29 @@
-use std::{
-    collections::{HashMap, HashSet},
-    mem,
-};
+use std::collections::{HashMap, HashSet};
+#[cfg(feature = "server")]
+use std::mem;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use tokio::io::AsyncReadExt;
+#[cfg(feature = "server")]
 use tokio::io::AsyncWriteExt;
 
 use crate::{
     channel::Channel,
-    check_name_validity, check_permission,
-    error::{ApiError, ApiResult, Result},
-    new_id,
-    permission::{
-        ChannelPermission, ChannelPermissions, HubPermission, HubPermissions, PermissionSetting,
-    },
+    permission::{ChannelPermissions, HubPermissions},
     ID,
+};
+
+#[cfg(feature = "server")]
+use crate::check_permission;
+#[cfg(feature = "server")]
+use crate::{
+    check_name_validity,
+    error::Result,
+    error::{ApiError, ApiResult},
+    new_id,
+    permission::{ChannelPermission, HubPermission, PermissionSetting},
 };
 
 /// Relative path of the folder in which Hub information files (`${ID}`) files are stored.
@@ -41,6 +48,7 @@ pub struct HubMember {
     pub channel_permissions: HashMap<ID, ChannelPermissions>,
 }
 
+#[cfg(feature = "server")]
 impl HubMember {
     /// Creates a new hub member based on a user and the ID of the hub they are part of.
     pub fn new(user_id: ID, hub: ID) -> Self {
@@ -201,6 +209,7 @@ pub struct PermissionGroup {
     pub created: DateTime<Utc>,
 }
 
+#[cfg(feature = "server")]
 impl PermissionGroup {
     /// Creates a new permission group given a name and an ID.
     pub fn new(name: String, id: ID) -> Self {
@@ -316,6 +325,7 @@ pub struct Hub {
     pub created: DateTime<Utc>,
 }
 
+#[cfg(feature = "server")]
 impl Hub {
     /// Creates a new hub given the ID of the user who should be the owner, the name and the ID the hub should have.
     pub fn new(name: String, id: ID, creator: ID) -> Self {
@@ -695,6 +705,7 @@ impl Hub {
     }
 }
 
+#[cfg(feature = "server")]
 #[cfg(test)]
 mod test {
     use super::{Hub, ID};
