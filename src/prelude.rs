@@ -19,6 +19,13 @@ pub struct HttpServerInfo {
     pub version: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HttpMemberStatus {
+    pub member: bool,
+    pub banned: bool,
+    pub muted: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct HttpSetPermission {
     pub setting: PermissionSetting,

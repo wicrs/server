@@ -1,7 +1,5 @@
 use std::mem;
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
     channel::{Channel, Message},
     check_name_validity, check_permission,
@@ -13,7 +11,7 @@ use crate::{
     permission::{ChannelPermission, HubPermission, PermissionSetting},
     prelude::{
         HttpChannelUpdate, HttpHubUpdate, HttpMessageTimePeriodQuery, HttpMessagesAfterQuery,
-        WsHubUpdateType,
+        WsHubUpdateType, HttpMemberStatus,
     },
     server::{ServerAddress, ServerNotification},
     ID,
@@ -218,13 +216,6 @@ pub mod hub {
 pub mod member {
     use super::*;
 
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-    pub struct Status {
-        pub member: bool,
-        pub banned: bool,
-        pub muted: bool,
-    }
-
     /// Gets the current status of a user in a hub
     ///
     /// # Arguments
@@ -242,7 +233,7 @@ pub mod member {
     pub async fn status(hub_id: ID, user_id: ID, actor_id: ID) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         hub.check_membership(&actor_id)?;
-        let status = Status {
+        let status = HttpMemberStatus {
             member: hub.members.contains_key(&user_id),
             banned: hub.bans.contains(&user_id),
             muted: hub.mutes.contains(&user_id),
