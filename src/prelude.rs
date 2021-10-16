@@ -79,6 +79,7 @@ pub fn is_valid_name(name: &str) -> bool {
 }
 
 /// Generates a new random ID.
+#[cfg(feature = "uuid-gen")]
 pub fn new_id() -> ID {
     uuid::Uuid::new_v4()
 }

@@ -10,11 +10,6 @@ homepage = "https://wic.rs"
 
 [dependencies]
 rand = "0.8"
-reqwest = { version = "0.11", default-features = false, features = [
-    "json",
-    "multipart",
-    "default-tls",
-], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 url = "2.2"
@@ -33,7 +28,7 @@ futures-util = { version = "0.3", default-features = false, features = [
     "sink",
     "std",
 ] }
-uuid = { version = "0.8", features = ["serde", "v4"] }
+uuid = { version = "0.8", features = ["serde"] }
 xactor = { version = "0.7", features = [
     "runtime-tokio",
 ], default-features = false, optional = true }
@@ -55,14 +50,15 @@ pretty_env_logger = "0.4"
 
 [features]
 graphql = ["async-graphql"]
+uuid-gen = ["uuid/v4"]
 server = [
     "tantivy",
-    "reqwest",
     "warp",
     "xactor",
     "async-graphql-warp",
     "graphql",
     "tokio",
+    "uuid-gen",
 ]
 default = ["server"]
 

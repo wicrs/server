@@ -38,10 +38,6 @@ pub enum Error {
     GetIndexReader,
     #[error(transparent)]
     Warp(#[from] warp::Error),
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-    #[error(transparent)]
-    Url(#[from] url::ParseError),
     #[error("could not parse ID")]
     Id(#[from] uuid::Error),
     #[error(transparent)]
