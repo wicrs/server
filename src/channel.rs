@@ -1,15 +1,25 @@
-use std::{convert::TryFrom, str::FromStr};
+#[cfg(feature = "server")]
+use std::{path::Path, str::FromStr};
 
-use chrono::{DateTime, Utc};
+#[cfg(feature = "server")]
 use tokio::fs;
 
-use serde::{Deserialize, Serialize};
-
+#[cfg(feature = "server")]
 use fs::OpenOptions;
 
-use crate::{error::Error, hub::HUB_DATA_FOLDER, new_id, Result, ID};
+use crate::ID;
+#[cfg(feature = "server")]
+use crate::{
+    error::{ApiError, Error},
+    hub::HUB_DATA_FOLDER,
+    new_id, Result,
+};
 
+#[cfg(feature = "server")]
 use async_graphql::SimpleObject;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Text channel, used to group a manage sets of messages.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -26,6 +36,7 @@ pub struct Channel {
     pub created: DateTime<Utc>,
 }
 
+#[cfg(feature = "server")]
 impl Channel {
     /// Creates a new channel object based on parameters.
     pub fn new(name: String, id: ID, hub_id: ID) -> Self {
@@ -63,18 +74,24 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: SignedMessage) -> Result {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.get_current_file().await)
-            .await?;
-        bincode::serialize_into(file.into_std().await, &message)?;
-        Ok(())
+    pub async fn add_message(&self, message: Message) -> Result {
+        let path_string = self.get_current_file();
+        let path = Path::new(&path_string);
+        if path.parent().expect("must have parent").exists() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await?;
+            bincode::serialize_into(file.into_std().await, &message)?;
+            Ok(())
+        } else {
+            Err(Error::ApiError(ApiError::ChannelNotFound))
+        }
     }
 
-    pub async fn write_message(hub_id: ID, channel_id: ID, message: SignedMessage) -> Result {
-        Self::new("".to_string(), channel_id, hub_id)
+    pub async fn write_message(message: Message) -> Result {
+        Self::new("".to_string(), message.channel_id, message.hub_id)
             .add_message(message)
             .await
     }
@@ -110,8 +127,8 @@ impl Channel {
     }
 
     /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
-    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<SignedMessage> {
-        let mut result: Vec<SignedMessage> = Vec::new();
+    pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -121,9 +138,8 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
-                    let mut found: Vec<SignedMessage> =
-                        iter.filter(|m| ids.contains(&m.id)).collect();
+                    let iter = bincode::deserialize::<Message>(&file).into_iter();
+                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
                     result.append(&mut found);
                     if ids.len() == result.len() {
                         return result;
@@ -148,8 +164,8 @@ impl Channel {
         to: DateTime<Utc>,
         invert: bool,
         max: usize,
-    ) -> Vec<SignedMessage> {
-        let mut result: Vec<SignedMessage> = Vec::new();
+    ) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -174,10 +190,10 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     let mut filtered = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .filter(|message: &SignedMessage| {
+                        .filter(|message: &Message| {
                             message.created >= from && message.created <= to
                         })
-                        .collect::<Vec<SignedMessage>>();
+                        .collect::<Vec<Message>>();
                     if invert {
                         filtered.reverse() // Invert the order of found messages for that file if `invert` is true.
                     }
@@ -197,8 +213,8 @@ impl Channel {
     }
 
     /// Gets all messages that were sent after the message with the given ID.
-    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<SignedMessage> {
-        let mut result: Vec<SignedMessage> = Vec::new();
+    pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -208,10 +224,9 @@ impl Channel {
             }
             for file in files.iter() {
                 if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut iter = bincode::deserialize_from::<std::fs::File, SignedMessage>(
-                        file.into_std().await,
-                    )
-                    .into_iter();
+                    let mut iter =
+                        bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
+                            .into_iter();
                     if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                         let len = result.len();
@@ -229,8 +244,8 @@ impl Channel {
     }
 
     /// Unlimited asynchronus version of [`get_messages_after`] for internal use.
-    pub async fn get_all_messages_from(&self, id: ID) -> Vec<SignedMessage> {
-        let mut result: Vec<SignedMessage> = Vec::new();
+    pub async fn get_all_messages_from(&self, id: ID) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -241,7 +256,7 @@ impl Channel {
 
             for file in files.iter() {
                 if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<SignedMessage>(&file).into_iter();
+                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
                     if iter.any(|m| m.id == id) {
                         result.append(&mut iter.collect());
                     }
@@ -252,7 +267,7 @@ impl Channel {
     }
 
     /// Get the first message with the given ID.
-    pub async fn get_message(&self, id: ID) -> Option<SignedMessage> {
+    pub async fn get_message(&self, id: ID) -> Option<Message> {
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -264,7 +279,7 @@ impl Channel {
                 if let Ok(file) = fs::File::open(file.path()).await {
                     if let Some(msg) = bincode::deserialize_from(file.into_std().await)
                         .into_iter()
-                        .find(|m: &SignedMessage| m.id == id)
+                        .find(|m: &Message| m.id == id)
                     {
                         return Some(msg);
                     }
@@ -275,46 +290,14 @@ impl Channel {
     }
 
     /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
-    pub async fn get_current_file(&self) -> String {
+    pub fn get_current_file(&self) -> String {
         format!("{}/{}", self.get_folder(), Utc::now().date())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
-pub struct SignedMessage {
-    pub id: ID,
-    pub created: DateTime<Utc>,
-    pub armoured_content: String,
-}
-
-impl SignedMessage {
-    pub fn new(id: ID, created: DateTime<Utc>, armoured_content: String) -> Self {
-        Self {
-            id,
-            created,
-            armoured_content,
-        }
-    }
-}
-
-impl TryFrom<SignedMessage> for Message {
-    type Error = Error;
-
-    fn try_from(signed_message: SignedMessage) -> Result<Self> {
-        Message::from_double_signed(&signed_message.armoured_content)
-    }
-}
-
-impl TryFrom<&SignedMessage> for Message {
-    type Error = Error;
-
-    fn try_from(signed_message: &SignedMessage) -> Result<Self> {
-        Message::from_double_signed(&signed_message.armoured_content)
-    }
-}
-
 /// Represents a message.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct Message {
     /// ID of the message, not actually guaranteed to be unique due to the performance that could be required to check this for every message sent.
     pub id: ID,
@@ -323,15 +306,16 @@ pub struct Message {
     /// ID of the channel the message was sent in.
     pub channel_id: ID,
     /// ID of the user that sent the message.
-    pub sender: String,
+    pub sender: ID,
     /// Date in milliseconds since Unix Epoch that the message was sent.
     pub created: DateTime<Utc>,
     /// The actual text of the message.
     pub content: String,
 }
 
+#[cfg(feature = "server")]
 impl Message {
-    pub fn new(sender: String, content: String, hub_id: ID, channel_id: ID) -> Self {
+    pub fn new(sender: ID, content: String, hub_id: ID, channel_id: ID) -> Self {
         Self {
             sender,
             content,

@@ -1,7 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    api,
     channel::Channel,
     hub::{Hub, HubMember, PermissionGroup},
     permission::{ChannelPermission, ChannelPermissionSet, HubPermission, HubPermissionSet},
@@ -12,12 +11,14 @@ use async_graphql::*;
 use chrono::{DateTime, Utc};
 use xactor::Addr;
 
+pub type GraphQLSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
+
 pub struct QueryRoot;
 
 #[Object]
 impl QueryRoot {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a String {
-        ctx.data_unchecked::<String>()
+    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a ID {
+        ctx.data_unchecked::<ID>()
     }
 
     async fn hub(
@@ -40,162 +41,6 @@ impl QueryRoot {
             result.push(hub.strip(self.requester(ctx).await?)?);
         }
         Ok(result)
-    }
-}
-
-pub struct MutationRoot;
-
-struct ChannelMutator {
-    user_id: String,
-    hub_id: ID,
-    channel_id: ID,
-}
-
-impl ChannelMutator {
-    fn new(user_id: String, hub_id: ID, channel_id: ID) -> Self {
-        Self {
-            user_id,
-            hub_id,
-            channel_id,
-        }
-    }
-}
-
-#[Object]
-impl ChannelMutator {
-    async fn name(
-        &self,
-        #[graphql(desc = "New name for the channel.")] new: String,
-    ) -> Result<String> {
-        Ok(api::rename_channel(&self.user_id, self.hub_id, self.channel_id, new).await?)
-    }
-    async fn description(
-        &self,
-        #[graphql(desc = "New description for the channel.")] new: String,
-    ) -> Result<String> {
-        Ok(
-            api::change_channel_description(&self.user_id, self.hub_id, self.channel_id, new)
-                .await?,
-        )
-    }
-}
-
-struct HubMutator {
-    user_id: String,
-    hub_id: ID,
-}
-
-impl HubMutator {
-    fn new(user_id: String, hub_id: ID) -> Self {
-        Self { user_id, hub_id }
-    }
-}
-
-#[Object]
-impl HubMutator {
-    async fn name(&self, #[graphql(desc = "New name for the hub.")] new: String) -> Result<String> {
-        Ok(api::rename_hub(&self.user_id, self.hub_id, new).await?)
-    }
-    async fn description(
-        &self,
-        #[graphql(desc = "New description for the hub.")] new: String,
-    ) -> Result<String> {
-        Ok(api::change_hub_description(&self.user_id, self.hub_id, new).await?)
-    }
-    async fn channel(
-        &self,
-        #[graphql(desc = "ID of the channel to get.")] id: ID,
-    ) -> ChannelMutator {
-        ChannelMutator::new(self.user_id.clone(), self.hub_id, id)
-    }
-    async fn delete_channel(
-        &self,
-        #[graphql(desc = "ID of the channel to delete.")] id: ID,
-    ) -> Result<ID> {
-        Ok(api::delete_channel(&self.user_id, self.hub_id, id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn create_channel(
-        &self,
-        #[graphql(desc = "Name for the new channel.")] name: String,
-    ) -> Result<Channel> {
-        Ok(api::get_channel(
-            &self.user_id,
-            self.hub_id,
-            api::create_channel(&self.user_id, self.hub_id, name).await?,
-        )
-        .await?)
-    }
-    async fn kick(
-        &self,
-        #[graphql(desc = "ID of the user to kick.")] id: String,
-    ) -> Result<String> {
-        Ok(api::kick_user(&self.user_id, self.hub_id, &id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn ban(&self, #[graphql(desc = "ID of the user to ban.")] id: String) -> Result<String> {
-        Ok(api::ban_user(&self.user_id, self.hub_id, &id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn unban(
-        &self,
-        #[graphql(desc = "ID of the user to unban.")] id: String,
-    ) -> Result<String> {
-        Ok(api::unban_user(&self.user_id, self.hub_id, &id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn mute(
-        &self,
-        #[graphql(desc = "ID of the user to mute.")] id: String,
-    ) -> Result<String> {
-        Ok(api::ban_user(&self.user_id, self.hub_id, &id)
-            .await
-            .and(Ok(id))?)
-    }
-    async fn unmute(
-        &self,
-        #[graphql(desc = "ID of the user to unmute.")] id: String,
-    ) -> Result<String> {
-        Ok(api::unmute_user(&self.user_id, self.hub_id, &id)
-            .await
-            .and(Ok(id))?)
-    }
-}
-
-#[Object]
-impl MutationRoot {
-    async fn requester<'a>(&self, ctx: &'a Context<'_>) -> &'a String {
-        ctx.data_unchecked::<String>()
-    }
-
-    async fn hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "ID of the hub to get.")] id: ID,
-    ) -> Result<HubMutator> {
-        Ok(HubMutator::new(self.requester(ctx).await?.clone(), id))
-    }
-
-    async fn delete_hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "ID of the hub to delete.")] id: ID,
-    ) -> Result<ID> {
-        Ok(api::delete_hub(self.requester(ctx).await?, id)
-            .await
-            .and(Ok(id))?)
-    }
-
-    async fn create_hub(
-        &self,
-        ctx: &Context<'_>,
-        #[graphql(desc = "Name for the new hub.")] name: String,
-    ) -> Result<Hub> {
-        Ok(Hub::load(api::create_hub(self.requester(ctx).await?.clone(), name).await?).await?)
     }
 }
 
@@ -271,23 +116,23 @@ impl Hub {
 
     async fn is_banned(
         &self,
-        #[graphql(desc = "ID of user hub to check the ban status of.")] id: String,
+        #[graphql(desc = "ID of user hub to check the ban status of.")] id: ID,
     ) -> bool {
         self.bans.contains(&id)
     }
 
-    async fn bans(&self) -> &HashSet<String> {
+    async fn bans(&self) -> &HashSet<ID> {
         &self.bans
     }
 
     async fn is_muted(
         &self,
-        #[graphql(desc = "ID of the user to check the mute status of.")] id: String,
+        #[graphql(desc = "ID of the user to check the mute status of.")] id: ID,
     ) -> bool {
         self.mutes.contains(&id)
     }
 
-    async fn mutes(&self) -> &HashSet<String> {
+    async fn mutes(&self) -> &HashSet<ID> {
         &self.mutes
     }
 
@@ -305,7 +150,7 @@ impl Hub {
         self.channels
             .iter()
             .filter_map(|(id, channel)| {
-                if ids.contains(&id) {
+                if ids.contains(id) {
                     Some(channel)
                 } else {
                     None
@@ -320,24 +165,26 @@ impl Hub {
 
     async fn member(
         &self,
-        #[graphql(desc = "ID of the hub member to get.")] id: String,
+        #[graphql(desc = "ID of the hub member to get.")] id: ID,
     ) -> Option<&HubMember> {
         self.members.get(&id)
     }
 
     async fn members(
         &self,
-        #[graphql(desc = "IDs of the members to get.")] ids: Vec<String>,
+        #[graphql(desc = "IDs of the members to get.")] ids: Vec<ID>,
     ) -> Vec<&HubMember> {
         self.members
             .iter()
-            .filter_map(|(id, member)| {
-                if ids.contains(&id) {
-                    Some(member)
-                } else {
-                    None
-                }
-            })
+            .filter_map(
+                |(id, member)| {
+                    if ids.contains(id) {
+                        Some(member)
+                    } else {
+                        None
+                    }
+                },
+            )
             .collect()
     }
 
@@ -360,7 +207,7 @@ impl Hub {
             .iter()
             .filter_map(
                 |(id, group)| {
-                    if ids.contains(&id) {
+                    if ids.contains(id) {
                         Some(group)
                     } else {
                         None
@@ -376,7 +223,7 @@ impl Hub {
 
     async fn member_has_permission(
         &self,
-        #[graphql(desc = "ID of the member to check for the permission.")] id: String,
+        #[graphql(desc = "ID of the member to check for the permission.")] id: ID,
         #[graphql(desc = "Permission to check for.")] permission: HubPermission,
     ) -> bool {
         self.members
@@ -386,7 +233,7 @@ impl Hub {
 
     async fn member_has_channel_permission(
         &self,
-        #[graphql(desc = "ID of the member to check for the permission.")] id: String,
+        #[graphql(desc = "ID of the member to check for the permission.")] id: ID,
         #[graphql(
             desc = "ID of the channel to check in which to check the setting of the permission."
         )]
@@ -409,7 +256,7 @@ impl PermissionGroup {
         &self.name
     }
 
-    async fn members(&self) -> &Vec<String> {
+    async fn members(&self) -> &Vec<ID> {
         &self.members
     }
 
@@ -417,7 +264,7 @@ impl PermissionGroup {
         &self.created
     }
 
-    async fn is_member(&self, id: String) -> bool {
+    async fn is_member(&self, id: ID) -> bool {
         self.members.contains(&id)
     }
 
@@ -482,7 +329,7 @@ impl PermissionGroup {
 
 #[Object]
 impl HubMember {
-    async fn user(&self) -> &String {
+    async fn user(&self) -> &ID {
         &self.user_id
     }
 

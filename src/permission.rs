@@ -1,18 +1,20 @@
-use crate::ID;
+use crate::{error::ApiError, ID};
+#[cfg(feature = "graphql")]
 use async_graphql::{Enum, SimpleObject};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 /// Setting for a permission. If all user has permission set to None and it is set to None in all permission groups they are part of it maps to false.
 pub type PermissionSetting = Option<bool>;
 
 /// Struct that groups a hub permission with a permission setting.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct HubPermissionSet {
     /// Permission that this permission set is for.
     pub permission: HubPermission,
     /// Setting for the permission.
-    pub setting: Option<bool>,
+    pub setting: PermissionSetting,
 }
 
 impl From<(HubPermission, PermissionSetting)> for HubPermissionSet {
@@ -25,12 +27,13 @@ impl From<(HubPermission, PermissionSetting)> for HubPermissionSet {
 }
 
 /// Datastructure that groups a channel permission setting with the channel ID that it is valid in and a permission setting.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, SimpleObject)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(SimpleObject))]
 pub struct ChannelPermissionSet {
     /// Permission that this permission set is for.
     pub permission: ChannelPermission,
     /// Setting for the permission.
-    pub setting: Option<bool>,
+    pub setting: PermissionSetting,
     /// ID of the channel that this permission setting is for.
     pub channel: ID,
 }
@@ -46,7 +49,8 @@ impl From<(ChannelPermission, PermissionSetting, ID)> for ChannelPermissionSet {
 }
 
 /// Hub-wide permission, can be all of these except for the `All` permission can be overridden by channel permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(Enum))]
 pub enum HubPermission {
     All,
     ReadChannels,
@@ -77,11 +81,32 @@ impl Display for HubPermission {
     }
 }
 
+impl FromStr for HubPermission {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "ALL" => HubPermission::All,
+            "READ_CHANNELS" => HubPermission::ReadChannels,
+            "WRITE_CHANNELS" => HubPermission::WriteChannels,
+            "ADMINISTRATE" => HubPermission::Administrate,
+            "MANAGE_CHANNELS" => HubPermission::ManageChannels,
+            "MUTE" => HubPermission::Mute,
+            "UNMUTE" => HubPermission::Unmute,
+            "KICK" => HubPermission::Kick,
+            "BAN" => HubPermission::Ban,
+            "UNBAN" => HubPermission::Unban,
+            _ => return Err(ApiError::InvalidText),
+        })
+    }
+}
+
 /// Map of hub permissions to permission settings.
 pub type HubPermissions = HashMap<HubPermission, PermissionSetting>;
 
 /// Permissions that only apply to channels, override hub permissions.
-#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug, Enum)]
+#[derive(PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Copy, Debug)]
+#[cfg_attr(feature = "graphql", derive(Enum))]
 pub enum ChannelPermission {
     Write,
     Read,
@@ -99,6 +124,21 @@ impl Display for ChannelPermission {
         })
     }
 }
+
+impl FromStr for ChannelPermission {
+    type Err = ApiError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "WRITE" => ChannelPermission::Write,
+            "READ" => ChannelPermission::Read,
+            "MANAGE" => ChannelPermission::Manage,
+            "ALL" => ChannelPermission::All,
+            _ => return Err(ApiError::InvalidText),
+        })
+    }
+}
+
 impl From<ChannelPermission> for HubPermission {
     fn from(channel_perm: ChannelPermission) -> Self {
         match channel_perm {

@@ -10,34 +10,68 @@ homepage = "https://wic.rs"
 
 [dependencies]
 rand = "0.8"
-reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "default-tls"] }
-serde = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+url = "2.2"
 bincode = "1.3"
-tantivy = "0.14"
+tantivy = { version = "0.14", optional = true }
 tokio = { version = "1.5", default-features = false, features = [
     "macros",
     "fs",
     "sync",
     "rt",
     "rt-multi-thread",
-] }
+], optional = true }
 async-trait = "0.1"
-futures-util = { version = "0.3", default-features = false, features = ["async-await", "sink", "std"] }
-uuid = { version = "0.8", features = ["serde", "v4"] }
-xactor = { version = "0.7", features = ["runtime-tokio"], default-features = false }
+futures-util = { version = "0.3", default-features = false, features = [
+    "async-await",
+    "sink",
+    "std",
+] }
+uuid = { version = "0.8", features = ["serde"] }
+xactor = { version = "0.7", features = [
+    "runtime-tokio",
+], default-features = false, optional = true }
 lazy_static = "1.4"
 futures = "0.3"
-warp = "0.3"
-async-graphql = { version = "2.0", features = ["uuid", "string_number", "chrono"] }
-async-graphql-warp = "2.0"
+warp = { version = "0.3", optional = true }
+async-graphql = { version = "2.0", features = [
+    "uuid",
+    "string_number",
+    "chrono",
+    "apollo_tracing",
+    "apollo_persisted_queries",
+], optional = true }
+async-graphql-warp = { version = "2.0", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
-pgp = "0.7"
-smallvec = "1.6"
-hex = "0.4"
 thiserror = "1.0"
 log = "0.4"
 pretty_env_logger = "0.4"
+
+[features]
+graphql = ["async-graphql"]
+uuid-gen = ["uuid/v4"]
+server = [
+    "tantivy",
+    "warp",
+    "xactor",
+    "async-graphql-warp",
+    "graphql",
+    "tokio",
+    "uuid-gen",
+]
+default = ["server"]
+
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+panic = 'unwind'
+incremental = true
+codegen-units = 512
+rpath = false
 
 [profile.release]
 lto = true

@@ -1,19 +1,16 @@
 use crate::{
-    channel::{self, Message},
+    channel::{self},
     check_permission,
+    error::{ApiError, Error, Result},
     hub::Hub,
-    websocket::ServerMessage,
-    Error, Result, ID,
+    prelude::{WsHubUpdateType, WsServerMessage},
+    ID,
 };
 use async_trait::async_trait;
 use futures::stream::SplitSink;
 use futures::SinkExt;
-use pgp::Message as OpenPGPMessage;
-use pgp::SignedSecretKey;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
     io::Read,
     sync::Arc,
 };
@@ -32,6 +29,8 @@ use warp::ws::WebSocket;
 use xactor::*;
 
 use lazy_static::lazy_static;
+
+pub type ServerAddress = Arc<Addr<Server>>;
 
 pub mod client_command {
     use super::{message, Arc, Mutex, Result, SplitSink, WebSocket, WebSocketMessage, ID};
@@ -52,7 +51,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Clone, Debug)]
     pub struct SubscribeHub {
-        pub user_id: String,
+        pub user_id: ID,
         pub hub_id: ID,
         pub connection_id: u128,
     }
@@ -67,7 +66,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct SubscribeChannel {
-        pub user_id: String,
+        pub user_id: ID,
         pub hub_id: ID,
         pub channel_id: ID,
         pub connection_id: u128,
@@ -84,7 +83,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct StartTyping {
-        pub user_id: String,
+        pub user_id: ID,
         pub hub_id: ID,
         pub channel_id: ID,
     }
@@ -92,7 +91,7 @@ pub mod client_command {
     #[message(result = "Result")]
     #[derive(Debug, Clone)]
     pub struct StopTyping {
-        pub user_id: String,
+        pub user_id: ID,
         pub hub_id: ID,
         pub channel_id: ID,
     }
@@ -128,34 +127,12 @@ pub struct SearchMessageIndex {
     pub query: String,
 }
 
-/// Types of updates that trigger [`ServerNotification::HubUpdated`]
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum HubUpdateType {
-    HubDeleted,
-    HubRenamed,
-    HubDescriptionUpdated,
-    UserJoined(ID),
-    UserLeft(ID),
-    UserBanned(ID),
-    UserMuted(ID),
-    UserUnmuted(ID),
-    UserUnbanned(ID),
-    UserKicked(ID),
-    UserHubPermissionChanged(ID),
-    UserChannelPermissionChanged(ID, ID),
-    MemberNicknameChanged(ID),
-    ChannelCreated(ID),
-    ChannelDeleted(ID),
-    ChannelRenamed(ID),
-    ChannelDescriptionUpdated(ID),
-}
-
 /// Message to notify the server of a change made externally, usually used so the server can notify clients.
 #[message(result = "()")]
 #[derive(Debug, Clone)]
 pub enum ServerNotification {
-    NewMessage(ID, ID, ID, String, channel::Message),
-    HubUpdated(ID, HubUpdateType),
+    NewMessage(channel::Message),
+    HubUpdated(ID, WsHubUpdateType),
 }
 
 /// Tells the [`Server`] to get an address to it's [`MessageServer`].
@@ -275,17 +252,12 @@ impl MessageServer {
             let filename = format!("{}{:x}.json", crate::hub::HUB_INFO_FOLDER, hub_id.as_u128());
             let path = std::path::Path::new(&filename);
             if !path.exists() {
-                return Err(Error::HubNotFound);
+                return Err(ApiError::HubNotFound.into());
             }
             let json = tokio::fs::read_to_string(path).await?;
             let hub = serde_json::from_str::<Hub>(&json)?;
             if let Some(channel) = hub.channels.get(&channel_id) {
-                let messages: Vec<Message> = channel
-                    .get_all_messages_from(last_id)
-                    .await
-                    .iter()
-                    .filter_map(|signed_message| Message::try_from(signed_message).ok())
-                    .collect();
+                let messages = channel.get_all_messages_from(last_id).await;
                 let last_id = messages.last().map(|last| last.id);
                 for message in messages {
                     add_message_to_writer(&mut writer, message)?;
@@ -347,7 +319,7 @@ impl Default for MessageServer {
 impl Actor for MessageServer {
     async fn stopped(&mut self, _ctx: &mut xactor::Context<Self>) {
         for (hc_id, writer) in self.index_writers.iter_mut() {
-            if let Some((_, id)) = self.pending_messages.get(&hc_id) {
+            if let Some((_, id)) = self.pending_messages.get(hc_id) {
                 let _ = log_last_message(hc_id.0, hc_id.1, *id);
             }
             let _ = writer.commit();
@@ -442,18 +414,16 @@ pub struct Server {
     subscribed: SubscribedMap,
     connected: ConnectedMap,
     message_server: Addr<MessageServer>,
-    secret_key: SignedSecretKey,
 }
 
 impl Server {
     /// Creates a new server with default options, also creates a [`MessageServer`] with the given `commit_threshold` (how many messages should be added to the search index before commiting to the index).
-    pub async fn new(secret_key: SignedSecretKey) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         Ok(Self {
             subscribed_channels: Arc::new(RwLock::new(HashMap::new())),
             subscribed_hubs: Arc::new(RwLock::new(HashMap::new())),
             subscribed: Arc::new(RwLock::new(HashMap::new())),
             connected: Arc::new(RwLock::new(HashMap::new())),
-            secret_key,
             message_server: MessageServer::new()
                 .start()
                 .await
@@ -462,16 +432,9 @@ impl Server {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given hub.
-    async fn send_hub(&self, message: ServerMessage, hub_id: &ID) -> Result {
+    async fn send_hub(&self, message: WsServerMessage, hub_id: &ID) -> Result {
         if let Some(subscribed_arc) = self.subscribed_hubs.read().await.get(hub_id) {
-            let signed_message =
-                OpenPGPMessage::new_literal("", serde_json::to_string(&message)?.as_str()).sign(
-                    &self.secret_key,
-                    String::new,
-                    pgp::crypto::HashAlgorithm::SHA2_256,
-                )?;
-            let signed_message_string = signed_message.to_armored_string(None)?;
-            let message = WebSocketMessage::text(signed_message_string);
+            let message = WebSocketMessage::text(serde_json::to_string(&message)?);
             for connection_id in subscribed_arc.read().await.iter() {
                 if let Some(connection) = self.connected.read().await.get(connection_id) {
                     let _ = connection.lock().await.send(message.clone()).await;
@@ -482,21 +445,14 @@ impl Server {
     }
 
     /// Sends a [`ServreMessage`] to all clients subscribed to notifications for the given channel.
-    async fn send_channel(&self, message: ServerMessage, hub_id: ID, channel_id: ID) -> Result {
+    async fn send_channel(&self, message: WsServerMessage, hub_id: ID, channel_id: ID) -> Result {
         if let Some(subscribed_arc) = self
             .subscribed_channels
             .read()
             .await
             .get(&(hub_id, channel_id))
         {
-            let signed_message =
-                OpenPGPMessage::new_literal("", serde_json::to_string(&message)?.as_str()).sign(
-                    &self.secret_key,
-                    String::new,
-                    pgp::crypto::HashAlgorithm::SHA2_256,
-                )?;
-            let signed_message_string = signed_message.to_armored_string(None)?;
-            let message = WebSocketMessage::text(signed_message_string);
+            let message = WebSocketMessage::text(serde_json::to_string(&message)?);
             for connection_id in subscribed_arc.read().await.iter() {
                 if let Some(connection) = self.connected.read().await.get(connection_id) {
                     let _ = connection.lock().await.send(message.clone()).await;
@@ -529,14 +485,14 @@ impl Handler<client_command::Disconnect> for Server {
             let subscribed = subscribed.write().await;
             let subscribed_channels = self.subscribed_channels.write().await;
             for channel in subscribed.0.iter() {
-                if let Some(subs) = subscribed_channels.get(&channel) {
+                if let Some(subs) = subscribed_channels.get(channel) {
                     subs.write().await.remove(&msg.connection_id);
                 }
             }
             drop(subscribed_channels);
             let subscribed_hubs = self.subscribed_hubs.write().await;
             for hub in subscribed.1.iter() {
-                if let Some(subs) = subscribed_hubs.get(&hub) {
+                if let Some(subs) = subscribed_hubs.get(hub) {
                     subs.write().await.remove(&msg.connection_id);
                 }
             }
@@ -603,7 +559,7 @@ impl Handler<client_command::SubscribeChannel> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
@@ -664,7 +620,7 @@ impl Handler<client_command::StartTyping> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
@@ -678,7 +634,7 @@ impl Handler<client_command::StartTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStartedTyping {
+                WsServerMessage::UserStartedTyping {
                     user_id: msg.user_id,
                     hub_id: msg.hub_id,
                     channel_id: msg.channel_id,
@@ -705,7 +661,7 @@ impl Handler<client_command::StopTyping> for Server {
                     let member = member.clone();
                     Ok((hub, member))
                 } else {
-                    Err(Error::MemberNotFound)
+                    Err(ApiError::MemberNotFound.into())
                 }
             })
             .and_then(|(hub, user)| {
@@ -719,7 +675,7 @@ impl Handler<client_command::StopTyping> for Server {
             })?;
         let _ = self
             .send_channel(
-                ServerMessage::UserStoppedTyping {
+                WsServerMessage::UserStoppedTyping {
                     user_id: msg.user_id,
                     hub_id: msg.hub_id,
                     channel_id: msg.channel_id,
@@ -736,38 +692,33 @@ impl Handler<client_command::StopTyping> for Server {
 impl Handler<ServerNotification> for Server {
     async fn handle(&mut self, _ctx: &mut Context<Self>, msg: ServerNotification) {
         match msg {
-            ServerNotification::NewMessage(
-                hub_id,
-                channel_id,
-                message_id,
-                armoured_message,
-                message,
-            ) => {
+            ServerNotification::NewMessage(message) => {
                 let _ = self
                     .message_server
                     .call(NewMessageForIndex {
-                        hub_id,
-                        channel_id,
-                        message,
+                        hub_id: message.hub_id,
+                        channel_id: message.channel_id,
+                        message: message.clone(),
                     })
                     .await;
                 let _ = self
                     .send_channel(
-                        ServerMessage::ChatMessage {
-                            hub_id,
-                            channel_id,
-                            message_id,
-                            armoured_message,
+                        WsServerMessage::ChatMessage {
+                            sender_id: message.sender,
+                            hub_id: message.hub_id,
+                            channel_id: message.channel_id,
+                            message: message.content,
+                            message_id: message.id,
                         },
-                        hub_id,
-                        channel_id,
+                        message.hub_id,
+                        message.channel_id,
                     )
                     .await;
             }
             ServerNotification::HubUpdated(hub_id, update_type) => {
                 let _ = self
                     .send_hub(
-                        ServerMessage::HubUpdated {
+                        WsServerMessage::HubUpdated {
                             hub_id,
                             update_type,
                         },
