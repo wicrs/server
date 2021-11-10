@@ -67,11 +67,11 @@ impl From<&ApiError> for StatusCode {
 
 impl Reply for ApiError {
     fn into_response(self) -> warp::reply::Response {
-        Response::Success(self).into_response()
+        Response::<()>::Error(self).into_response()
     }
 }
 
-impl Reply for Error {
+impl Reply for &Error {
     fn into_response(self) -> warp::reply::Response {
         ApiError::from(self).into_response()
     }

@@ -28,6 +28,7 @@ futures-util = { version = "0.3", default-features = false, features = [
     "sink",
     "std",
 ] }
+tracing = { version = "0.1", default-features = false, features = ["log", "std"], optional = true }
 uuid = { version = "0.8", features = ["serde"] }
 xactor = { version = "0.7", features = [
     "runtime-tokio",
@@ -59,6 +60,7 @@ server = [
     "graphql",
     "tokio",
     "uuid-gen",
+    "tracing",
 ]
 default = ["server"]
 

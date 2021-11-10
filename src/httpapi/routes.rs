@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use lazy_static::lazy_static;
 
-use crate::error::ApiError;
+use crate::error::{ApiError, Error};
 use crate::graphql_model::GraphQLSchema;
 use crate::httpapi::handlers;
 use crate::prelude::{HttpServerInfo, HttpSetPermission};
@@ -57,8 +57,19 @@ fn api(
             .or(graphql(server, schema))
             .or(graphql_schema(schema_sdl))
             .or(graphql_playground())
-            .or(server_info()),
+            .or(server_info())
+            .recover(handle_rejection),
     )
+}
+
+async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
+    if let Some(e) = err.find::<ApiError>() {
+        Ok(e.to_owned().into_response())
+    } else if let Some(e) = err.find::<Error>() {
+        Ok(ApiError::from(e).into_response())
+    } else {
+        Ok(ApiError::InternalError.into_response())
+    }
 }
 
 fn rest(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {

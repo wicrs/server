@@ -52,7 +52,7 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| WsServerMessage::Error(err.into()),
+                                                |err| WsServerMessage::Error((&err).into()),
                                                 |_| WsServerMessage::Success,
                                             )
                                         } else {
@@ -84,7 +84,7 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| WsServerMessage::Error(err.into()),
+                                                |err| WsServerMessage::Error((&err).into()),
                                                 |_| WsServerMessage::Success,
                                             )
                                         } else {
@@ -101,7 +101,7 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| WsServerMessage::Error(err.into()),
+                                                |err| WsServerMessage::Error((&err).into()),
                                                 |_| WsServerMessage::Success,
                                             )
                                         } else {
@@ -118,7 +118,7 @@ pub async fn handle_connection(
                                             .await
                                         {
                                             result.map_or_else(
-                                                |err| WsServerMessage::Error(err.into()),
+                                                |err| WsServerMessage::Error((&err).into()),
                                                 |_| WsServerMessage::Success,
                                             )
                                         } else {
@@ -150,7 +150,7 @@ pub async fn handle_connection(
                                             crate::channel::Channel::write_message(message.clone())
                                                 .await
                                         {
-                                            WsServerMessage::Error(err.into())
+                                            WsServerMessage::Error((&err).into())
                                         } else if addr
                                             .call(ServerNotification::NewMessage(message))
                                             .await

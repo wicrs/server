@@ -372,7 +372,9 @@ impl Hub {
             id = new_id();
         }
         let channel = Channel::new(name, id, self.id);
-        channel.create_dir().await?;
+        if let Err(e) = channel.create_dir().await {
+            return Err(ApiError::from(&e));
+        }
         {
             self.get_member_mut(member_id)?.set_channel_permission(
                 channel.id,

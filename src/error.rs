@@ -97,8 +97,8 @@ pub enum ApiError {
 }
 
 #[cfg(feature = "server")]
-impl From<Error> for ApiError {
-    fn from(e: Error) -> Self {
+impl From<&Error> for ApiError {
+    fn from(e: &Error) -> Self {
         match e {
             Error::Json(error) => Self::Json {
                 message: error.to_string(),
@@ -107,7 +107,7 @@ impl From<Error> for ApiError {
             Error::Http(error) => Self::Http {
                 message: error.to_string(),
             },
-            Error::ApiError(error) => error,
+            Error::ApiError(error) => error.to_owned(),
             _ => Self::InternalError,
         }
     }
