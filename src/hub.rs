@@ -363,7 +363,12 @@ impl Hub {
     /// * The user it not in the hub.
     /// * The user does not have permission create new channels.
     /// * Any of the reasons outlined in [`Channel::create_dir`].
-    pub async fn new_channel(&mut self, member_id: &ID, name: String) -> ApiResult<ID> {
+    pub async fn new_channel(
+        &mut self,
+        member_id: &ID,
+        name: String,
+        description: String,
+    ) -> ApiResult<ID> {
         check_name_validity(&name)?;
         let member = self.get_member(member_id)?;
         check_permission!(member, HubPermission::ManageChannels, self);
@@ -371,7 +376,7 @@ impl Hub {
         while self.channels.contains_key(&id) {
             id = new_id();
         }
-        let channel = Channel::new(name, id, self.id);
+        let mut channel = Channel::new(name, id, self.id);
         if let Err(e) = channel.create_dir().await {
             return Err(ApiError::from(&e));
         }
@@ -382,6 +387,7 @@ impl Hub {
                 Some(true),
             );
         }
+        channel.description = description;
         self.channels.insert(id, channel);
         Ok(id)
     }
@@ -717,7 +723,7 @@ mod test {
         let id = ID::nil();
         let mut hub = Hub::new("test_hub".to_string(), id, id);
         let _ = tokio::fs::remove_file(&hub.get_info_path()).await;
-        hub.new_channel(&id, "test_channel".to_string())
+        hub.new_channel(&id, "test_channel".to_string(), "".to_string())
             .await
             .expect("Failed to add a channel to the test hub.");
         hub.save().await.expect("Failed to save the hub.");

@@ -40,14 +40,25 @@ pub mod hub {
     /// * The hub failed to save for any of the reasons outlined in [`Hub::save`].
     /// * The given name failed to pass the checks for any of the reasons outlined in [`check_name_validity`].
     /// * The default channel could not be created for any of the reaons outlined in [`Hub::new_channel`].
-    pub async fn create(owner_id: ID, name: String) -> Result<impl Reply> {
+    pub async fn create(owner_id: ID, data: HttpHubUpdate) -> Result<impl Reply> {
+        let name = data.name.unwrap_or_default();
+        let description = data.description.unwrap_or_default();
         check_name_validity(&name)?;
+        if description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+            return Err(ApiError::TooBig.into());
+        }
         let mut id = new_id();
         while Hub::load(id).await.is_ok() {
             id = new_id();
         }
         let mut new_hub = Hub::new(name, id, owner_id);
-        let channel_id = new_hub.new_channel(&owner_id, "chat".to_string()).await?;
+        let channel_id = new_hub
+            .new_channel(
+                &owner_id,
+                "chat".to_string(),
+                "A place to chat.".to_string(),
+            )
+            .await?;
         if let Some(group) = new_hub.groups.get_mut(&new_hub.default_group) {
             group.set_channel_permission(
                 channel_id,
@@ -60,6 +71,7 @@ pub mod hub {
                 Some(true),
             );
         }
+        new_hub.description = description;
         new_hub.save().await?;
         Ok(Response::Success(id))
     }
@@ -79,7 +91,11 @@ pub mod hub {
     /// * The hub failed to load for any of the reasons outlined in [`Hub::load`].
     pub async fn get(hub_id: ID, user_id: ID) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
-        Ok(Response::Success(hub.strip(&user_id)?))
+        if hub.members.contains_key(&user_id) {
+            Ok(Response::Success(hub.strip(&user_id)?))
+        } else {
+            Err(ApiError::HubNotFound.into())
+        }
     }
 
     /// Deletes a hub.
@@ -593,12 +609,17 @@ pub mod channel {
     pub async fn create(
         hub_id: ID,
         user_id: ID,
-        name: String,
+        data: HttpChannelUpdate,
         server: ServerAddress,
     ) -> Result<impl Reply> {
+        let name = data.name.unwrap_or_default();
+        let description = data.description.unwrap_or_default();
         check_name_validity(&name)?;
+        if description.as_bytes().len() > crate::MAX_DESCRIPTION_SIZE {
+            return Err(ApiError::TooBig.into());
+        }
         let mut hub = Hub::load(hub_id).await?;
-        let channel_id = hub.new_channel(&user_id, name).await?;
+        let channel_id = hub.new_channel(&user_id, name, description).await?;
         hub.save().await?;
         let _ = server.send(ServerNotification::HubUpdated(
             hub_id,
@@ -718,6 +739,8 @@ pub mod channel {
 }
 
 pub mod message {
+    use crate::prelude::HttpSendMessage;
+
     use super::*;
 
     /// Gets a message from a text channel in a hub.
@@ -843,13 +866,16 @@ pub mod message {
         hub_id: ID,
         channel_id: ID,
         user_id: ID,
-        message: String,
+        data: HttpSendMessage,
         server: ServerAddress,
     ) -> Result<impl Reply> {
+        if data.message.as_bytes().len() > crate::MAX_MESSAGE_SIZE {
+            return Err(ApiError::TooBig.into());
+        }
         let hub = Hub::load(hub_id).await?;
         let member = hub.get_member(&user_id)?;
         check_permission!(member, channel_id, ChannelPermission::Write, hub);
-        let message = Message::new(user_id, message, hub_id, channel_id);
+        let message = Message::new(user_id, data.message, hub_id, channel_id);
         let id = message.id;
         Channel::new("".to_string(), channel_id, hub_id)
             .add_message(message.clone())

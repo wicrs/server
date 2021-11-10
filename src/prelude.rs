@@ -44,6 +44,11 @@ pub struct HttpChannelUpdate {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HttpSendMessage {
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpMessagesAfterQuery {
     pub from: ID,

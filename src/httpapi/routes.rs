@@ -2,8 +2,6 @@ use async_graphql::extensions::ApolloTracing;
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
 
-use warp::hyper::body::Bytes;
-
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -89,15 +87,6 @@ fn with_server(
     warp::any().map(move || Arc::clone(&server))
 }
 
-fn string_body(max_size: u64) -> impl Filter<Extract = (String,), Error = warp::Rejection> + Clone {
-    warp::body::content_length_limit(max_size)
-        .and(warp::body::bytes())
-        .map(|body: Bytes| body.into_iter().collect())
-        .and_then(|vector: Vec<u8>| async move {
-            Ok::<_, Rejection>(String::from_utf8(vector).map_err(ApiError::from)?)
-        })
-}
-
 fn server_info() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     path!("info")
         .map(move || SERVER_INFO_STRING.as_str().to_string())
@@ -152,7 +141,7 @@ mod hub {
         warp::path::end()
             .and(warp::post())
             .and(auth())
-            .and(string_body(crate::MAX_NAME_SIZE as u64))
+            .and(warp::body::json())
             .and_then(hub::create)
     }
 
@@ -244,7 +233,7 @@ mod message {
         path!(ID / ID)
             .and(warp::post())
             .and(auth())
-            .and(string_body(crate::MESSAGE_MAX_SIZE as u64))
+            .and(warp::body::json())
             .and(with_server(server))
             .and_then(message::send)
     }
@@ -278,7 +267,7 @@ mod channel {
         path!(ID)
             .and(warp::post())
             .and(auth())
-            .and(string_body(crate::MAX_NAME_SIZE as u64))
+            .and(warp::body::json())
             .and(with_server(server))
             .and_then(channel::create)
     }
