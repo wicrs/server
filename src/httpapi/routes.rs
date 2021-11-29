@@ -62,7 +62,6 @@ fn api(
 }
 
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
-    dbg!(&err);
     if err.is_not_found() {
         Ok(ApiError::NotFound.into_response())
     }
@@ -71,7 +70,6 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     } else if let Some(e) = err.find::<Error>() {
         Ok(ApiError::from(e).into_response())
     } else {
-        println!("cannot find error.");
         Ok(ApiError::InternalError.into_response())
     }
 }
