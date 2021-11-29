@@ -13,10 +13,10 @@ use crate::httpapi::handlers;
 use crate::prelude::{HttpServerInfo, HttpSetPermission};
 use crate::ID;
 use crate::{graphql_model::QueryRoot, server::ServerAddress};
+use warp::http::Method;
 use warp::path;
 use warp::Reply;
 use warp::{Filter, Rejection};
-use warp::http::Method;
 
 lazy_static! {
     static ref SERVER_INFO_STRING: String = {
@@ -43,7 +43,10 @@ pub fn routes(
         .build();
     let log = warp::log("wicrs_server::httpapi");
 
-    api(server, schema).recover(handle_rejection).with(log).with(cors)
+    api(server, schema)
+        .recover(handle_rejection)
+        .with(log)
+        .with(cors)
 }
 
 fn api(
@@ -64,8 +67,7 @@ fn api(
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.is_not_found() {
         Ok(ApiError::NotFound.into_response())
-    }
-    else if let Some(e) = err.find::<ApiError>() {
+    } else if let Some(e) = err.find::<ApiError>() {
         Ok(e.to_owned().into_response())
     } else if let Some(e) = err.find::<Error>() {
         Ok(ApiError::from(e).into_response())
