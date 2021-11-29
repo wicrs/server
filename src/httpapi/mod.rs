@@ -51,6 +51,7 @@ impl From<&ApiError> for StatusCode {
             | ApiError::MemberNotFound
             | ApiError::MessageNotFound
             | ApiError::HubNotFound
+            | ApiError::NotFound
             | ApiError::NotInHub => Self::NOT_FOUND,
             ApiError::Http { message: _ }
             | ApiError::Json { message: _ }

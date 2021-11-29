@@ -16,6 +16,7 @@ use crate::{graphql_model::QueryRoot, server::ServerAddress};
 use warp::path;
 use warp::Reply;
 use warp::{Filter, Rejection};
+use warp::http::Method;
 
 lazy_static! {
     static ref SERVER_INFO_STRING: String = {
@@ -37,11 +38,12 @@ pub fn routes(
         .allow_header("content-type")
         .allow_header("authorization")
         .allow_header("cache-control")
+        .allow_methods([Method::GET, Method::PUT, Method::POST, Method::DELETE])
         .allow_any_origin()
         .build();
     let log = warp::log("wicrs_server::httpapi");
 
-    api(server, schema).with(cors).with(log)
+    api(server, schema).recover(handle_rejection).with(log).with(cors)
 }
 
 fn api(
@@ -55,17 +57,21 @@ fn api(
             .or(graphql(server, schema))
             .or(graphql_schema(schema_sdl))
             .or(graphql_playground())
-            .or(server_info())
-            .recover(handle_rejection),
+            .or(server_info()),
     )
 }
 
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
-    if let Some(e) = err.find::<ApiError>() {
+    dbg!(&err);
+    if err.is_not_found() {
+        Ok(ApiError::NotFound.into_response())
+    }
+    else if let Some(e) = err.find::<ApiError>() {
         Ok(e.to_owned().into_response())
     } else if let Some(e) = err.find::<Error>() {
         Ok(ApiError::from(e).into_response())
     } else {
+        println!("cannot find error.");
         Ok(ApiError::InternalError.into_response())
     }
 }

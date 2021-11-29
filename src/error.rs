@@ -50,6 +50,8 @@ pub enum Error {
 
 #[derive(Debug, Error, Clone, Serialize, Deserialize)]
 pub enum ApiError {
+    #[error("cannot find object")]
+    NotFound,
     #[error("user is muted and cannot send messages")]
     Muted,
     #[error("user is banned from that hub")]
