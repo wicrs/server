@@ -75,7 +75,7 @@ impl Channel {
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
     pub async fn add_message(&self, message: Message) -> Result {
-        let path_string = self.get_current_file();
+        let path_string = format!("{}/{}", self.get_folder(), message.created.date());
         let path = Path::new(&path_string);
         if path.parent().expect("must have parent").exists() {
             let file = OpenOptions::new()
@@ -288,11 +288,6 @@ impl Channel {
         }
         None
     }
-
-    /// Gets the path of the current message file, filename is time in milliseconds from Unix Epoch divided by `86400000` (the number of milliseconds in a day).
-    pub fn get_current_file(&self) -> String {
-        format!("{}/{}", self.get_folder(), Utc::now().date())
-    }
 }
 
 /// Represents a message.
@@ -324,5 +319,65 @@ impl Message {
             created: Utc::now(),
             id: new_id(),
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use super::*;
+    use crate::testing::*;
+
+    const TEST_MESSAGE_PATH: &str = "data/hubs/data/75bcd15/ce0a6a14/1970-01-01UTC";
+    const TEST_MESSAGE_FILE: [u8; 144] = [
+        16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 16, 68, 120, 203, 16, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 91, 205, 21, 16, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 206, 10, 106, 20, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 139, 208, 56, 53, 20, 0, 0, 0, 0, 0, 0, 0, 49, 57, 55, 48, 45, 48, 49,
+        45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 90, 12, 0, 0, 0, 0, 0, 0, 0, 116, 101, 115,
+        116, 32, 109, 101, 115, 115, 97, 103, 101,
+    ];
+
+    pub fn test_channel() -> Channel {
+        let channel = Channel {
+            id: *TEST_CHANNEL_ID,
+            hub_id: *TEST_HUB_ID,
+            description: "test channel description".to_string(),
+            name: "test".to_string(),
+            created: utc_unix_zero(),
+        };
+        std::fs::create_dir_all(channel.get_folder()).unwrap();
+        channel
+    }
+
+    pub fn test_message() -> Message {
+        Message {
+            sender: *TEST_USER_ID,
+            content: "test message".to_string(),
+            hub_id: *TEST_HUB_ID,
+            channel_id: *TEST_CHANNEL_ID,
+            created: utc_unix_zero(),
+            id: *TEST_MESSAGE_ID,
+        }
+    }
+
+    #[tokio::test]
+    async fn add_message() {
+        cleanup();
+        let channel = test_channel();
+        let test_message = test_message();
+        channel.add_message(test_message).await.unwrap();
+        assert_eq!(
+            &std::fs::read(TEST_MESSAGE_PATH).unwrap(),
+            &TEST_MESSAGE_FILE
+        );
+    }
+
+    #[tokio::test]
+    async fn get_message() {
+        let channel = test_channel();
+        let message = test_message();
+        channel.add_message(message.clone()).await.unwrap();
+        let got = channel.get_message(message.id).await.unwrap();
+        assert_eq!(got, message);
     }
 }
