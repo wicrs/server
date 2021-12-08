@@ -96,23 +96,21 @@ macro_rules! check_permission {
 pub type ID = Uuid;
 
 #[cfg(test)]
-pub(crate) mod testing {
+pub mod test {
+    use super::*;
+    pub use channel::test::*;
     use chrono::{DateTime, TimeZone, Utc};
+    pub use hub::test::*;
     use uuid::Uuid;
 
     lazy_static::lazy_static! {
-        pub static ref TEST_HUB_ID: Uuid = Uuid::from_u128(0123456789);
         pub static ref TEST_USER_ID: Uuid = Uuid::from_u128(2345678901);
-        pub static ref TEST_CHANNEL_ID: Uuid = Uuid::from_u128(3456789012);
-        pub static ref TEST_MESSAGE_ID: Uuid = Uuid::from_u128(4567890123);
+        pub static ref TEST_GROUP_ID: Uuid = Uuid::from_u128(3456789012);
+        pub static ref TEST_CHANNEL_ID: Uuid = Uuid::from_u128(4567890123);
+        pub static ref TEST_MESSAGE_ID: Uuid = Uuid::from_u128(5678901234);
     }
 
     pub fn utc_unix_zero() -> DateTime<Utc> {
         chrono::Utc.timestamp(0, 0)
-    }
-
-    pub fn cleanup() {
-        let _ = std::fs::remove_file("data/hubs/info/75bcd15");
-        let _ = std::fs::remove_dir_all("data/hubs/data/75bcd15");
     }
 }

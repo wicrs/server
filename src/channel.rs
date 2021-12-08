@@ -6,6 +6,7 @@ use tokio::fs;
 
 #[cfg(feature = "server")]
 use fs::OpenOptions;
+use tokio::fs::read_dir;
 
 use crate::ID;
 #[cfg(feature = "server")]
@@ -18,11 +19,11 @@ use crate::{
 #[cfg(feature = "server")]
 use async_graphql::SimpleObject;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Text channel, used to group a manage sets of messages.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Channel {
     /// ID of the channel.
     pub id: ID,
@@ -52,10 +53,10 @@ impl Channel {
     /// Get the path of the channel's data folder, used for storing message files.
     pub fn get_folder(&self) -> String {
         format!(
-            "{}{:x}/{:x}",
+            "{}{}/{}",
             HUB_DATA_FOLDER,
-            self.hub_id.as_u128(),
-            self.id.as_u128()
+            self.hub_id.to_string(),
+            self.id.to_string()
         )
     }
 
@@ -75,7 +76,15 @@ impl Channel {
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
     pub async fn add_message(&self, message: Message) -> Result {
-        let path_string = format!("{}/{}", self.get_folder(), message.created.date());
+        let path_string = format!(
+            "{}/{}",
+            self.get_folder(),
+            message
+                .created
+                .date()
+                .signed_duration_since(Utc.timestamp(0, 0).date())
+                .num_milliseconds()
+        );
         let path = Path::new(&path_string);
         if path.parent().expect("must have parent").exists() {
             let file = OpenOptions::new()
@@ -83,7 +92,8 @@ impl Channel {
                 .append(true)
                 .open(path)
                 .await?;
-            bincode::serialize_into(file.into_std().await, &message)?;
+            let file = file.into_std().await;
+            bincode::serialize_into(&file, &message)?;
             Ok(())
         } else {
             Err(Error::ApiError(ApiError::ChannelNotFound))
@@ -129,6 +139,9 @@ impl Channel {
     /// Tries to get all the messages listed by their IDs in `ids`. Not guaranteed to return all or any of the wanted messages.
     pub async fn get_messages(&self, ids: Vec<ID>) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
+        if ids.is_empty() {
+            return result;
+        }
         if let Ok(mut dir) = tokio::fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -137,12 +150,14 @@ impl Channel {
                 }
             }
             for file in files.iter() {
-                if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let iter = bincode::deserialize::<Message>(&file).into_iter();
-                    let mut found: Vec<Message> = iter.filter(|m| ids.contains(&m.id)).collect();
-                    result.append(&mut found);
-                    if ids.len() == result.len() {
-                        return result;
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if ids.contains(&message.id) {
+                            result.push(message);
+                            if ids.len() == result.len() {
+                                return result;
+                            }
+                        }
                     }
                 }
             }
@@ -173,27 +188,34 @@ impl Channel {
                     files.push(entry)
                 }
             }
-            files.sort_by_key(|f| f.file_name());
+            let div_from = from.timestamp() / 86400; // Get the day that `from` corresponds to.
+            let div_to = to.timestamp() / 86400; // Get the day that `to` corresponds to.
+            let mut files = files
+                .iter()
+                .filter_map(|f| {
+                    if let Ok(fname) = f.file_name().into_string() {
+                        if let Ok(n) = i64::from_str(&fname) {
+                            // Check that the file is of a day within the given `to` and `from` times.
+                            if n >= div_from && n <= div_to {
+                                return Some((n, f));
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect::<Vec<_>>();
+            files.sort_by_key(|(n, _)| *n);
             if invert {
                 files.reverse() // Reverse the order of the list of files to search in the correct direction if `invert` is true.
             }
-            let div_from = from.timestamp() / 86400; // Get the day that `from` corresponds to.
-            let div_to = to.timestamp() / 86400; // Get the day that `to` corresponds to.
-            for file in files.iter().filter(|f| {
-                if let Ok(fname) = f.file_name().into_string() {
-                    if let Ok(n) = i64::from_str(&fname) {
-                        return n >= div_from && n <= div_to; // Check that the file is of a day within the given `to` and `from` times.
+            for (_, file) in files {
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    let mut filtered = Vec::new();
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if message.created >= from && message.created <= to {
+                            filtered.push(message);
+                        }
                     }
-                }
-                false
-            }) {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut filtered = bincode::deserialize_from(file.into_std().await)
-                        .into_iter()
-                        .filter(|message: &Message| {
-                            message.created >= from && message.created <= to
-                        })
-                        .collect::<Vec<Message>>();
                     if invert {
                         filtered.reverse() // Invert the order of found messages for that file if `invert` is true.
                     }
@@ -219,22 +241,28 @@ impl Channel {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
                 if entry.path().is_file() {
-                    files.push(entry)
+                    if let Ok(file_num) = i64::from_str(&entry.file_name().to_string_lossy()) {
+                        files.push((file_num, entry))
+                    }
                 }
             }
-            for file in files.iter() {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut iter =
-                        bincode::deserialize_from::<std::fs::File, Message>(file.into_std().await)
-                            .into_iter();
-                    if iter.any(|m| m.id == id) {
-                        result.append(&mut iter.collect());
-                        let len = result.len();
-                        if len == max {
-                            return result;
-                        } else if result.len() > max {
-                            result.truncate(max);
-                            return result;
+            files.sort_by_key(|(n, _)| *n);
+            let mut found = false;
+            for (_, file) in files.iter() {
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if found {
+                            result.push(message);
+                            let len = result.len();
+                            if len == max {
+                                return result;
+                            } else if result.len() > max {
+                                result.truncate(max);
+                                return result;
+                            }
+                        } else if message.id == id {
+                            found = true;
+                            result.push(message);
                         }
                     }
                 }
@@ -250,15 +278,22 @@ impl Channel {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
                 if entry.path().is_file() {
-                    files.push(entry)
+                    if let Ok(file_num) = i64::from_str(&entry.file_name().to_string_lossy()) {
+                        files.push((file_num, entry))
+                    }
                 }
             }
-
-            for file in files.iter() {
-                if let Ok(file) = tokio::fs::read(file.path()).await {
-                    let mut iter = bincode::deserialize::<Message>(&file).into_iter();
-                    if iter.any(|m| m.id == id) {
-                        result.append(&mut iter.collect());
+            files.sort_by_key(|(n, _)| *n);
+            let mut found = false;
+            for (_, file) in files.iter() {
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if found {
+                            result.push(message);
+                        } else if message.id == id {
+                            found = true;
+                            result.push(message);
+                        }
                     }
                 }
             }
@@ -268,20 +303,19 @@ impl Channel {
 
     /// Get the first message with the given ID.
     pub async fn get_message(&self, id: ID) -> Option<Message> {
-        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+        if let Ok(mut dir) = read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
                 if entry.path().is_file() {
-                    files.push(entry)
+                    files.push(entry);
                 }
             }
             for file in files.iter() {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    if let Some(msg) = bincode::deserialize_from(file.into_std().await)
-                        .into_iter()
-                        .find(|m: &Message| m.id == id)
-                    {
-                        return Some(msg);
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if message.id == id {
+                            return Some(message);
+                        }
                     }
                 }
             }
@@ -325,59 +359,77 @@ impl Message {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use crate::testing::*;
+    use crate::test::*;
 
-    const TEST_MESSAGE_PATH: &str = "data/hubs/data/75bcd15/ce0a6a14/1970-01-01UTC";
-    const TEST_MESSAGE_FILE: [u8; 144] = [
-        16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 16, 68, 120, 203, 16, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 91, 205, 21, 16, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 206, 10, 106, 20, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 139, 208, 56, 53, 20, 0, 0, 0, 0, 0, 0, 0, 49, 57, 55, 48, 45, 48, 49,
-        45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 90, 12, 0, 0, 0, 0, 0, 0, 0, 116, 101, 115,
-        116, 32, 109, 101, 115, 115, 97, 103, 101,
-    ];
-
-    pub fn test_channel() -> Channel {
+    pub fn test_channel(hub: ID) -> Channel {
         let channel = Channel {
             id: *TEST_CHANNEL_ID,
-            hub_id: *TEST_HUB_ID,
+            hub_id: hub,
             description: "test channel description".to_string(),
             name: "test".to_string(),
             created: utc_unix_zero(),
         };
-        std::fs::create_dir_all(channel.get_folder()).unwrap();
+        std::fs::create_dir_all(channel.get_folder())
+            .expect("failed to create the channel directory");
         channel
     }
 
-    pub fn test_message() -> Message {
+    pub fn test_message(hub: ID) -> Message {
         Message {
             sender: *TEST_USER_ID,
             content: "test message".to_string(),
-            hub_id: *TEST_HUB_ID,
+            hub_id: hub,
             channel_id: *TEST_CHANNEL_ID,
             created: utc_unix_zero(),
             id: *TEST_MESSAGE_ID,
         }
     }
 
-    #[tokio::test]
-    async fn add_message() {
-        cleanup();
-        let channel = test_channel();
-        let test_message = test_message();
-        channel.add_message(test_message).await.unwrap();
-        assert_eq!(
-            &std::fs::read(TEST_MESSAGE_PATH).unwrap(),
-            &TEST_MESSAGE_FILE
-        );
+    pub async fn add_test_messages(hub: ID) -> Vec<Message> {
+        let mut messages = Vec::new();
+        for i in 0..100u128 {
+            let message = Message {
+                sender: *TEST_USER_ID,
+                content: "test message".to_string(),
+                hub_id: hub,
+                channel_id: *TEST_CHANNEL_ID,
+                created: utc_unix_zero(),
+                id: ID::from_u128(i),
+            };
+            messages.push(message.clone());
+            Channel::write_message(message)
+                .await
+                .expect("failed to add a message");
+        }
+        messages
     }
 
     #[tokio::test]
-    async fn get_message() {
-        let channel = test_channel();
-        let message = test_message();
-        channel.add_message(message.clone()).await.unwrap();
-        let got = channel.get_message(message.id).await.unwrap();
+    async fn add_get_message() {
+        let channel = test_channel(new_id());
+        let message = test_message(channel.hub_id);
+        channel
+            .add_message(message.clone())
+            .await
+            .expect("failed to add the message");
+        let got = channel
+            .get_message(message.id)
+            .await
+            .expect("failed to get the message");
         assert_eq!(got, message);
+    }
+
+    #[tokio::test]
+    async fn add_get_message_multiple() {
+        let channel = test_channel(new_id());
+        let messages = add_test_messages(channel.hub_id).await;
+        let message = &messages[10];
+        assert_eq!(
+            message,
+            &channel
+                .get_message(message.id)
+                .await
+                .expect("failed to get a message")
+        );
     }
 }

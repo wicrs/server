@@ -1,5 +1,6 @@
 /target
 /data
+/test_data
 .DS_Store
 /config.json
 /.idea

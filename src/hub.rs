@@ -27,9 +27,15 @@ use crate::{
 };
 
 /// Relative path of the folder in which Hub information files (`${ID}`) files are stored.
+#[cfg(not(test))]
 pub const HUB_INFO_FOLDER: &str = "data/hubs/info/";
+#[cfg(test)]
+pub const HUB_INFO_FOLDER: &str = "test_data/hubs/info/";
 /// Relative path of the folder in which Hub data files are stored (channel directories and messages).
+#[cfg(not(test))]
 pub const HUB_DATA_FOLDER: &str = "data/hubs/data/";
+#[cfg(test)]
+pub const HUB_DATA_FOLDER: &str = "test_data/hubs/data/";
 
 /// Represents a member of a hub that maps to a user.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -299,7 +305,7 @@ impl PermissionGroup {
 }
 
 /// Represents a group of users, permission groups and channels.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Hub {
     /// Map of channels to their IDs.
     pub channels: HashMap<ID, Channel>,
@@ -715,18 +721,67 @@ impl Hub {
 
 #[cfg(feature = "server")]
 #[cfg(test)]
-mod test {
-    use super::{Hub, ID};
+pub(crate) mod test {
+    use super::*;
+    use crate::channel::test::*;
+    use crate::test::*;
+
+    pub fn test_group() -> PermissionGroup {
+        let hub_permissions = HashMap::new();
+        let mut channel_permissions = HashMap::new();
+        channel_permissions.insert(*TEST_CHANNEL_ID, HashMap::new());
+        PermissionGroup {
+            id: *TEST_GROUP_ID,
+            name: "test group".to_string(),
+            members: vec![*TEST_USER_ID],
+            hub_permissions,
+            channel_permissions,
+            created: utc_unix_zero(),
+        }
+    }
+
+    pub fn test_member(hub: ID) -> HubMember {
+        HubMember {
+            user_id: *TEST_USER_ID,
+            joined: utc_unix_zero(),
+            hub,
+            groups: vec![*TEST_GROUP_ID],
+            hub_permissions: HashMap::new(),
+            channel_permissions: HashMap::new(),
+        }
+    }
+
+    pub fn test_hub() -> Hub {
+        let id = new_id();
+        let mut channels = HashMap::new();
+        let channel = test_channel(id);
+        channels.insert(channel.id, channel);
+        let mut members = HashMap::new();
+        members.insert(*TEST_USER_ID, test_member(id));
+        let mut groups = HashMap::new();
+        groups.insert(*TEST_GROUP_ID, test_group());
+        Hub {
+            channels,
+            members,
+            bans: HashSet::new(),
+            mutes: HashSet::new(),
+            description: "test hub description".to_string(),
+            owner: *TEST_USER_ID,
+            groups,
+            default_group: *TEST_GROUP_ID,
+            name: "test hub".to_string(),
+            id,
+            created: utc_unix_zero(),
+        }
+    }
 
     #[tokio::test]
     async fn save_load() {
-        let id = ID::nil();
-        let mut hub = Hub::new("test_hub".to_string(), id, id);
-        let _ = tokio::fs::remove_file(&hub.get_info_path()).await;
-        hub.new_channel(&id, "test_channel".to_string(), "".to_string())
-            .await
-            .expect("Failed to add a channel to the test hub.");
+        let hub = test_hub();
         hub.save().await.expect("Failed to save the hub.");
-        Hub::load(hub.id).await.expect("Failed to load the hub.");
+        assert_eq!(
+            hub,
+            Hub::load(hub.id).await.expect("Failed to load the hub.")
+        );
     }
 }
