@@ -110,7 +110,7 @@ pub mod test {
         pub static ref TEST_MESSAGE_ID: Uuid = Uuid::from_u128(5678901234);
     }
 
-    pub fn utc_unix_zero() -> DateTime<Utc> {
-        chrono::Utc.timestamp(0, 0)
+    pub fn utc(seconds: i64) -> DateTime<Utc> {
+        chrono::Utc.timestamp(seconds, 0)
     }
 }

@@ -113,17 +113,19 @@ impl Channel {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
                 if entry.path().is_file() {
-                    files.push(entry)
+                    if let Ok(file_num) = i64::from_str(&entry.file_name().to_string_lossy()) {
+                        files.push((file_num, entry))
+                    }
                 }
             }
-            files.sort_by_key(|f| f.file_name());
+            files.sort_by_key(|(n, _)| *n);
             files.reverse();
-            for file in files.iter() {
-                if let Ok(file) = fs::File::open(file.path()).await {
-                    let mut found = bincode::deserialize_from(file.into_std().await)
-                        .into_iter()
-                        .collect::<Vec<Message>>();
-                    found.sort_by_key(|m| m.created);
+            for (_, file) in files.iter() {
+                let mut found = Vec::new();
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        found.push(message);
+                    }
                     found.reverse();
                     result.append(&mut found);
                     if result.len() >= max {
@@ -367,7 +369,7 @@ pub(crate) mod test {
             hub_id: hub,
             description: "test channel description".to_string(),
             name: "test".to_string(),
-            created: utc_unix_zero(),
+            created: utc(0),
         };
         std::fs::create_dir_all(channel.get_folder())
             .expect("failed to create the channel directory");
@@ -380,7 +382,7 @@ pub(crate) mod test {
             content: "test message".to_string(),
             hub_id: hub,
             channel_id: *TEST_CHANNEL_ID,
-            created: utc_unix_zero(),
+            created: utc(0),
             id: *TEST_MESSAGE_ID,
         }
     }
@@ -393,7 +395,7 @@ pub(crate) mod test {
                 content: "test message".to_string(),
                 hub_id: hub,
                 channel_id: *TEST_CHANNEL_ID,
-                created: utc_unix_zero(),
+                created: utc(i as i64),
                 id: ID::from_u128(i),
             };
             messages.push(message.clone());
@@ -420,7 +422,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn add_get_message_multiple() {
+    async fn get_message_from_multiple() {
         let channel = test_channel(new_id());
         let messages = add_test_messages(channel.hub_id).await;
         let message = &messages[10];
@@ -431,5 +433,70 @@ pub(crate) mod test {
                 .await
                 .expect("failed to get a message")
         );
+    }
+
+    #[tokio::test]
+    async fn get_messages_after() {
+        let channel = test_channel(new_id());
+        let mut messages = add_test_messages(channel.hub_id).await;
+        let messages_split_off = messages.split_off(22);
+        assert_eq!(
+            messages,
+            channel
+                .get_messages_after(messages.first().unwrap().id, 22)
+                .await
+        );
+        assert_eq!(
+            messages_split_off,
+            channel
+                .get_messages_after(messages_split_off.first().unwrap().id, 79)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn get_messages_between() {
+        let channel = test_channel(new_id());
+        let mut messages = add_test_messages(channel.hub_id).await;
+        messages = messages.split_off(16);
+        let _ = messages.split_off(64);
+        let first = messages.first().unwrap().created;
+        let last = messages.last().unwrap().created;
+        let mut end = messages.split_off(32);
+        assert_eq!(
+            messages,
+            channel.get_messages_between(first, last, false, 32).await
+        );
+        messages.append(&mut end);
+        messages.reverse();
+        messages.truncate(32);
+        assert_eq!(
+            messages,
+            channel.get_messages_between(first, last, true, 32).await
+        );
+    }
+
+    #[tokio::test]
+    async fn get_messages() {
+        let channel = test_channel(new_id());
+        let mut messages = add_test_messages(channel.hub_id).await;
+        messages.truncate(20);
+        messages.reverse();
+        messages.truncate(10);
+        let mut ids = messages.iter().map(|m| m.id).collect::<Vec<_>>();
+        ids.push(ID::from_u128(512));
+        let got = channel.get_messages(ids).await;
+        for m in messages {
+            assert!(got.contains(&m));
+        }
+    }
+
+    #[tokio::test]
+    async fn get_last_messages() {
+        let channel = test_channel(new_id());
+        let mut messages = add_test_messages(channel.hub_id).await;
+        messages.reverse();
+        messages.truncate(50);
+        assert_eq!(messages, channel.get_last_messages(messages.len()).await);
     }
 }

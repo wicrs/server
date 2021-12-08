@@ -736,14 +736,14 @@ pub(crate) mod test {
             members: vec![*TEST_USER_ID],
             hub_permissions,
             channel_permissions,
-            created: utc_unix_zero(),
+            created: utc(0),
         }
     }
 
     pub fn test_member(hub: ID) -> HubMember {
         HubMember {
             user_id: *TEST_USER_ID,
-            joined: utc_unix_zero(),
+            joined: utc(0),
             hub,
             groups: vec![*TEST_GROUP_ID],
             hub_permissions: HashMap::new(),
@@ -771,7 +771,7 @@ pub(crate) mod test {
             default_group: *TEST_GROUP_ID,
             name: "test hub".to_string(),
             id,
-            created: utc_unix_zero(),
+            created: utc(0),
         }
     }
 
