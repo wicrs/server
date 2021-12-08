@@ -1,7 +1,7 @@
 use std::mem;
 
 use crate::{
-    channel::{Channel, Message},
+    channel::Channel,
     check_name_validity, check_permission,
     error::{ApiError, Error},
     graphql_model::GraphQLSchema,
@@ -463,7 +463,7 @@ pub mod member {
                 ));
             }
             HubPermission::Mute => {
-                hub.mute_user(user_id);
+                hub.mute_user(user_id)?;
                 let _ = server.send(ServerNotification::HubUpdated(
                     hub_id,
                     WsHubUpdateType::UserMuted(user_id),
@@ -873,13 +873,9 @@ pub mod message {
             return Err(ApiError::TooBig.into());
         }
         let hub = Hub::load(hub_id).await?;
-        let member = hub.get_member(&user_id)?;
-        check_permission!(member, channel_id, ChannelPermission::Write, hub);
-        let message = Message::new(user_id, data.message, hub_id, channel_id);
+        let message = hub.send_message(user_id, channel_id, data.message).await?;
         let id = message.id;
-        Channel::new("".to_string(), channel_id, hub_id)
-            .add_message(message.clone())
-            .await?;
+        Channel::write_message(message.clone()).await?;
         let _ = server.send(ServerNotification::NewMessage(message));
         Ok(Response::Success(id))
     }

@@ -48,7 +48,7 @@ pub enum Error {
     OtherInternal(String),
 }
 
-#[derive(Debug, Error, Clone, Serialize, Deserialize)]
+#[derive(Debug, Error, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApiError {
     #[error("cannot find object")]
     NotFound,
@@ -94,6 +94,8 @@ pub enum ApiError {
     Http { message: String },
     #[error("invalid json: {message}")]
     Json { message: String },
+    #[error("cannot perform that operation on the hub owner")]
+    IsOwner,
     #[error("{message}")]
     Other { message: String },
 }

@@ -104,10 +104,11 @@ pub mod test {
     use uuid::Uuid;
 
     lazy_static::lazy_static! {
-        pub static ref TEST_USER_ID: Uuid = Uuid::from_u128(2345678901);
-        pub static ref TEST_GROUP_ID: Uuid = Uuid::from_u128(3456789012);
-        pub static ref TEST_CHANNEL_ID: Uuid = Uuid::from_u128(4567890123);
-        pub static ref TEST_MESSAGE_ID: Uuid = Uuid::from_u128(5678901234);
+        pub static ref USER_ID: Uuid = Uuid::from_u128(2345678901);
+        pub static ref GROUP_ID: Uuid = Uuid::from_u128(3456789012);
+        pub static ref CHANNEL_ID: Uuid = Uuid::from_u128(4567890123);
+        pub static ref MESSAGE_ID: Uuid = Uuid::from_u128(5678901234);
+        pub static ref OTHER_USER_ID: Uuid = Uuid::from_u128(6789012345);
     }
 
     pub fn utc(seconds: i64) -> DateTime<Utc> {

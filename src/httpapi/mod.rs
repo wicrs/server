@@ -43,6 +43,7 @@ impl From<&ApiError> for StatusCode {
         match error {
             ApiError::Banned
             | ApiError::Muted
+            | ApiError::IsOwner
             | ApiError::WsNotAuthenticated
             | ApiError::MissingChannelPermission { permission: _ }
             | ApiError::MissingHubPermission { permission: _ } => Self::FORBIDDEN,

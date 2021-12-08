@@ -365,7 +365,7 @@ pub(crate) mod test {
 
     pub fn test_channel(hub: ID) -> Channel {
         let channel = Channel {
-            id: *TEST_CHANNEL_ID,
+            id: *CHANNEL_ID,
             hub_id: hub,
             description: "test channel description".to_string(),
             name: "test".to_string(),
@@ -378,12 +378,12 @@ pub(crate) mod test {
 
     pub fn test_message(hub: ID) -> Message {
         Message {
-            sender: *TEST_USER_ID,
+            sender: *USER_ID,
             content: "test message".to_string(),
             hub_id: hub,
-            channel_id: *TEST_CHANNEL_ID,
+            channel_id: *CHANNEL_ID,
             created: utc(0),
-            id: *TEST_MESSAGE_ID,
+            id: *MESSAGE_ID,
         }
     }
 
@@ -391,10 +391,10 @@ pub(crate) mod test {
         let mut messages = Vec::new();
         for i in 0..100u128 {
             let message = Message {
-                sender: *TEST_USER_ID,
+                sender: *USER_ID,
                 content: "test message".to_string(),
                 hub_id: hub,
-                channel_id: *TEST_CHANNEL_ID,
+                channel_id: *CHANNEL_ID,
                 created: utc(i as i64),
                 id: ID::from_u128(i),
             };

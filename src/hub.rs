@@ -9,6 +9,7 @@ use tokio::io::AsyncReadExt;
 #[cfg(feature = "server")]
 use tokio::io::AsyncWriteExt;
 
+use crate::channel::Message;
 use crate::{
     channel::Channel,
     permission::{ChannelPermissions, HubPermissions},
@@ -422,6 +423,24 @@ impl Hub {
         }
     }
 
+    pub async fn send_message(
+        &self,
+        sender: ID,
+        channel_id: ID,
+        content: String,
+    ) -> ApiResult<Message> {
+        if self.mutes.contains(&sender) {
+            return ApiResult::Err(ApiError::Muted);
+        }
+        let member = self.get_member(&sender)?;
+        check_permission!(member, channel_id, ChannelPermission::Write, self);
+        let message = Message::new(sender, content, self.id, channel_id);
+        Channel::write_message(message.clone())
+            .await
+            .map_err(|_| ApiError::InternalError)?;
+        Ok(message)
+    }
+
     /// Checks if the user with the given ID is in the hub.
     pub fn is_member(&self, member_id: &ID) -> bool {
         self.members.contains_key(member_id)
@@ -629,6 +648,9 @@ impl Hub {
     /// * The user is not in the hub.
     /// * One of the permission groups the user was in could not be found in the hub.
     pub fn user_leave(&mut self, user_id: &ID) -> ApiResult {
+        if user_id == &self.owner {
+            return ApiResult::Err(ApiError::IsOwner);
+        }
         if let Some(member) = self.members.get_mut(user_id) {
             if let Some(group) = self.groups.get_mut(&self.default_group) {
                 member.leave_group(group);
@@ -653,7 +675,9 @@ impl Hub {
     /// * The user's data failed to load for any of the reasons outlined in [`User::load`].
     /// * The user's data failed to save for any of the reasons outlined in [`User::save`].
     pub fn kick_user(&mut self, user_id: &ID) -> ApiResult {
-        if self.members.contains_key(user_id) {
+        if user_id == &self.owner {
+            return ApiResult::Err(ApiError::IsOwner);
+        } else if self.members.contains_key(user_id) {
             self.user_leave(user_id)?;
             self.members.remove(user_id);
         }
@@ -677,8 +701,12 @@ impl Hub {
     }
 
     /// Adds the given user to the mute list, preventing them from sending messages.
-    pub fn mute_user(&mut self, user_id: ID) {
+    pub fn mute_user(&mut self, user_id: ID) -> ApiResult {
+        if user_id == self.owner {
+            return ApiResult::Err(ApiError::IsOwner);
+        }
         self.mutes.insert(user_id);
+        Ok(())
     }
 
     /// Removes the given user from the mutes list, allowing them to send messages.
@@ -729,11 +757,11 @@ pub(crate) mod test {
     pub fn test_group() -> PermissionGroup {
         let hub_permissions = HashMap::new();
         let mut channel_permissions = HashMap::new();
-        channel_permissions.insert(*TEST_CHANNEL_ID, HashMap::new());
+        channel_permissions.insert(*CHANNEL_ID, HashMap::new());
         PermissionGroup {
-            id: *TEST_GROUP_ID,
+            id: *GROUP_ID,
             name: "test group".to_string(),
-            members: vec![*TEST_USER_ID],
+            members: vec![*USER_ID],
             hub_permissions,
             channel_permissions,
             created: utc(0),
@@ -742,10 +770,10 @@ pub(crate) mod test {
 
     pub fn test_member(hub: ID) -> HubMember {
         HubMember {
-            user_id: *TEST_USER_ID,
+            user_id: *USER_ID,
             joined: utc(0),
             hub,
-            groups: vec![*TEST_GROUP_ID],
+            groups: vec![*GROUP_ID],
             hub_permissions: HashMap::new(),
             channel_permissions: HashMap::new(),
         }
@@ -757,18 +785,18 @@ pub(crate) mod test {
         let channel = test_channel(id);
         channels.insert(channel.id, channel);
         let mut members = HashMap::new();
-        members.insert(*TEST_USER_ID, test_member(id));
+        members.insert(*USER_ID, test_member(id));
         let mut groups = HashMap::new();
-        groups.insert(*TEST_GROUP_ID, test_group());
+        groups.insert(*GROUP_ID, test_group());
         Hub {
             channels,
             members,
             bans: HashSet::new(),
             mutes: HashSet::new(),
             description: "test hub description".to_string(),
-            owner: *TEST_USER_ID,
+            owner: *USER_ID,
             groups,
-            default_group: *TEST_GROUP_ID,
+            default_group: *GROUP_ID,
             name: "test hub".to_string(),
             id,
             created: utc(0),
@@ -783,5 +811,92 @@ pub(crate) mod test {
             hub,
             Hub::load(hub.id).await.expect("Failed to load the hub.")
         );
+    }
+
+    #[test]
+    fn join_leave() {
+        let mut hub = test_hub();
+        assert_eq!(
+            ApiError::NotInHub,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        hub.user_join(*OTHER_USER_ID).unwrap();
+        hub.check_membership(&OTHER_USER_ID).unwrap();
+        hub.user_leave(&OTHER_USER_ID).unwrap();
+        assert_eq!(
+            ApiError::NotInHub,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+    }
+
+    #[test]
+    fn ban() {
+        let mut hub = test_hub();
+        assert_eq!(
+            ApiError::NotInHub,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        hub.ban_user(*OTHER_USER_ID).unwrap();
+        assert_eq!(
+            ApiError::Banned,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        hub.unban_user(&OTHER_USER_ID);
+        hub.user_join(*OTHER_USER_ID).unwrap();
+        hub.ban_user(*OTHER_USER_ID).unwrap();
+        assert_eq!(
+            ApiError::Banned,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        assert_eq!(ApiError::IsOwner, hub.ban_user(*USER_ID).unwrap_err());
+        hub.check_membership(&USER_ID).unwrap();
+        assert!(!hub.bans.contains(&USER_ID));
+    }
+
+    #[test]
+    fn kick() {
+        let mut hub = test_hub();
+        assert_eq!(
+            ApiError::NotInHub,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        hub.user_join(*OTHER_USER_ID).unwrap();
+        hub.kick_user(&OTHER_USER_ID).unwrap();
+        assert_eq!(
+            ApiError::NotInHub,
+            hub.check_membership(&OTHER_USER_ID).unwrap_err()
+        );
+        hub.user_join(*OTHER_USER_ID).unwrap();
+        assert_eq!(ApiError::IsOwner, hub.kick_user(&USER_ID).unwrap_err());
+        hub.get_member(&USER_ID).unwrap();
+    }
+
+    #[tokio::test]
+    async fn mute() {
+        let mut hub = test_hub();
+        hub.groups
+            .get_mut(&GROUP_ID)
+            .unwrap()
+            .set_channel_permission(*CHANNEL_ID, ChannelPermission::Write, Some(true));
+        hub.groups
+            .get_mut(&GROUP_ID)
+            .unwrap()
+            .set_channel_permission(*CHANNEL_ID, ChannelPermission::Read, Some(true));
+        hub.user_join(*OTHER_USER_ID).unwrap();
+        hub.send_message(*OTHER_USER_ID, *CHANNEL_ID, "test message".to_string())
+            .await
+            .unwrap();
+        hub.mute_user(*OTHER_USER_ID).unwrap();
+        assert_eq!(
+            ApiError::Muted,
+            hub.send_message(*OTHER_USER_ID, *CHANNEL_ID, "test message".to_string())
+                .await
+                .unwrap_err()
+        );
+        hub.unmute_user(&OTHER_USER_ID);
+        hub.send_message(*OTHER_USER_ID, *CHANNEL_ID, "test message".to_string())
+            .await
+            .unwrap();
+        assert_eq!(ApiError::IsOwner, hub.mute_user(*USER_ID).unwrap_err());
     }
 }
