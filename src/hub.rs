@@ -566,12 +566,12 @@ impl Hub {
 
     /// Gets the file path to be used for storing the hub's data.
     pub fn get_info_path(&self) -> String {
-        format!("{}{:x}", HUB_INFO_FOLDER, self.id.as_u128())
+        format!("{}{}", HUB_INFO_FOLDER, self.id.to_string())
     }
 
     /// Gets the path of the directory in which channel folders should be stored.
     pub fn get_data_path(&self) -> String {
-        format!("{}{:x}/", HUB_DATA_FOLDER, self.id.as_u128())
+        format!("{}{}/", HUB_DATA_FOLDER, self.id.to_string())
     }
 
     /// Saves the hub's data to disk.
@@ -608,7 +608,7 @@ impl Hub {
     /// * There is no hub with that ID.
     /// * The hub's data file was corrupt and could not be deserialized.
     pub async fn load(id: ID) -> Result<Self> {
-        let filename = format!("{}{:x}", HUB_INFO_FOLDER, id.as_u128());
+        let filename = format!("{}{}", HUB_INFO_FOLDER, id.to_string());
         let path = std::path::Path::new(&filename);
         if !path.exists() {
             return Err(ApiError::HubNotFound.into());
@@ -806,10 +806,10 @@ pub(crate) mod test {
     #[tokio::test]
     async fn save_load() {
         let hub = test_hub();
-        hub.save().await.expect("Failed to save the hub.");
+        hub.save().await.expect("Failed to save the hub");
         assert_eq!(
             hub,
-            Hub::load(hub.id).await.expect("Failed to load the hub.")
+            Hub::load(hub.id).await.expect("Failed to load the hub")
         );
     }
 
