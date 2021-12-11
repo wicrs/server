@@ -236,6 +236,49 @@ impl Channel {
         result
     }
 
+    /// Gets all messages that were sent before the message with the given ID.
+    pub async fn get_messages_before(&self, id: ID, max: usize) -> Vec<Message> {
+        let mut result: Vec<Message> = Vec::new();
+        if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
+            let mut files = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                if entry.path().is_file() {
+                    if let Ok(file_num) = i64::from_str(&entry.file_name().to_string_lossy()) {
+                        files.push((file_num, entry))
+                    }
+                }
+            }
+            files.sort_by_key(|(n, _)| *n);
+            files.reverse();
+            let mut found = false;
+            for (_, file) in files.iter() {
+                if let Ok(file) = std::fs::File::open(file.path()) {
+                    let mut messages_in_file = Vec::new();
+                    while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
+                        if result.len() == max {
+                            return result;
+                        } else if message.id == id {
+                            result = messages_in_file;
+                            match result.len().cmp(&max) {
+                                std::cmp::Ordering::Greater => {
+                                    return result.split_off(result.len() - max)
+                                }
+                                std::cmp::Ordering::Equal => return result,
+                                std::cmp::Ordering::Less => found = true,
+                            };
+                            break;
+                        } else if found {
+                            result.insert(0, message);
+                        } else {
+                            messages_in_file.push(message);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Gets all messages that were sent after the message with the given ID.
     pub async fn get_messages_after(&self, id: ID, max: usize) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
@@ -264,7 +307,6 @@ impl Channel {
                             }
                         } else if message.id == id {
                             found = true;
-                            result.push(message);
                         }
                     }
                 }
@@ -439,17 +481,37 @@ pub(crate) mod test {
     async fn get_messages_after() {
         let channel = test_channel(new_id());
         let mut messages = add_test_messages(channel.hub_id).await;
-        let messages_split_off = messages.split_off(22);
+        let mut messages_split_off = messages.split_off(22);
+        let first = messages.remove(0).id;
         assert_eq!(
             messages,
-            channel
-                .get_messages_after(messages.first().unwrap().id, 22)
-                .await
+            channel.get_messages_after(first, messages.len()).await
         );
+        let first = messages_split_off.remove(0).id;
         assert_eq!(
             messages_split_off,
             channel
-                .get_messages_after(messages_split_off.first().unwrap().id, 79)
+                .get_messages_after(first, messages_split_off.len())
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn get_messages_before() {
+        let channel = test_channel(new_id());
+        let mut messages = add_test_messages(channel.hub_id).await;
+        let mut messages_split_off = messages.split_off(22);
+        assert_eq!(
+            messages,
+            channel
+                .get_messages_before(messages_split_off.first().unwrap().id, messages.len())
+                .await
+        );
+        let last = messages_split_off.remove(messages_split_off.len() - 1).id;
+        assert_eq!(
+            messages_split_off,
+            channel
+                .get_messages_before(last, messages_split_off.len())
                 .await
         );
     }

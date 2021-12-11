@@ -227,12 +227,20 @@ mod message {
             .and_then(message::get_after)
     }
 
+    fn get_before() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+        path!(ID / ID / "before")
+            .and(warp::get())
+            .and(warp::body::json())
+            .and(auth())
+            .and_then(message::get_before)
+    }
+
     fn get_time_period() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "time_period")
             .and(warp::get())
             .and(warp::body::json())
             .and(auth())
-            .and_then(message::get_time_period)
+            .and_then(message::get_between)
     }
 
     fn send(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -251,6 +259,7 @@ mod message {
             send(Arc::clone(&server))
                 .or(get_time_period())
                 .or(get_after())
+                .or(get_before())
                 .or(get()),
         )
     }

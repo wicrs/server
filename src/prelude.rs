@@ -50,13 +50,19 @@ pub struct HttpSendMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpMessagesBeforeQuery {
+    pub to: ID,
+    pub max: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpMessagesAfterQuery {
     pub from: ID,
     pub max: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpMessageTimePeriodQuery {
+pub struct HttpMessagesBetweenQuery {
     pub from: DateTime<Utc>,
     pub to: DateTime<Utc>,
     pub max: usize,
