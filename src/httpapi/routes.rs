@@ -236,7 +236,7 @@ mod message {
     }
 
     fn get_time_period() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "time_period")
+        path!(ID / ID / "between")
             .and(warp::get())
             .and(warp::body::json())
             .and(auth())
