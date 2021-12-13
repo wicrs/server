@@ -84,6 +84,7 @@ impl Channel {
                 .date()
                 .signed_duration_since(Utc.timestamp(0, 0).date())
                 .num_milliseconds()
+                / 86400000
         );
         let path = Path::new(&path_string);
         if path.parent().expect("must have parent").exists() {
@@ -183,6 +184,9 @@ impl Channel {
         max: usize,
     ) -> Vec<Message> {
         let mut result: Vec<Message> = Vec::new();
+        if from > to {
+            return result;
+        }
         if let Ok(mut dir) = fs::read_dir(self.get_folder()).await {
             let mut files = Vec::new();
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -252,25 +256,37 @@ impl Channel {
             files.reverse();
             let mut found = false;
             for (_, file) in files.iter() {
+                if result.len() == max {
+                    return result;
+                }
                 if let Ok(file) = std::fs::File::open(file.path()) {
                     let mut messages_in_file = Vec::new();
                     while let Ok(message) = bincode::deserialize_from::<_, Message>(&file) {
-                        if result.len() == max {
-                            return result;
-                        } else if message.id == id {
-                            result = messages_in_file;
-                            match result.len().cmp(&max) {
+                        if message.id == id {
+                            match messages_in_file.len().cmp(&max) {
                                 std::cmp::Ordering::Greater => {
-                                    return result.split_off(result.len() - max)
+                                    return messages_in_file
+                                        .split_off(messages_in_file.len() - max);
                                 }
-                                std::cmp::Ordering::Equal => return result,
-                                std::cmp::Ordering::Less => found = true,
-                            };
+                                std::cmp::Ordering::Equal => return messages_in_file,
+                                std::cmp::Ordering::Less => {
+                                    found = true;
+                                    result.append(&mut messages_in_file);
+                                }
+                            }
                             break;
-                        } else if found {
-                            result.insert(0, message);
                         } else {
                             messages_in_file.push(message);
+                        }
+                    }
+                    if found && !messages_in_file.is_empty() {
+                        messages_in_file.append(&mut result);
+                        match messages_in_file.len().cmp(&max) {
+                            std::cmp::Ordering::Greater => {
+                                return messages_in_file.split_off(messages_in_file.len() - max);
+                            }
+                            std::cmp::Ordering::Equal => return messages_in_file,
+                            std::cmp::Ordering::Less => result = messages_in_file,
                         }
                     }
                 }
@@ -437,7 +453,7 @@ pub(crate) mod test {
                 content: "test message".to_string(),
                 hub_id: hub,
                 channel_id: *CHANNEL_ID,
-                created: utc(i as i64),
+                created: utc(i as i64 + 86350),
                 id: ID::from_u128(i),
             };
             messages.push(message.clone());
@@ -500,7 +516,7 @@ pub(crate) mod test {
     async fn get_messages_before() {
         let channel = test_channel(new_id());
         let mut messages = add_test_messages(channel.hub_id).await;
-        let mut messages_split_off = messages.split_off(22);
+        let mut messages_split_off = messages.split_off(25);
         assert_eq!(
             messages,
             channel
@@ -520,22 +536,23 @@ pub(crate) mod test {
     async fn get_messages_between() {
         let channel = test_channel(new_id());
         let mut messages = add_test_messages(channel.hub_id).await;
-        messages = messages.split_off(16);
-        let _ = messages.split_off(64);
+        messages = messages.split_off(25);
+        messages.truncate(50);
         let first = messages.first().unwrap().created;
         let last = messages.last().unwrap().created;
-        let mut end = messages.split_off(32);
         assert_eq!(
             messages,
-            channel.get_messages_between(first, last, false, 32).await
+            channel.get_messages_between(first, last, false, 50).await
         );
-        messages.append(&mut end);
         messages.reverse();
-        messages.truncate(32);
         assert_eq!(
             messages,
-            channel.get_messages_between(first, last, true, 32).await
+            channel.get_messages_between(first, last, true, 50).await
         );
+        assert!(channel
+            .get_messages_between(last, first, true, 32)
+            .await
+            .is_empty());
     }
 
     #[tokio::test]

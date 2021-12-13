@@ -235,7 +235,7 @@ mod message {
             .and_then(message::get_before)
     }
 
-    fn get_time_period() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    fn get_between() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "between")
             .and(warp::get())
             .and(warp::body::json())
@@ -257,7 +257,7 @@ mod message {
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!("message" / ..).and(
             send(Arc::clone(&server))
-                .or(get_time_period())
+                .or(get_between())
                 .or(get_after())
                 .or(get_before())
                 .or(get()),

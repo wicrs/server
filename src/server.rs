@@ -382,8 +382,8 @@ impl Handler<NewMessageForIndex> for MessageServer {
         {
             new_pending = pending + 1;
             if pending >= crate::TANTIVY_COMMIT_THRESHOLD {
-                let mut writer = self.get_writer(msg.hub_id, msg.channel_id).await?;
-                add_message_to_writer(&mut writer, msg.message)?;
+                let writer = self.get_writer(msg.hub_id, msg.channel_id).await?;
+                add_message_to_writer(writer, msg.message)?;
                 writer.commit()?;
                 log_last_message(msg.hub_id, msg.channel_id, message_id).await?;
                 new_pending = 0;
