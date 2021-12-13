@@ -1,5 +1,3 @@
-use std::mem;
-
 use crate::{
     channel::Channel,
     check_name_validity, check_permission,
@@ -10,12 +8,14 @@ use crate::{
     new_id,
     permission::{ChannelPermission, HubPermission, PermissionSetting},
     prelude::{
-        HttpChannelUpdate, HttpHubUpdate, HttpMemberStatus, HttpMessagesAfterQuery,
-        HttpMessagesBeforeQuery, HttpMessagesBetweenQuery, WsHubUpdateType,
+        HttpChannelUpdate, HttpHubUpdate, HttpLastMessagesQuery, HttpMemberStatus,
+        HttpMessagesAfterQuery, HttpMessagesBeforeQuery, HttpMessagesBetweenQuery, HttpSendMessage,
+        WsHubUpdateType,
     },
     server::{ServerAddress, ServerNotification},
     ID,
 };
+use std::mem;
 
 use warp::{ws::Ws, Reply};
 
@@ -739,8 +739,6 @@ pub mod channel {
 }
 
 pub mod message {
-    use crate::prelude::HttpSendMessage;
-
     use super::*;
 
     /// Gets a message from a text channel in a hub.
@@ -838,6 +836,39 @@ pub mod message {
         let channel = Hub::get_channel(&hub, &user_id, channel_id)?;
         Ok(Response::Success(
             channel.get_messages_before(query.to, query.max).await,
+        ))
+    }
+
+    /// Gets messages sent before a given message.
+    /// If successful they are returned in an array. The array is orderd oldest message to newest
+    /// If there are no messages before the given message or the given message is not found, an empty array is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - ID of the user who is requesting the message.
+    /// * `hub_id` - ID of the hub where the message is located.
+    /// * `channel_id` - ID of the channel where the message is located.
+    /// * `from` - ID of the message to go up to.
+    /// * `max` - The maximum number of messages to retreive.
+    ///
+    /// # Errors
+    ///
+    /// This function may return an error for any of the following reasons:
+    ///
+    /// * The user is not in the hub.
+    /// * The channel could not be found in the hub.
+    /// * The channel could not be gotten for any of the reasons outlined by [`Hub::get_channel`].
+    /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+    pub async fn get_last(
+        hub_id: ID,
+        channel_id: ID,
+        query: HttpLastMessagesQuery,
+        user_id: ID,
+    ) -> Result<impl Reply> {
+        let hub = Hub::load(hub_id).await?;
+        let channel = Hub::get_channel(&hub, &user_id, channel_id)?;
+        Ok(Response::Success(
+            channel.get_last_messages(query.max).await,
         ))
     }
 

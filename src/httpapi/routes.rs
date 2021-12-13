@@ -235,6 +235,14 @@ mod message {
             .and_then(message::get_before)
     }
 
+    fn get_last() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+        path!(ID / ID / "last")
+            .and(warp::get())
+            .and(warp::body::json())
+            .and(auth())
+            .and_then(message::get_last)
+    }
+
     fn get_between() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "between")
             .and(warp::get())
@@ -260,6 +268,7 @@ mod message {
                 .or(get_between())
                 .or(get_after())
                 .or(get_before())
+                .or(get_last())
                 .or(get()),
         )
     }
