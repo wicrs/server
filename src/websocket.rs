@@ -15,6 +15,8 @@ use warp::ws::Message as WebSocketMessage;
 
 use crate::prelude::{WsClientMessage, WsServerMessage};
 
+pub mod prelude {}
+
 pub async fn handle_connection(
     websocket: WebSocket,
     init_user_id: ID,
@@ -147,8 +149,7 @@ pub async fn handle_connection(
                                         let message =
                                             Message::new(user_id, message, hub_id, channel_id);
                                         if let Err(err) =
-                                            crate::channel::Channel::write_message(message.clone())
-                                                .await
+                                            crate::channel::Channel::write_message(&message).await
                                         {
                                             WsServerMessage::Error((&err).into())
                                         } else if addr

@@ -75,7 +75,7 @@ impl Channel {
     ///
     /// * The message file does not exist and could not be created.
     /// * Was unable to write to the message file.
-    pub async fn add_message(&self, message: Message) -> Result {
+    pub async fn add_message(&self, message: &Message) -> Result {
         let path_string = format!(
             "{}/{}",
             self.get_folder(),
@@ -94,14 +94,14 @@ impl Channel {
                 .open(path)
                 .await?;
             let file = file.into_std().await;
-            bincode::serialize_into(&file, &message)?;
+            bincode::serialize_into(&file, message)?;
             Ok(())
         } else {
             Err(Error::ApiError(ApiError::ChannelNotFound))
         }
     }
 
-    pub async fn write_message(message: Message) -> Result {
+    pub async fn write_message(message: &Message) -> Result {
         Self::new("".to_string(), message.channel_id, message.hub_id)
             .add_message(message)
             .await
@@ -456,10 +456,10 @@ pub(crate) mod test {
                 created: utc(i as i64 + 86350),
                 id: ID::from_u128(i),
             };
-            messages.push(message.clone());
-            Channel::write_message(message)
+            Channel::write_message(&message)
                 .await
                 .expect("failed to add a message");
+            messages.push(message);
         }
         messages
     }
@@ -469,7 +469,7 @@ pub(crate) mod test {
         let channel = test_channel(new_id());
         let message = test_message(channel.hub_id);
         channel
-            .add_message(message.clone())
+            .add_message(&message)
             .await
             .expect("failed to add the message");
         let got = channel

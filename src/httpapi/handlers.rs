@@ -1,5 +1,4 @@
 use crate::{
-    channel::Channel,
     check_name_validity, check_permission,
     error::{ApiError, Error},
     graphql_model::GraphQLSchema,
@@ -939,7 +938,6 @@ pub mod message {
         let hub = Hub::load(hub_id).await?;
         let message = hub.send_message(user_id, channel_id, data.message).await?;
         let id = message.id;
-        Channel::write_message(message.clone()).await?;
         let _ = server.send(ServerNotification::NewMessage(message));
         Ok(Response::Success(id))
     }

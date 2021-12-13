@@ -435,7 +435,7 @@ impl Hub {
         let member = self.get_member(&sender)?;
         check_permission!(member, channel_id, ChannelPermission::Write, self);
         let message = Message::new(sender, content, self.id, channel_id);
-        Channel::write_message(message.clone())
+        Channel::write_message(&message)
             .await
             .map_err(|_| ApiError::InternalError)?;
         Ok(message)
