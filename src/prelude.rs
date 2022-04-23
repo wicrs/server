@@ -50,6 +50,11 @@ pub struct HttpSendMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpSetNick {
+    pub nick: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpLastMessagesQuery {
     pub max: usize,
 }

@@ -18,6 +18,8 @@ use warp::path;
 use warp::Reply;
 use warp::{Filter, Rejection};
 
+use super::Response;
+
 lazy_static! {
     static ref SERVER_INFO_STRING: String = {
         let server_info_struct = HttpServerInfo {
@@ -68,10 +70,11 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.is_not_found() {
         Ok(ApiError::NotFound.into_response())
     } else if let Some(e) = err.find::<ApiError>() {
-        Ok(e.to_owned().into_response())
+        Ok(dbg!(e).to_owned().into_response())
     } else if let Some(e) = err.find::<Error>() {
-        Ok(ApiError::from(e).into_response())
+        Ok(ApiError::from(dbg!(e)).into_response())
     } else {
+        dbg!(err);
         Ok(ApiError::InternalError.into_response())
     }
 }
@@ -96,7 +99,9 @@ fn with_server(
 fn server_info() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     path!("info")
         .map(move || SERVER_INFO_STRING.as_str().to_string())
-        .and_then(|server_info: String| async move { Ok::<String, Rejection>(server_info) })
+        .and_then(|server_info: String| async move {
+            Ok::<Response<String>, Rejection>(Response::Success(server_info))
+        })
 }
 
 fn websocket(
@@ -222,7 +227,7 @@ mod message {
     fn get_after() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "after")
             .and(warp::get())
-            .and(warp::body::json())
+            .and(warp::query())
             .and(auth())
             .and_then(message::get_after)
     }
@@ -230,7 +235,7 @@ mod message {
     fn get_before() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "before")
             .and(warp::get())
-            .and(warp::body::json())
+            .and(warp::query())
             .and(auth())
             .and_then(message::get_before)
     }
@@ -238,7 +243,7 @@ mod message {
     fn get_last() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "last")
             .and(warp::get())
-            .and(warp::body::json())
+            .and(warp::query())
             .and(auth())
             .and_then(message::get_last)
     }
@@ -246,7 +251,7 @@ mod message {
     fn get_between() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
         path!(ID / ID / "between")
             .and(warp::get())
-            .and(warp::body::json())
+            .and(warp::query())
             .and(auth())
             .and_then(message::get_between)
     }
@@ -331,7 +336,10 @@ mod channel {
 
 mod member {
     use super::*;
-    use crate::permission::{ChannelPermission, HubPermission};
+    use crate::{
+        permission::{ChannelPermission, HubPermission},
+        prelude::HttpSetNick,
+    };
     use handlers::member;
 
     fn status() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -346,6 +354,17 @@ mod member {
             .and(auth())
             .and(path!(ID / ID))
             .and_then(member::get)
+    }
+
+    fn set_nick(
+        server: ServerAddress,
+    ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+        warp::get()
+            .and(auth())
+            .and(path!(ID / "set_nick"))
+            .and(warp::body::json().map(|n: HttpSetNick| n.nick))
+            .and(with_server(server))
+            .and_then(member::set_nick)
     }
 
     fn kick(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -434,6 +453,7 @@ mod member {
         path!("member" / ..).and(
             get()
                 .or(status())
+                .or(set_nick(Arc::clone(&server)))
                 .or(kick(Arc::clone(&server)))
                 .or(mute(Arc::clone(&server)))
                 .or(ban(Arc::clone(&server)))

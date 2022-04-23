@@ -165,7 +165,6 @@ pub async fn handle_connection(
                                     }
                                 }
                             } else {
-                                println!("this is the fail");
                                 WsServerMessage::InvalidCommand
                             };
                             let mut lock = out_arc.lock().await;

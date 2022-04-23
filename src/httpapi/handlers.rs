@@ -277,6 +277,43 @@ pub mod member {
         Ok(Response::Success(hub.get_member(&user_id)?.clone()))
     }
 
+    /// Sets a nickname for a hub member
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - ID of the user who is making the change.
+    /// * `hub_id` - The hub in which the change is being made.
+    /// * `member_id` - The hub member whose permissions are being changed.
+    /// * `nick` - The new nickname.
+    ///
+    /// # Errors
+    ///
+    /// This function may return an error for any of the following reasons.
+    ///
+    /// * The user making the change is not in the hub.
+    /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
+    /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
+    pub async fn set_nick(
+        hub_id: ID,
+        actor_id: ID,
+        nick: String,
+        server: ServerAddress,
+    ) -> Result<impl Reply> {
+        if !nick.is_empty() {
+            let mut hub = Hub::load(hub_id).await?;
+            let member = hub.get_member_mut(&actor_id)?;
+            member.nick = nick;
+            hub.save().await?;
+            let _ = server.send(ServerNotification::HubUpdated(
+                hub_id,
+                WsHubUpdateType::MemberNicknameChanged(actor_id),
+            ));
+            Ok(ok())
+        } else {
+            Err(ApiError::InvalidName.into())
+        }
+    }
+
     /// Sets a hub wide permission for a hub member.
     ///
     /// # Arguments

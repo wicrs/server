@@ -47,6 +47,9 @@ pub struct HubMember {
     pub joined: DateTime<Utc>,
     /// ID of the hub that this hub member is in.
     pub hub: ID,
+    /// Nickname of user
+    #[serde(default)]
+    pub nick: String,
     /// Groups that the hub member is part of.
     pub groups: Vec<ID>,
     /// Hub permission settings that the hub member has.
@@ -59,9 +62,12 @@ pub struct HubMember {
 impl HubMember {
     /// Creates a new hub member based on a user and the ID of the hub they are part of.
     pub fn new(user_id: ID, hub: ID) -> Self {
+        let mut nick = user_id.to_string();
+        nick.truncate(8);
         Self {
             user_id,
             hub,
+            nick,
             groups: Vec::new(),
             joined: Utc::now(),
             hub_permissions: HashMap::new(),
@@ -772,6 +778,7 @@ pub(crate) mod test {
         HubMember {
             user_id: *USER_ID,
             joined: utc(0),
+            nick: "test".to_string(),
             hub,
             groups: vec![*GROUP_ID],
             hub_permissions: HashMap::new(),
