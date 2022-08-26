@@ -271,7 +271,7 @@ pub mod member {
     /// * The requesting user is not in the hub.
     /// * The user whose information is being requested is not in the hub.
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
-    pub async fn get(hub_id: ID, user_id: ID, actor_id: ID) -> Result<impl Reply> {
+    pub async fn get(actor_id: ID, hub_id: ID, user_id: ID) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         hub.check_membership(&actor_id)?;
         Ok(Response::Success(hub.get_member(&user_id)?.clone()))
@@ -294,8 +294,8 @@ pub mod member {
     /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
     pub async fn set_nick(
-        hub_id: ID,
         actor_id: ID,
+        hub_id: ID,
         nick: String,
         server: ServerAddress,
     ) -> Result<impl Reply> {
@@ -334,10 +334,10 @@ pub mod member {
     /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
     pub async fn set_hub_permission(
+        actor_id: ID,
         hub_id: ID,
         member_id: ID,
         permission: HubPermission,
-        actor_id: ID,
         value: PermissionSetting,
         server: ServerAddress,
     ) -> Result<impl Reply> {
@@ -373,10 +373,10 @@ pub mod member {
     /// * The user whose permission is being checked is not in the hub.
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
     pub async fn get_hub_permission(
+        actor_id: ID,
         hub_id: ID,
         member_id: ID,
         permission: HubPermission,
-        actor_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         hub.check_membership(&actor_id)?;
@@ -406,11 +406,11 @@ pub mod member {
     /// * The hub could not be saved for any of the reasons outlined by [`Hub::save`].
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
     pub async fn set_channel_permission(
+        actor_id: ID,
         hub_id: ID,
         member_id: ID,
         channel_id: ID,
         permission: ChannelPermission,
-        actor_id: ID,
         value: PermissionSetting,
         server: ServerAddress,
     ) -> Result<impl Reply> {
@@ -448,11 +448,11 @@ pub mod member {
     /// * The user making the check does not have permission to do so.
     /// * The hub could not be loaded for any of the reasons outlined by [`Hub::load`].
     pub async fn get_channel_permission(
+        actor_id: ID,
         hub_id: ID,
         member_id: ID,
         channel_id: ID,
         permission: ChannelPermission,
-        actor_id: ID,
     ) -> Result<impl Reply> {
         let hub = Hub::load(hub_id).await?;
         {
@@ -523,7 +523,7 @@ pub mod member {
       ($($(#[$attr:meta])* => ($fnName:ident, $variant:ident)),*) => {
         $(
           $(#[$attr])*
-          pub async fn $fnName(hub_id: ID, user_id: ID, actor_id: ID, server: ServerAddress) -> Result<impl Reply> {
+          pub async fn $fnName(actor_id: ID, hub_id: ID, user_id: ID, server: ServerAddress) -> Result<impl Reply> {
               hub_user_op(server, actor_id, hub_id, user_id, HubPermission::$variant).await
           }
         )*

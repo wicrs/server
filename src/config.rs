@@ -5,12 +5,15 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Address to listen on for HTTP requests. (`host:port`)
     pub address: String,
+    /// Base path for requests (for use with proxy `host:port/base_path`)
+    pub base_path: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             address: "127.0.0.1:8080".to_string(),
+            base_path: "/".to_string(),
         }
     }
 }

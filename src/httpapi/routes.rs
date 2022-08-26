@@ -21,16 +21,22 @@ use warp::{Filter, Rejection};
 use super::Response;
 
 lazy_static! {
-    static ref SERVER_INFO_STRING: String = {
-        let server_info_struct = HttpServerInfo {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
-        serde_json::to_string(&server_info_struct).unwrap()
+    static ref SERVER_INFO: HttpServerInfo = HttpServerInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
     };
+}
+
+fn full_path(path: &str) -> warp::filters::BoxedFilter<()> {
+    let mut filter = warp::any().boxed();
+    for piece in path.split('/').filter(|p| !p.is_empty()) {
+        filter = filter.and(warp::path(piece.to_owned())).boxed();
+    }
+    filter
 }
 
 pub fn routes(
     server: ServerAddress,
+    config: &crate::config::Config,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
         .extension(ApolloTracing)
@@ -45,7 +51,7 @@ pub fn routes(
         .build();
     let log = warp::log("wicrs_server::httpapi");
 
-    api(server, schema)
+    api(server, schema, &config.base_path)
         .recover(handle_rejection)
         .with(log)
         .with(cors)
@@ -54,9 +60,10 @@ pub fn routes(
 fn api(
     server: ServerAddress,
     schema: GraphQLSchema,
+    base_path: &str,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let schema_sdl = schema.sdl();
-    path!("api" / ..).and(
+    full_path(base_path).and(path!("api" / ..)).and(
         rest(Arc::clone(&server))
             .or(websocket(Arc::clone(&server)))
             .or(graphql(server, schema))
@@ -97,11 +104,11 @@ fn with_server(
 }
 
 fn server_info() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    path!("info")
-        .map(move || SERVER_INFO_STRING.as_str().to_string())
-        .and_then(|server_info: String| async move {
-            Ok::<Response<String>, Rejection>(Response::Success(server_info))
-        })
+    path!("info").map(move || SERVER_INFO.clone()).and_then(
+        |server_info: HttpServerInfo| async move {
+            Ok::<Response<HttpServerInfo>, Rejection>(Response::Success(server_info))
+        },
+    )
 }
 
 fn websocket(
@@ -359,7 +366,7 @@ mod member {
     fn set_nick(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        warp::get()
+        warp::put()
             .and(auth())
             .and(path!(ID / "set_nick"))
             .and(warp::body::json().map(|n: HttpSetNick| n.nick))
@@ -368,25 +375,25 @@ mod member {
     }
 
     fn kick(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "kick")
-            .and(warp::post())
+        warp::post()
             .and(auth())
+            .and(path!(ID / ID / "kick"))
             .and(with_server(server))
             .and_then(member::kick)
     }
 
     fn mute(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "mute")
-            .and(warp::post())
+        warp::post()
             .and(auth())
+            .and(path!(ID / ID / "mute"))
             .and(with_server(server))
             .and_then(member::mute)
     }
 
     fn ban(server: ServerAddress) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "ban")
-            .and(warp::post())
+        warp::post()
             .and(auth())
+            .and(path!(ID / ID / "ban"))
             .and(with_server(server))
             .and_then(member::ban)
     }
@@ -394,9 +401,9 @@ mod member {
     fn unban(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "unban")
-            .and(warp::post())
+        warp::post()
             .and(auth())
+            .and(path!(ID / ID / "unban"))
             .and(with_server(server))
             .and_then(member::unban)
     }
@@ -404,9 +411,9 @@ mod member {
     fn unmute(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "unmute")
-            .and(warp::post())
+        warp::post()
             .and(auth())
+            .and(path!(ID / ID / "unmute"))
             .and(with_server(server))
             .and_then(member::unmute)
     }
@@ -414,36 +421,40 @@ mod member {
     fn set_hub_permission(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "hub_permission" / HubPermission)
-            .and(warp::put())
+        warp::put()
             .and(auth())
+            .and(path!(ID / ID / "hub_permission" / HubPermission))
             .and(warp::body::json().map(|s: HttpSetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_hub_permission)
     }
 
     fn get_hub_permission() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "hub_permission" / HubPermission)
-            .and(warp::get())
+        warp::get()
             .and(auth())
+            .and(path!(ID / ID / "hub_permission" / HubPermission))
             .and_then(member::get_hub_permission)
     }
 
     fn set_channel_permission(
         server: ServerAddress,
     ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "channel_permission" / ID / ChannelPermission)
-            .and(warp::put())
+        warp::put()
             .and(auth())
+            .and(path!(
+                ID / ID / "channel_permission" / ID / ChannelPermission
+            ))
             .and(warp::body::json().map(|s: HttpSetPermission| s.setting))
             .and(with_server(server))
             .and_then(member::set_channel_permission)
     }
 
     fn get_channel_permission() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        path!(ID / ID / "channel_permission" / ID / ChannelPermission)
-            .and(warp::get())
+        warp::get()
             .and(auth())
+            .and(path!(
+                ID / ID / "channel_permission" / ID / ChannelPermission
+            ))
             .and_then(member::get_channel_permission)
     }
 

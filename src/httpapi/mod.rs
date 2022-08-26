@@ -12,7 +12,7 @@ pub mod handlers;
 pub mod routes;
 
 pub async fn start(config: Config, server: ServerAddress) -> Result {
-    let http_server = warp::serve(routes::routes(server)).run(
+    let http_server = warp::serve(routes::routes(server, &config)).run(
         config
             .address
             .parse::<SocketAddr>()
