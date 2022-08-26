@@ -68,7 +68,7 @@ fn api(
             .or(websocket(Arc::clone(&server)))
             .or(graphql(server, schema))
             .or(graphql_schema(schema_sdl))
-            .or(graphql_playground())
+            .or(graphql_playground(base_path.to_string()))
             .or(server_info()),
     )
 }
@@ -138,17 +138,22 @@ fn graphql_schema(sdl: String) -> impl Filter<Extract = impl Reply, Error = Reje
         .and_then(|sdl: String| async move { Ok::<String, Rejection>(sdl) })
 }
 
-fn graphql_playground() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    warp::path!("graphql" / "playground" / ID).and_then(|user: ID| async move {
-        Ok::<_, Rejection>(
-            warp::http::Response::builder()
-                .header("content-type", "text/html")
-                .body(playground_source(
-                    GraphQLPlaygroundConfig::new("/api/graphql")
-                        .with_header("authorization", user.to_string().as_str()),
-                )),
-        )
-    })
+fn graphql_playground(
+    base_path: String,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::any()
+        .map(move || base_path.clone())
+        .and(warp::path!("graphql" / "playground" / ID))
+        .and_then(|base_path: String, user: ID| async move {
+            Ok::<_, Rejection>(
+                warp::http::Response::builder()
+                    .header("content-type", "text/html")
+                    .body(playground_source(
+                        GraphQLPlaygroundConfig::new(&(base_path + "/api/graphql"))
+                            .with_header("authorization", user.to_string().as_str()),
+                    )),
+            )
+        })
 }
 
 mod hub {
